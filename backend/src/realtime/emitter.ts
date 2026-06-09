@@ -1,0 +1,22 @@
+import type { Server } from 'socket.io';
+
+let io: Server | null = null;
+
+export function bindIo(server: Server): void {
+  io = server;
+}
+
+/** Per-user room name. Each socket joins `user:<id>` on connect. */
+export function userRoom(userId: string): string {
+  return `user:${userId}`;
+}
+
+/** Push an event to all of a user's connected devices. No-op if realtime is unavailable. */
+export function emitToUser(userId: string, event: string, payload: unknown): void {
+  io?.to(userRoom(userId)).emit(event, payload);
+}
+
+/** Push an event to both participants of a conversation. */
+export function emitToConversation(userIds: string[], event: string, payload: unknown): void {
+  for (const id of userIds) emitToUser(id, event, payload);
+}

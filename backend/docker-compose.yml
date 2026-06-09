@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: proximity_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: proximity_social
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d proximity_social"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: proximity_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    container_name: proximity_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/proximity_social?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-change-me-access-secret}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-change-me-refresh-secret}"
+      CORS_ORIGIN: "${CORS_ORIGIN:-*}"
+      OTP_DEV_RETURN: "${OTP_DEV_RETURN:-false}"
+    ports:
+      - "4000:4000"
+    # Runs migrations then boots the server.
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+
+volumes:
+  pgdata:
+  redisdata:
