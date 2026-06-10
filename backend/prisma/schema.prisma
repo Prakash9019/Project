@@ -98,7 +98,84 @@ enum ReportReason {
   harassment
   fake_profile
   inappropriate_content
+  lgbtq_hate
   other
+}
+
+// ── NearMe v2 enums ──────────────────────────────────────
+
+enum GenderIdentity {
+  man
+  woman
+  non_binary
+  trans_man
+  trans_woman
+  genderqueer
+  genderfluid
+  other
+}
+
+enum SexualOrientation {
+  straight
+  gay
+  lesbian
+  bisexual
+  queer
+  pansexual
+  other
+}
+
+enum WantToSee {
+  men
+  women
+  everyone
+  non_binary_people
+}
+
+enum RelationshipIntent {
+  dating
+  friendship
+  networking
+  open_to_anything
+}
+
+enum Plan {
+  free
+  premium
+  gold
+  platinum
+}
+
+enum BillingCycle {
+  monthly
+  three_month
+  six_month
+  annual
+}
+
+enum AddOnType {
+  boost_local
+  boost_extended
+  boost_city_wide
+  mega_boost
+  spotlight
+  chat_pack_s
+  chat_pack_m
+  chat_pack_l
+  travel_pass
+  travel_pass_week
+  verified_badge
+  audio_call_topup
+  video_call_topup
+}
+
+enum ModerationFlagType {
+  explicit_sexual
+  threat
+  hate_speech
+  anti_lgbtq
+  nudity
+  spam
 }
 
 // ─────────────────────────────────────────────────────────
@@ -140,6 +217,64 @@ model User {
   pinHash      String? // optional PIN-lock hash (never exposed to frontend)
   lastActiveAt DateTime @default(now())
 
+  // ── NearMe v2: identity fields ──
+  genderIdentity      GenderIdentity?
+  genderIdentityOther String? // free text when genderIdentity=other
+  sexualOrientation   SexualOrientation?
+  wantToSee           WantToSee[] // multi-select
+  relationshipIntent  RelationshipIntent?
+  whoCanDiscoverMe    WantToSee[] // non-binary: which grids to appear in
+  firstName           String? // display name (NearMe uses first name only)
+
+  // ── NearMe v2: plan-based subscription ──
+  plan          Plan      @default(free)
+  planExpiresAt DateTime?
+
+  // ── NearMe v2: media ──
+  voiceClipUrl String?
+  videoClipUrl String?
+
+  // ── NearMe v2: trust & verification ──
+  verifiedBadge     Boolean @default(false) // blue verified tick (ID-checked)
+  isCollegeVerified Boolean @default(false)
+  profileCompletenessScore Float @default(0) // 0-100, recomputed on profile save
+
+  // ── NearMe v2: persistent location (coordinates never exposed to other users) ──
+  locationLat       Float?
+  locationLng       Float?
+  locationUpdatedAt DateTime?
+
+  // ── NearMe v2: grid visibility ──
+  isOnGrid Boolean @default(true) // set false by panic-hide or 48h inactivity
+
+  // ── NearMe v2: Gold+ privacy settings ──
+  incognitoMode      Boolean @default(false) // browse grid without appearing on others'
+  hideActiveStatus   Boolean @default(false)
+  hideLastSeen       Boolean @default(false)
+  hideExactDistance  Boolean @default(false) // shows 'Near you' instead of exact km
+
+  // ── NearMe v2: LGBTQ+ safety ──
+  showOrientationPublicly Boolean @default(false) // off by default
+  disceetMode             Boolean @default(false) // replace app icon with neutral icon
+
+  // ── NearMe v2: women's safety defaults ──
+  pauseIncomingMessages              Boolean @default(false)
+  requireProfileCompletenessToMessage Boolean @default(false)
+  verifiedUsersOnlyFilter            Boolean @default(false)
+
+  // ── NearMe v2: daily limits (server-enforced, never exposed to frontend) ──
+  dailyNewChatCount       Int       @default(0)
+  dailyNewChatResetDate   DateTime?
+  dailyAudioMinutesUsed   Int       @default(0)
+  dailyVideoMinutesUsed   Int       @default(0)
+  dailyCallMinutesResetDate DateTime?
+
+  // ── NearMe v2: grid ranking signal ──
+  historicalReplyRate Float? // 0.0-1.0, updated periodically
+
+  // ── NearMe v2: Platinum AI opt-in feature flags ──
+  aiOptInFeatures Json? // {profileOptimizer, icebreakers, conversationAssistant, matchingEngine, smartInbox}
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -153,7 +288,7 @@ model User {
   conversationsB Conversation[] @relation("UserB")
   messages       Message[]
 
-  feedBoosts FeedBoost[]
+  feedBoosts   FeedBoost[]
   savedPhrases SavedPhrase[]
   verifications Verification[]
 
@@ -164,8 +299,8 @@ model User {
   viewsMade     ProfileView[] @relation("Viewer")
   viewsReceived ProfileView[] @relation("Viewed")
 
-  albums       PrivateAlbum[]
-  albumGrants  PrivateAlbumGrant[] @relation("Grantee")
+  albums      PrivateAlbum[]
+  albumGrants PrivateAlbumGrant[] @relation("Grantee")
 
   callsPlaced   Call[] @relation("Caller")
   callsReceived Call[] @relation("Callee")
@@ -175,8 +310,17 @@ model User {
   reportsMade    Report[] @relation("Reporter")
   reportsAgainst Report[] @relation("Reported")
 
+  // NearMe v2 relations
+  mutesMade      Mute[]          @relation("MuteOwner")
+  mutesAgainst   Mute[]          @relation("MuteTarget")
+  addOnPurchases AddOnPurchase[]
+  messageTemplates MessageTemplate[]
+  cityProfiles   CityProfile[]
+
   @@index([lastActiveAt])
   @@index([createdAt])
+  @@index([plan])
+  @@index([isOnGrid, lastActiveAt])
   @@map("users")
 }
 
@@ -230,6 +374,15 @@ model UserSettings {
   screenshotBlock        Boolean @default(false) // block screenshots in private album (client-enforced)
   blockOffensiveLanguage Boolean @default(false) // hide offensive inbound messages
 
+  // NearMe v2: advanced grid filters (Gold+)
+  activeLast5MinFilter  Boolean @default(false) // Gold+
+  recentlyJoinedFilter  Boolean @default(false) // Gold+
+  highReplyRateFilter   Boolean @default(false) // Gold+
+  activeLast30MinFilter Boolean @default(false) // Premium+
+
+  // NearMe v2: custom discovery radius (Gold+)
+  customDistanceKm Float? // 0.5-100km, Gold+; null means use plan default
+
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -248,6 +401,14 @@ model Conversation {
   initiatorId String // who sent the first message
   state       ConversationState @default(pending)
 
+  // NearMe v2: call unlock — set TRUE server-side the moment the non-initiator sends their first reply.
+  // Client reads this flag; never computes it locally. Call buttons only render when true.
+  callUnlocked Boolean @default(false)
+
+  // NearMe v2: per-side pin (Gold: max 5, Platinum: max 10 — enforced in service)
+  aPinned Boolean @default(false)
+  bPinned Boolean @default(false)
+
   // per-side archive / soft-delete for thread management
   aArchivedAt DateTime?
   bArchivedAt DateTime?
@@ -260,6 +421,7 @@ model Conversation {
   userA    User      @relation("UserA", fields: [userAId], references: [id], onDelete: Cascade)
   userB    User      @relation("UserB", fields: [userBId], references: [id], onDelete: Cascade)
   messages Message[]
+  calls    Call[]
 
   @@unique([userAId, userBId])
   @@index([userAId, lastMessageAt])
@@ -275,14 +437,30 @@ model Message {
 
   // E2E text payload (opaque ciphertext). Media lives at signed URLs the client encrypts/uploads.
   ciphertext String?
+  content    String? // plain-text content for non-E2E mode
   mediaUrls  String[] // photo(s) / video / voice attachments
+  mediaUrl   String? // single media URL for expiring_photo / voice_note
 
   // expiring photo semantics
-  viewOnce        Boolean @default(false)
+  viewOnce         Boolean   @default(false)
   expiresInSeconds Int? // e.g. 10 — countdown once opened
-  viewedAt        DateTime? // when the (single) recipient opened it
+  viewedAt         DateTime? // when the (single) recipient opened it
+  expiresAfterView Boolean   @default(false) // NearMe v2 expiring photos
 
-  flaggedOffensive Boolean   @default(false) // set by moderation adapter
+  // NearMe v2: unsend (soft-delete for everyone)
+  isUnsent    Boolean   @default(false)
+  unsentAt    DateTime?
+
+  // NearMe v2: edit — Gold+, 10-minute window
+  isEdited        Boolean   @default(false)
+  editedAt        DateTime?
+  originalContent String? // preserved for moderation after edit
+
+  // NearMe v2: in-chat translation — Gold+
+  translatedContent String?
+
+  flaggedOffensive Boolean   @default(false) // set by moderation adapter (legacy)
+  moderationFlagged Boolean  @default(false) // NearMe v2 AI moderation flag
   readAt           DateTime?
   deletedAt        DateTime? // unsend / delete-for-everyone
 
@@ -306,8 +484,23 @@ model Call {
   endedAt     DateTime?
   durationSec Int?
 
-  caller User @relation("Caller", fields: [callerId], references: [id], onDelete: Cascade)
-  callee User @relation("Callee", fields: [calleeId], references: [id], onDelete: Cascade)
+  // NearMe v2: link to conversation (call only allowed when conversation.callUnlocked=true)
+  conversationId String?
+
+  // NearMe v2: Agora SDK channel/token (never exposed to frontend after call ends)
+  agoraChannelName String?
+  agoraToken       String?
+
+  // NearMe v2: free-tier tracking
+  durationSeconds Int? // alias for durationSec for new code
+  endReason       String? // user_ended | time_limit_reached | blocked | network_error
+
+  // NearMe v2: scheduled call — Gold+
+  scheduledAt DateTime?
+
+  caller       User          @relation("Caller", fields: [callerId], references: [id], onDelete: Cascade)
+  callee       User          @relation("Callee", fields: [calleeId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id])
 
   @@index([callerId, startedAt])
   @@index([calleeId, startedAt])
@@ -435,6 +628,14 @@ model Subscription {
   expiresAt   DateTime
   externalRef String?
 
+  // NearMe v2: plan-based subscription fields
+  plan        Plan?
+  billingCycle BillingCycle?
+  priceInr    Int?
+  paymentProvider String? // razorpay | stripe
+  providerSubscriptionId String?
+  cancelledAt DateTime?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("subscriptions")
@@ -508,4 +709,106 @@ model Report {
 
   @@index([reportedId])
   @@map("reports")
+}
+
+// ─────────────────────────────────────────────────────────
+// NearMe v2 — new models
+// ─────────────────────────────────────────────────────────
+
+// Mute: messages arrive silently, no push notifications
+model Mute {
+  id      String @id @default(uuid())
+  muterId String
+  mutedId String
+
+  createdAt DateTime @default(now())
+
+  muter User @relation("MuteOwner", fields: [muterId], references: [id], onDelete: Cascade)
+  muted User @relation("MuteTarget", fields: [mutedId], references: [id], onDelete: Cascade)
+
+  @@unique([muterId, mutedId])
+  @@index([muterId])
+  @@map("mutes")
+}
+
+// Add-on purchases: boosts, chat packs, travel passes, verified badge top-ups, call top-ups
+model AddOnPurchase {
+  id      String    @id @default(uuid())
+  userId  String
+  addOnType AddOnType
+
+  priceInr     Int
+  chatSlotsAdded Int? // for chat_pack_* types
+  audioMinutesAdded Int? // for audio_call_topup
+  videoMinutesAdded Int? // for video_call_topup
+
+  activatedAt DateTime @default(now())
+  expiresAt   DateTime? // null for permanent add-ons (verified_badge)
+  isActive    Boolean   @default(true)
+
+  paymentProvider String // razorpay | stripe
+  providerOrderId String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([userId, expiresAt])
+  @@map("add_on_purchases")
+}
+
+// Saved opening message templates — Premium+
+model MessageTemplate {
+  id           String @id @default(uuid())
+  userId       String
+  content      String
+  displayOrder Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("message_templates")
+}
+
+// City profiles for Travel & Explore mode — Gold+
+model CityProfile {
+  id       String @id @default(uuid())
+  userId   String
+  cityName String
+
+  // Coordinates never exposed to other users
+  lat Float
+  lng Float
+
+  isActive         Boolean @default(false) // only one active at a time; overrides real location for grid
+  visitingSoonBadge Boolean @default(true) // shown on profile card when using a city profile
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("city_profiles")
+}
+
+// AI moderation flags for messages and photos
+model ModerationFlag {
+  id         String             @id @default(uuid())
+  targetType String // message | photo
+  targetId   String
+  flagType   ModerationFlagType
+  status     String             @default("pending") // pending | reviewed_actioned | reviewed_cleared
+
+  reviewedAt DateTime?
+  reviewedBy String? // admin userId
+
+  createdAt DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([status, createdAt])
+  @@map("moderation_flags")
 }
