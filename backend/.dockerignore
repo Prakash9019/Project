@@ -1,7 +1,10 @@
 node_modules
 dist
-.env
 .git
+.env
+.env.*
 *.log
-.DS_Store
-npm-debug.log
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts

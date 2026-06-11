@@ -9,7 +9,12 @@ import { env } from './env';
  *  - online presence heartbeat                          -> key: `presence:<userId>`
  */
 export const redis = new Redis(env.redisUrl, {
+  retryStrategy(times: number) {
+    if (times > 10) return null; // stop retrying after 10 attempts
+    return Math.min(times * 100, 3000);
+  },
   maxRetriesPerRequest: 3,
+  connectTimeout: 5000,
   lazyConnect: false,
 });
 
@@ -26,4 +31,21 @@ export const RedisKeys = {
   dailyRequestCap: (userId: string, yyyymmdd: string) => `cap:requests:${userId}:${yyyymmdd}`,
   dailyExpiringPhotoCap: (userId: string, yyyymmdd: string) => `cap:expphoto:${userId}:${yyyymmdd}`,
   presence: (userId: string) => `presence:${userId}`,
+  banned: (userId: string) => `banned:${userId}`,
+  collegeOtp: (userId: string) => `college-otp:${userId}`,
+  lastActive: (userId: string) => `lastActive:${userId}`,
+  aiTop10: (userId: string) => `ai:top10:${userId}`,
+
+  // Rate-limiting keys (Section 1.2)
+  otpReqRate: (phone: string) => `otp_req:${phone}`,
+  otpFailRate: (phone: string) => `otp_fail:${phone}`,
+  otpLocked:   (phone: string) => `otp_locked:${phone}`,
+  refreshRate: (ip: string)   => `refresh_rate:${ip}`,
+
+  // Section 2.3 — blocked IDs cache (30s TTL)
+  blockedIds: (userId: string) => `blocked:${userId}`,
+
+  // Section 2.4 — static data response caches
+  cacheBillingPlans: 'cache:billing_plans',
+  cacheCatalogs: 'cache:catalogs',
 };

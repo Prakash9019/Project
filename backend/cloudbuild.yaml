@@ -1,0 +1,41 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/nearme-api:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/nearme-api:latest'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/nearme-api:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/nearme-api:latest']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - nearme-api
+      - '--image=gcr.io/$PROJECT_ID/nearme-api:$COMMIT_SHA'
+      - '--region=asia-south1'
+      - '--platform=managed'
+      - '--min-instances=2'
+      - '--max-instances=20'
+      - '--concurrency=80'
+      - '--cpu=2'
+      - '--memory=512Mi'
+      - '--no-allow-unauthenticated'
+      - '--set-env-vars=NODE_ENV=production'
+      - '--update-secrets=DATABASE_URL=nearme-db-url:latest,REDIS_URL=nearme-redis-url:latest,JWT_ACCESS_SECRET=nearme-jwt-access:latest,JWT_REFRESH_SECRET=nearme-jwt-refresh:latest,RAZORPAY_KEY_ID=nearme-razorpay-key-id:latest,RAZORPAY_KEY_SECRET=nearme-razorpay-key-secret:latest,AGORA_APP_ID=nearme-agora-app-id:latest,AGORA_APP_CERTIFICATE=nearme-agora-cert:latest,GCS_BUCKET_NAME=nearme-gcs-bucket:latest,GCS_SERVICE_ACCOUNT_KEY=nearme-gcs-sa-key:latest,ENCRYPTION_KEY=nearme-encryption-key:latest'
+
+images:
+  - 'gcr.io/$PROJECT_ID/nearme-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/nearme-api:latest'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

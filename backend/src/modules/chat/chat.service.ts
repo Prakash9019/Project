@@ -2,16 +2,31 @@ import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { env } from '../../config/env';
 import { Errors } from '../../utils/httpError';
+import { HttpError } from '../../utils/httpError';
 import { todayKey } from '../../utils/crypto';
 import { moderation } from '../../adapters/moderation';
+import { callFlags as computeCallFlags } from '../../utils/callFlags';
+import { emitToConversation } from '../../realtime/emitter';
 
 const SECONDS_IN_DAY = 86400;
+const FREE_TIER_INTERACTION_LIMIT = 20;
+const PREMIUM_EXPIRING_PHOTO_DAILY = 10;
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 export async function getParticipantConversation(userId: string, conversationId: string) {
   const convo = await prisma.conversation.findUnique({ where: { id: conversationId } });
   if (!convo || (convo.userAId !== userId && convo.userBId !== userId)) {
     throw Errors.notFound('Conversation not found');
   }
+  return convo;
+}
+
+/** Return convo, also checking the requesting user hasn't hidden/deleted this thread. */
+export async function getVisibleConversation(userId: string, conversationId: string) {
+  const convo = await getParticipantConversation(userId, conversationId);
+  const isA = convo.userAId === userId;
+  if (isA ? convo.aIsHidden : convo.bIsHidden) throw Errors.notFound('Conversation not found');
+  if (isA ? convo.aDeletedAt !== null : convo.bDeletedAt !== null) throw Errors.notFound('Conversation not found');
   return convo;
 }
 
@@ -23,17 +38,68 @@ function stable(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
 
-/**
- * Start or resume a conversation.
- * If a conversation already exists: return it.
- * If new: create it in `pending` state (lands in receiver's Requests folder).
- * Replying to a pending conversation promotes it to `active`.
- */
+function isActivePlan(plan: string, planExpiresAt: Date | null): boolean {
+  if (plan === 'free') return false;
+  if (!planExpiresAt) return true;
+  return planExpiresAt > new Date();
+}
+
+export function isPaidPlan(plan: string, planExpiresAt: Date | null): boolean {
+  return isActivePlan(plan, planExpiresAt);
+}
+
+/** Serialize a message for API responses — never exposes originalContent, moderationFlagged, deletedAt. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function serializeMessage(msg: any) {
+  return {
+    id: msg.id,
+    conversationId: msg.conversationId,
+    senderId: msg.senderId,
+    type: msg.type,
+    content:    msg.isUnsent ? null : msg.content,
+    ciphertext: msg.isUnsent ? null : msg.ciphertext,
+    mediaUrls:  msg.mediaUrls ?? [],
+    mediaUrl:   msg.mediaUrl ?? null,
+    viewOnce:   msg.viewOnce,
+    expiresInSeconds: msg.expiresInSeconds,
+    expiresAfterView: msg.expiresAfterView ?? (msg.type === 'expiring_photo'),
+    isUnsent:   msg.isUnsent ?? false,
+    unsentAt:   msg.unsentAt ?? null,
+    isEdited:   msg.isEdited ?? false,
+    editedAt:   msg.editedAt ?? null,
+    translatedContent: msg.translatedContent ?? null,
+    readAt:     msg.readAt ?? null,
+    createdAt:  msg.createdAt,
+  };
+}
+
+/** Record a unique interaction for the free-tier lifetime cap. No-op for paid users. */
+async function recordInteraction(actorId: string, targetId: string, type: 'message' | 'like'): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: actorId }, select: { plan: true, planExpiresAt: true } });
+  if (!user || isActivePlan(user.plan, user.planExpiresAt)) return;
+
+  const existing = await prisma.userInteraction.findUnique({
+    where: { actorId_targetId: { actorId, targetId } },
+    select: { id: true },
+  });
+  if (existing) return;
+
+  const count = await prisma.userInteraction.count({ where: { actorId } });
+  if (count >= FREE_TIER_INTERACTION_LIMIT) {
+    throw new HttpError(403, 'interaction_limit_reached',
+      'Free plan allows interactions with up to 20 people. Upgrade to connect with more.',
+      { limit: FREE_TIER_INTERACTION_LIMIT });
+  }
+
+  await prisma.userInteraction.create({ data: { actorId, targetId, interactionType: type } });
+}
+
 export async function startOrGetConversation(senderId: string, receiverId: string) {
   if (senderId === receiverId) throw Errors.badRequest('Cannot message yourself');
 
   const blocked = await prisma.block.findFirst({
     where: { OR: [{ blockerId: senderId, blockedId: receiverId }, { blockerId: receiverId, blockedId: senderId }] },
+    select: { id: true },
   });
   if (blocked) throw Errors.forbidden('You cannot message this user');
 
@@ -45,38 +111,48 @@ export async function startOrGetConversation(senderId: string, receiverId: strin
 
   const existing = await prisma.conversation.findUnique({ where: { userAId_userBId: { userAId, userBId } } });
   if (existing) {
-    // If sender is replying to a pending conversation where they are the receiver, promote it.
+    if (existing.state === 'dismissed') throw Errors.forbidden('This conversation was dismissed');
     if (existing.state === 'pending' && existing.initiatorId !== senderId) {
       return prisma.conversation.update({ where: { id: existing.id }, data: { state: 'active' } });
     }
-    if (existing.state === 'dismissed') throw Errors.forbidden('This conversation was dismissed');
     return existing;
   }
+
+  await recordInteraction(senderId, receiverId, 'message');
 
   return prisma.conversation.create({
     data: { userAId, userBId, initiatorId: senderId, state: 'pending' },
   });
 }
 
+export { computeCallFlags as callFlags };
+
 export async function listConversations(userId: string, folder: 'inbox' | 'requests') {
-  // inbox = active conversations, requests = pending ones where user is NOT the initiator
   const conversations = await prisma.conversation.findMany({
     where: {
-      OR: [{ userAId: userId }, { userBId: userId }],
+      OR: [
+        { userAId: userId, aIsHidden: false, aDeletedAt: null },
+        { userBId: userId, bIsHidden: false, bDeletedAt: null },
+      ],
       state: folder === 'requests' ? 'pending' : 'active',
       ...(folder === 'requests' ? { initiatorId: { not: userId } } : {}),
-      // hide thread-deleted conversations for this user
-      ...(userId ? {
-        AND: [
-          { OR: [{ userAId: { not: userId } }, { aDeletedAt: null }] },
-          { OR: [{ userBId: { not: userId } }, { bDeletedAt: null }] },
-        ]
-      } : {}),
     },
     orderBy: { lastMessageAt: 'desc' },
     include: {
-      userA: { include: { photos: { where: { isPrimary: true }, take: 1 } } },
-      userB: { include: { photos: { where: { isPrimary: true }, take: 1 } } },
+      userA: {
+        include: {
+          photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },
+          settings: true,
+          cityProfiles: { where: { isActive: true }, take: 1 },
+        },
+      },
+      userB: {
+        include: {
+          photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },
+          settings: true,
+          cityProfiles: { where: { isActive: true }, take: 1 },
+        },
+      },
       messages: {
         where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
@@ -84,57 +160,169 @@ export async function listConversations(userId: string, folder: 'inbox' | 'reque
       },
     },
   });
-  return conversations;
+
+  // Unread counts — single groupBy query, no N+1
+  const convoIds = conversations.map((c) => c.id);
+  const unreadGroups = convoIds.length
+    ? await prisma.message.groupBy({
+        by: ['conversationId'],
+        where: {
+          conversationId: { in: convoIds },
+          senderId: { not: userId },
+          readAt: null,
+          deletedAt: null,
+          isUnsent: false,
+        },
+        _count: { id: true },
+      })
+    : [];
+  const unreadByConvoId = new Map(unreadGroups.map((r) => [r.conversationId, r._count.id]));
+
+  // Pinned-first sort (aPinned/bPinned depends on which side the user is on)
+  conversations.sort((a, b) => {
+    const pinnedA = a.userAId === userId ? a.aPinned : a.bPinned;
+    const pinnedB = b.userAId === userId ? b.aPinned : b.bPinned;
+    if (pinnedA !== pinnedB) return pinnedA ? -1 : 1;
+    const latA = a.lastMessageAt?.getTime() ?? 0;
+    const latB = b.lastMessageAt?.getTime() ?? 0;
+    return latB - latA;
+  });
+
+  return conversations.map((c) => ({
+    ...c,
+    unreadCount: unreadByConvoId.get(c.id) ?? 0,
+  }));
 }
 
 export async function listMessages(conversationId: string, before: Date | undefined, limit: number) {
-  return prisma.message.findMany({
-    where: { conversationId, deletedAt: null, ...(before ? { createdAt: { lt: before } } : {}) },
+  const raw = await prisma.message.findMany({
+    where: {
+      conversationId,
+      deletedAt: null,
+      ...(before ? { createdAt: { lt: before } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
-    take: limit,
+    take: limit + 1,
   });
+
+  const hasMore = raw.length > limit;
+  const messages = hasMore ? raw.slice(0, limit) : raw;
+  const nextCursor = hasMore ? messages[messages.length - 1].createdAt.toISOString() : null;
+
+  return { messages: messages.map(serializeMessage), hasMore, nextCursor };
 }
 
 export async function sendMessage(
   conversationId: string,
   senderId: string,
+  plan: string,
+  planExpiresAt: Date | null,
   payload: {
-    type: 'text' | 'photo' | 'video' | 'voice' | 'expiring_photo';
+    type: 'text' | 'photo' | 'video' | 'voice' | 'expiring_photo' | 'voice_note';
     ciphertext?: string;
+    content?: string;
     mediaUrls?: string[];
     viewOnce?: boolean;
     expiresInSeconds?: number;
   },
 ) {
-  const convo = await getParticipantConversation(senderId, conversationId);
+  // 1. Participant + hidden check
+  const convo = await getVisibleConversation(senderId, conversationId);
+  const peerId = otherParty(convo, senderId);
 
-  // ── Expiring-photo daily cap (free tier) ─────────────
-  if (payload.type === 'expiring_photo') {
-    const capKey = RedisKeys.dailyExpiringPhotoCap(senderId, todayKey());
-    const used = Number((await redis.get(capKey)) ?? 0);
-    const sender = await prisma.user.findUnique({ where: { id: senderId }, select: { tier: true } });
-    const isPaidTier = sender?.tier !== 'free';
-    if (!isPaidTier && used >= env.expiringPhoto.freeTierDaily) {
-      throw Errors.paymentRequired('Daily expiring photo limit reached. Upgrade to send more.');
+  // Load peer for pre-send checks
+  const peer = await prisma.user.findUnique({
+    where: { id: peerId },
+    select: {
+      pauseIncomingMessages: true,
+      requireProfileCompletenessToMessage: true,
+      plan: true,
+      planExpiresAt: true,
+    },
+  });
+
+  // 2. pauseIncomingMessages: only blocks NEW conversations (state=pending, no prior messages from sender)
+  if (peer?.pauseIncomingMessages && convo.state === 'pending') {
+    const priorFromSender = await prisma.message.count({
+      where: { conversationId, senderId, deletedAt: null },
+    });
+    if (priorFromSender === 0) {
+      throw new HttpError(403, 'messaging_paused', 'This user is not accepting new messages right now.');
     }
-    if (!isPaidTier) {
+  }
+
+  // 3. requireProfileCompletenessToMessage
+  if (peer?.requireProfileCompletenessToMessage) {
+    const sender = await prisma.user.findUnique({
+      where: { id: senderId },
+      select: { profileCompletenessScore: true },
+    });
+    if ((sender?.profileCompletenessScore ?? 0) < 40) {
+      throw new HttpError(403, 'profile_incomplete_to_message',
+        'Complete your profile to send messages to this user.');
+    }
+  }
+
+  // 4. AI text moderation (text messages only)
+  const textContent = payload.content ?? payload.ciphertext;
+  if (payload.type === 'text' && textContent) {
+    const result = await moderation.classifyText(textContent);
+    if (result.offensive) {
+      // Create auditable flagged message + moderation record, then reject
+      await prisma.$transaction(async (tx) => {
+        const flaggedMsg = await tx.message.create({
+          data: {
+            conversationId,
+            senderId,
+            type: payload.type,
+            ciphertext: payload.ciphertext,
+            content: payload.content,
+            mediaUrls: payload.mediaUrls ?? [],
+            moderationFlagged: true,
+            flaggedOffensive: true,
+          },
+        });
+        await tx.moderationFlag.create({
+          data: {
+            targetType: 'message',
+            targetId: flaggedMsg.id,
+            flagType: (result.categories[0] as never) ?? 'hate_speech',
+          },
+        });
+      });
+      throw new HttpError(451, 'message_flagged', 'Your message was flagged for review.');
+    }
+  }
+
+  // 5. Free-tier interaction cap
+  const isPaid = isActivePlan(plan, planExpiresAt);
+  if (!isPaid) {
+    await recordInteraction(senderId, peerId, 'message');
+  }
+
+  // 6. Expiring photo cap
+  if (payload.type === 'expiring_photo') {
+    if (!isPaid) {
+      throw new HttpError(403, 'plan_required', 'Expiring photos require a Premium or higher plan.', { requiredPlan: 'premium' });
+    }
+    if (plan === 'premium' || (plan !== 'free' && plan !== 'gold' && plan !== 'platinum')) {
+      // Premium: max 10/day
+      const capKey = RedisKeys.dailyExpiringPhotoCap(senderId, todayKey());
+      const used = Number((await redis.get(capKey)) ?? 0);
+      if (used >= PREMIUM_EXPIRING_PHOTO_DAILY) {
+        throw new HttpError(402, 'daily_expiring_photo_limit',
+          `Daily limit of ${PREMIUM_EXPIRING_PHOTO_DAILY} expiring photos reached.`);
+      }
       const next = await redis.incr(capKey);
       if (next === 1) await redis.expire(capKey, SECONDS_IN_DAY);
     }
+    // gold/platinum: unlimited — no cap check
   }
 
-  // ── Moderation hook ───────────────────────────────────
-  let flaggedOffensive = false;
-  if (payload.ciphertext && payload.type === 'text') {
-    const receiver = await prisma.user.findUnique({
-      where: { id: otherParty(convo, senderId) },
-      select: { settings: { select: { blockOffensiveLanguage: true } } },
-    });
-    if (receiver?.settings?.blockOffensiveLanguage) {
-      const result = await moderation.classifyText(payload.ciphertext);
-      if (result.offensive) flaggedOffensive = true;
-    }
-  }
+  // Track whether this message first sets the reply flag
+  const isA = convo.userAId === senderId;
+  const wasFirstReply = isA ? !convo.aHasReplied : !convo.bHasReplied;
+  const replyUpdate = isA ? { aHasReplied: true } : { bHasReplied: true };
 
   const message = await prisma.$transaction(async (tx) => {
     const msg = await tx.message.create({
@@ -143,40 +331,108 @@ export async function sendMessage(
         senderId,
         type: payload.type,
         ciphertext: payload.ciphertext,
+        content: payload.content,
         mediaUrls: payload.mediaUrls ?? [],
         viewOnce: payload.viewOnce ?? payload.type === 'expiring_photo',
+        expiresAfterView: payload.type === 'expiring_photo',
         expiresInSeconds: payload.expiresInSeconds ?? (payload.type === 'expiring_photo' ? env.expiringPhoto.viewSeconds : null),
-        flaggedOffensive,
       },
     });
-    await tx.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: new Date() } });
+
+    await tx.conversation.update({
+      where: { id: conversationId },
+      data: {
+        lastMessageAt: new Date(),
+        state: convo.state === 'pending' ? 'active' : convo.state,
+        ...replyUpdate,
+      },
+    });
+
     return msg;
   });
 
-  return { message, convo };
+  // Emit call.enabled to both when reply flag first becomes true
+  if (wasFirstReply) {
+    const updatedConvo = { ...convo, ...replyUpdate };
+    if (computeCallFlags(updatedConvo, convo.userAId).audioCallEnabled
+      || computeCallFlags(updatedConvo, convo.userBId).audioCallEnabled) {
+      emitToConversation([convo.userAId, convo.userBId], 'call.enabled',
+        { conversationId, audioCallEnabled: true, videoCallEnabled: true });
+    }
+  }
+
+  return {
+    message: serializeMessage(message),
+    convo: { ...convo, ...replyUpdate },
+    peerId,
+    peerPlan: peer?.plan ?? 'free',
+    peerPlanExpiresAt: peer?.planExpiresAt ?? null,
+  };
 }
 
-export async function consumeExpiringPhoto(messageId: string, viewerId: string) {
+export async function editMessage(
+  messageId: string,
+  senderId: string,
+  content: string,
+) {
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
-  if (!msg) throw Errors.notFound('Message not found');
-  if (msg.type !== 'expiring_photo') throw Errors.badRequest('Not an expiring photo');
-  if (msg.senderId === viewerId) throw Errors.badRequest('Sender cannot consume their own expiring photo');
-  if (msg.viewedAt) throw Errors.conflict('Already viewed');
-  return prisma.message.update({ where: { id: messageId }, data: { viewedAt: new Date() } });
+  if (!msg || msg.senderId !== senderId) throw Errors.notFound('Message not found');
+  if (msg.isUnsent) throw Errors.forbidden('Cannot edit an unsent message');
+
+  // 5-minute edit window
+  const age = Date.now() - msg.createdAt.getTime();
+  if (age > EDIT_WINDOW_MS) {
+    throw new HttpError(403, 'edit_window_expired', 'Messages can only be edited within 5 minutes.');
+  }
+
+  // Moderation check on new content
+  const result = await moderation.classifyText(content);
+  if (result.offensive) {
+    throw new HttpError(451, 'message_flagged', 'Your edited message was flagged for review.');
+  }
+
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: {
+      content,
+      // Preserve the first (original) version only
+      originalContent: msg.originalContent ?? msg.content,
+      isEdited: true,
+      editedAt: new Date(),
+    },
+  });
+  return serializeMessage(updated);
 }
 
-export async function unsendMessage(messageId: string, senderId: string) {
+export async function unsendMessage(messageId: string, senderId: string, plan: string, planExpiresAt: Date | null) {
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
   if (!msg) throw Errors.notFound('Message not found');
   if (msg.senderId !== senderId) throw Errors.forbidden('You can only unsend your own messages');
-  if (msg.deletedAt) throw Errors.conflict('Already deleted');
-  return prisma.message.update({ where: { id: messageId }, data: { deletedAt: new Date() } });
+  if (msg.isUnsent) throw Errors.conflict('Message already unsent');
+
+  const paidPlan = isActivePlan(plan, planExpiresAt);
+  const isGoldPlus = paidPlan && (plan === 'gold' || plan === 'platinum');
+  const isPremium = paidPlan && plan === 'premium';
+
+  if (!paidPlan) {
+    throw Errors.forbidden('Unsending messages requires a Premium or higher plan');
+  }
+
+  // Premium: only before read; Gold+: anytime
+  if (isPremium && !isGoldPlus && msg.readAt !== null) {
+    throw new HttpError(403, 'already_read',
+      'Message already read. Upgrade to Gold to unsend after read.');
+  }
+
+  return prisma.message.update({
+    where: { id: messageId },
+    data: { isUnsent: true, unsentAt: new Date() },
+  });
 }
 
 export async function deleteMessageForSelf(messageId: string, userId: string) {
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
   if (!msg) throw Errors.notFound('Message not found');
-  // Soft-delete for self — mark deletedAt (same field; full delete-for-everyone is unsend)
   if (msg.senderId !== userId) throw Errors.forbidden('Cannot delete others\' messages');
   return prisma.message.update({ where: { id: messageId }, data: { deletedAt: new Date() } });
 }
@@ -192,7 +448,13 @@ export async function deleteThread(conversationId: string, userId: string) {
 
 export async function markRead(conversationId: string, readerId: string) {
   await prisma.message.updateMany({
-    where: { conversationId, senderId: { not: readerId }, readAt: null, deletedAt: null },
+    where: {
+      conversationId,
+      senderId: { not: readerId },
+      readAt: null,
+      deletedAt: null,
+      isUnsent: false,
+    },
     data: { readAt: new Date() },
   });
 }
@@ -202,6 +464,33 @@ export async function dismissConversation(conversationId: string, userId: string
   if (convo.initiatorId === userId) throw Errors.forbidden('Initiator cannot dismiss their own request');
   if (convo.state !== 'pending') throw Errors.conflict('Not a pending conversation');
   return prisma.conversation.update({ where: { id: conversationId }, data: { state: 'dismissed' } });
+}
+
+export async function pinConversation(conversationId: string, userId: string) {
+  const convo = await getParticipantConversation(userId, conversationId);
+  const isA = convo.userAId === userId;
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: isA ? { aPinned: true } : { bPinned: true },
+  });
+}
+
+export async function unpinConversation(conversationId: string, userId: string) {
+  const convo = await getParticipantConversation(userId, conversationId);
+  const isA = convo.userAId === userId;
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: isA ? { aPinned: false } : { bPinned: false },
+  });
+}
+
+export async function consumeExpiringPhoto(messageId: string, viewerId: string) {
+  const msg = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!msg) throw Errors.notFound('Message not found');
+  if (msg.type !== 'expiring_photo') throw Errors.badRequest('Not an expiring photo');
+  if (msg.senderId === viewerId) throw Errors.forbidden('Sender cannot view their own expiring photo');
+  if (msg.viewedAt) throw Errors.conflict('Already viewed');
+  return prisma.message.update({ where: { id: messageId }, data: { viewedAt: new Date() } });
 }
 
 // Saved phrases
@@ -221,3 +510,32 @@ export async function deleteSavedPhrase(phraseId: string, userId: string) {
   if (!phrase) throw Errors.notFound('Phrase not found');
   await prisma.savedPhrase.delete({ where: { id: phraseId } });
 }
+
+// Message templates
+
+export async function listTemplates(userId: string) {
+  return prisma.messageTemplate.findMany({ where: { userId }, orderBy: { displayOrder: 'asc' } });
+}
+
+export async function createTemplate(userId: string, content: string, limit: number) {
+  if (limit === 0) {
+    throw new HttpError(403, 'plan_required', 'Message templates require a Premium or higher plan.',
+      { requiredPlan: 'premium' });
+  }
+  const count = await prisma.messageTemplate.count({ where: { userId } });
+  if (count >= limit) {
+    throw new HttpError(403, 'template_limit_reached',
+      `Your plan allows up to ${limit} message templates.`, { limit });
+  }
+  return prisma.messageTemplate.create({
+    data: { userId, content, displayOrder: count },
+  });
+}
+
+export async function deleteTemplate(templateId: string, userId: string) {
+  const template = await prisma.messageTemplate.findFirst({ where: { id: templateId, userId } });
+  if (!template) throw Errors.notFound('Template not found');
+  await prisma.messageTemplate.delete({ where: { id: templateId } });
+}
+
+export { recordInteraction };

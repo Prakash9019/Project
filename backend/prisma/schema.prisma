@@ -29,10 +29,49 @@ enum BodyType {
   slim
   athletic
   average
-  muscular
   curvy
+  heavyset
+  prefer_not_to_say
+  // legacy values kept for migration safety — app layer no longer accepts these
+  muscular
   plus_size
   other
+}
+
+enum SkinTone {
+  very_fair
+  fair
+  medium
+  olive
+  brown
+  dark
+  prefer_not_to_say
+}
+
+enum RelationshipStatus {
+  single
+  committed
+  open_relationship
+  prefer_not_to_say
+}
+
+enum LookingForOption {
+  fwb
+  one_night
+  long_term
+  short_term
+  casual
+  friendship
+}
+
+enum WhereWeCanMeet {
+  my_place
+  your_place
+  restaurant
+  cafe
+  hotel
+  outdoors
+  virtual
 }
 
 enum DatingIntention {
@@ -55,9 +94,9 @@ enum RelationshipType {
 }
 
 enum ConversationState {
-  pending // first DM from a stranger — sits in the receiver's "Requests" folder
-  active // accepted / replied to — lives in the main inbox
-  dismissed // receiver dismissed the request
+  pending
+  active
+  dismissed
 }
 
 enum MessageType {
@@ -66,6 +105,7 @@ enum MessageType {
   video
   voice
   expiring_photo
+  voice_note
 }
 
 enum CallType {
@@ -80,6 +120,8 @@ enum CallStatus {
   missed
   canceled
   ended
+  initiated
+  ongoing
 }
 
 enum VerificationType {
@@ -91,6 +133,8 @@ enum VerificationStatus {
   pending
   approved
   rejected
+  none
+  verified
 }
 
 enum ReportReason {
@@ -184,47 +228,57 @@ enum ModerationFlagType {
 
 model User {
   id            String  @id @default(uuid())
-  phone         String  @unique // E.164, verified via OTP
+  phone         String  @unique
   phoneVerified Boolean @default(false)
 
-  // ── basic profile (all optional) ──
+  // ── basic profile ──
   name             String?
   age              Int?
   gender           Gender?
-  bio              String?           @db.VarChar(150) // single-line bio, capped at 150 chars
-  height           Int? // cm
-  weight           Int? // kg
+  bio              String?           @db.VarChar(600) // plan-limited: free=150, premium=400, gold/plat=600
+  height           Int?
+  weight           Int?
   bodyType         BodyType?
   relationshipType RelationshipType?
 
-  // ── arrays / multi-select profile data ──
-  lookingFor       String[] // free-form "looking for" tags
-  datingIntentions DatingIntention[] // badges — at most 2 (enforced in service)
-  interests        String[] // shared highlights
-  topArtists       String[] // shared highlights — top musical artists
-  tribes           String[] // up to 3 subculture tags
-  tags             String[] // up to 10 personal tags
+  // ── v3: extended profile fields (Change 5) ──
+  skinTone          SkinTone?
+  aboutMe           String?           @db.VarChar(500)
+  whereAreYouFrom   String?
+  relationshipStatus RelationshipStatus?
+  whereWeCanMeet    WhereWeCanMeet[]
+  preferences       String?
+  fantasyTags       String[]
+
+  // ── arrays / multi-select ──
+  lookingFor       String[]          // validated against LookingForOption at app layer
+  datingIntentions DatingIntention[]
+  interests        String[]
+  topArtists       String[]
+  tribes           String[]
+  tags             String[]
   virtualDatingBadge Boolean @default(false)
 
   // ── verification / trust ──
-  isVerified    Boolean @default(false) // paid trust-verification badge
-  photoVerified Boolean @default(false) // AI/selfie photo verification
-  faceVerified  Boolean @default(false) // video-selfie face check
+  // isVerified is computed: true when phoneVerified=true AND faceVerified=true (Change 3.1)
+  isVerified    Boolean @default(false)
+  photoVerified Boolean @default(false)
+  faceVerified  Boolean @default(false)
 
   tier            SubscriptionTier @default(free)
-  reputationScore Float            @default(0.5) // 0..1, blended acceptance + reply rate
+  reputationScore Float            @default(0.5)
 
-  pinHash      String? // optional PIN-lock hash (never exposed to frontend)
+  pinHash      String?
   lastActiveAt DateTime @default(now())
 
   // ── NearMe v2: identity fields ──
   genderIdentity      GenderIdentity?
-  genderIdentityOther String? // free text when genderIdentity=other
+  genderIdentityOther String?
   sexualOrientation   SexualOrientation?
-  wantToSee           WantToSee[] // multi-select
+  wantToSee           WantToSee[]
   relationshipIntent  RelationshipIntent?
-  whoCanDiscoverMe    WantToSee[] // non-binary: which grids to appear in
-  firstName           String? // display name (NearMe uses first name only)
+  whoCanDiscoverMe    WantToSee[]
+  firstName           String?
 
   // ── NearMe v2: plan-based subscription ──
   plan          Plan      @default(free)
@@ -235,45 +289,54 @@ model User {
   videoClipUrl String?
 
   // ── NearMe v2: trust & verification ──
-  verifiedBadge     Boolean @default(false) // blue verified tick (ID-checked)
+  verifiedBadge     Boolean @default(false)
   isCollegeVerified Boolean @default(false)
-  profileCompletenessScore Float @default(0) // 0-100, recomputed on profile save
+  profileCompletenessScore Float @default(0)
 
-  // ── NearMe v2: persistent location (coordinates never exposed to other users) ──
+  // ── NearMe v2: persistent location (never exposed to other users) ──
   locationLat       Float?
   locationLng       Float?
   locationUpdatedAt DateTime?
 
   // ── NearMe v2: grid visibility ──
-  isOnGrid Boolean @default(true) // set false by panic-hide or 48h inactivity
+  // isOnGrid=false: manually hidden via panic-hide. 14-day inactivity is enforced via lastActiveAt filter, not this flag.
+  isOnGrid Boolean @default(true)
 
   // ── NearMe v2: Gold+ privacy settings ──
-  incognitoMode      Boolean @default(false) // browse grid without appearing on others'
+  incognitoMode      Boolean @default(false)
   hideActiveStatus   Boolean @default(false)
   hideLastSeen       Boolean @default(false)
-  hideExactDistance  Boolean @default(false) // shows 'Near you' instead of exact km
+  hideExactDistance  Boolean @default(false)
 
   // ── NearMe v2: LGBTQ+ safety ──
-  showOrientationPublicly Boolean @default(false) // off by default
-  disceetMode             Boolean @default(false) // replace app icon with neutral icon
+  showOrientationPublicly Boolean @default(false)
+  disceetMode             Boolean @default(false)
 
   // ── NearMe v2: women's safety defaults ──
   pauseIncomingMessages              Boolean @default(false)
   requireProfileCompletenessToMessage Boolean @default(false)
   verifiedUsersOnlyFilter            Boolean @default(false)
 
-  // ── NearMe v2: daily limits (server-enforced, never exposed to frontend) ──
-  dailyNewChatCount       Int       @default(0)
-  dailyNewChatResetDate   DateTime?
+  // ── Removed in v3 (Change 6): dailyNewChatCount / dailyNewChatResetDate ──
+  // Replaced by UserInteraction lifetime cap (free=20 unique people)
+
+  // ── NearMe v2: free-tier call minutes ──
   dailyAudioMinutesUsed   Int       @default(0)
   dailyVideoMinutesUsed   Int       @default(0)
   dailyCallMinutesResetDate DateTime?
 
   // ── NearMe v2: grid ranking signal ──
-  historicalReplyRate Float? // 0.0-1.0, updated periodically
+  historicalReplyRate Float?
 
   // ── NearMe v2: Platinum AI opt-in feature flags ──
-  aiOptInFeatures Json? // {profileOptimizer, icebreakers, conversationAssistant, matchingEngine, smartInbox}
+  aiOptInFeatures Json?
+
+  // ── v3 Phase 6: Safety enforcement fields ──
+  restrictedUntil             DateTime?
+  isBanned                    Boolean   @default(false)
+  bannedAt                    DateTime?
+  interactionPenaltyUntil     DateTime?
+  interactionPenaltyMultiplier Float?   @default(1.0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -302,6 +365,10 @@ model User {
   albums      PrivateAlbum[]
   albumGrants PrivateAlbumGrant[] @relation("Grantee")
 
+  // v3: new album feature (Change 7)
+  ownedAlbums  Album[]      @relation("UserAlbums")
+  albumPhotos  AlbumPhoto[] @relation("AlbumPhotoOwner")
+
   callsPlaced   Call[] @relation("Caller")
   callsReceived Call[] @relation("Callee")
 
@@ -310,12 +377,17 @@ model User {
   reportsMade    Report[] @relation("Reporter")
   reportsAgainst Report[] @relation("Reported")
 
-  // NearMe v2 relations
   mutesMade      Mute[]          @relation("MuteOwner")
   mutesAgainst   Mute[]          @relation("MuteTarget")
   addOnPurchases AddOnPurchase[]
   messageTemplates MessageTemplate[]
   cityProfiles   CityProfile[]
+
+  // v3: interaction tracking (Change 6)
+  interactionsMade     UserInteraction[] @relation("InteractionActor")
+  interactionsReceived UserInteraction[] @relation("InteractionTarget")
+
+  refreshTokens RefreshToken[]
 
   @@index([lastActiveAt])
   @@index([createdAt])
@@ -325,14 +397,15 @@ model User {
 }
 
 model Photo {
-  id        String   @id @default(uuid())
-  userId    String
-  url       String
-  isPrimary Boolean  @default(false)
-  isPrivate Boolean  @default(false) // belongs to a private album, not the public profile
-  albumId   String?
-  order     Int      @default(0)
-  createdAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String
+  url         String
+  isPrimary   Boolean  @default(false)
+  isPrivate   Boolean  @default(false)
+  isPublished Boolean  @default(true)  // false = pending manual moderation review
+  albumId     String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
 
   user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   album PrivateAlbum? @relation(fields: [albumId], references: [id], onDelete: SetNull)
@@ -359,29 +432,25 @@ model ProfilePrompt {
 model UserSettings {
   userId String @id
 
-  // discovery / visibility
-  verifiedOnly        Boolean @default(false) // hide unverified accounts
-  proximityShrink     Boolean @default(false) // clamp visible radius to SHRINK_RADIUS_M
-  stealthMode         Boolean @default(false) // pause inbound requests, keep chats alive
+  verifiedOnly        Boolean @default(false)
+  proximityShrink     Boolean @default(false)
+  stealthMode         Boolean @default(false)
   discoverable        Boolean @default(true)
-  showDistance        Boolean @default(true) // distance toggle
-  locationDealbreaker Boolean @default(false) // only see (and be seen by) within radius
-  nationwideMode      Boolean @default(false) // expand discovery to country scale
-  incognito           Boolean @default(false) // browse without being recorded as a viewer
+  showDistance        Boolean @default(true)
+  locationDealbreaker Boolean @default(false)
+  nationwideMode      Boolean @default(false)
+  incognito           Boolean @default(false)
 
-  // privacy
-  appIcon                String  @default("default") // discreet app icon choice
-  screenshotBlock        Boolean @default(false) // block screenshots in private album (client-enforced)
-  blockOffensiveLanguage Boolean @default(false) // hide offensive inbound messages
+  appIcon                String  @default("default")
+  screenshotBlock        Boolean @default(false)
+  blockOffensiveLanguage Boolean @default(false)
 
-  // NearMe v2: advanced grid filters (Gold+)
-  activeLast5MinFilter  Boolean @default(false) // Gold+
-  recentlyJoinedFilter  Boolean @default(false) // Gold+
-  highReplyRateFilter   Boolean @default(false) // Gold+
-  activeLast30MinFilter Boolean @default(false) // Premium+
+  activeLast5MinFilter  Boolean @default(false)
+  recentlyJoinedFilter  Boolean @default(false)
+  highReplyRateFilter   Boolean @default(false)
+  activeLast30MinFilter Boolean @default(false)
 
-  // NearMe v2: custom discovery radius (Gold+)
-  customDistanceKm Float? // 0.5-100km, Gold+; null means use plan default
+  customDistanceKm Float?
 
   updatedAt DateTime @updatedAt
 
@@ -398,18 +467,22 @@ model Conversation {
   id          String            @id @default(uuid())
   userAId     String
   userBId     String
-  initiatorId String // who sent the first message
+  initiatorId String
   state       ConversationState @default(pending)
 
-  // NearMe v2: call unlock — set TRUE server-side the moment the non-initiator sends their first reply.
-  // Client reads this flag; never computes it locally. Call buttons only render when true.
-  callUnlocked Boolean @default(false)
+  // v3: call gate — replaced callUnlocked with per-side reply flags (Change 2)
+  // audioCallEnabled / videoCallEnabled = true when the OTHER party (non-caller) has replied
+  aHasReplied Boolean @default(false) // User A has sent at least one message
+  bHasReplied Boolean @default(false) // User B has sent at least one message
 
-  // NearMe v2: per-side pin (Gold: max 5, Platinum: max 10 — enforced in service)
+  // v3: conversation visibility — set by block (Change 1)
+  // aIsHidden=true means the conversation is hidden from User A's inbox
+  aIsHidden Boolean @default(false)
+  bIsHidden Boolean @default(false)
+
   aPinned Boolean @default(false)
   bPinned Boolean @default(false)
 
-  // per-side archive / soft-delete for thread management
   aArchivedAt DateTime?
   bArchivedAt DateTime?
   aDeletedAt  DateTime?
@@ -435,34 +508,29 @@ model Message {
   senderId       String
   type           MessageType @default(text)
 
-  // E2E text payload (opaque ciphertext). Media lives at signed URLs the client encrypts/uploads.
   ciphertext String?
-  content    String? // plain-text content for non-E2E mode
-  mediaUrls  String[] // photo(s) / video / voice attachments
-  mediaUrl   String? // single media URL for expiring_photo / voice_note
+  content    String?
+  mediaUrls  String[]
+  mediaUrl   String?
 
-  // expiring photo semantics
   viewOnce         Boolean   @default(false)
-  expiresInSeconds Int? // e.g. 10 — countdown once opened
-  viewedAt         DateTime? // when the (single) recipient opened it
-  expiresAfterView Boolean   @default(false) // NearMe v2 expiring photos
+  expiresInSeconds Int?
+  viewedAt         DateTime?
+  expiresAfterView Boolean   @default(false)
 
-  // NearMe v2: unsend (soft-delete for everyone)
   isUnsent    Boolean   @default(false)
   unsentAt    DateTime?
 
-  // NearMe v2: edit — Gold+, 10-minute window
   isEdited        Boolean   @default(false)
   editedAt        DateTime?
-  originalContent String? // preserved for moderation after edit
+  originalContent String?
 
-  // NearMe v2: in-chat translation — Gold+
   translatedContent String?
 
-  flaggedOffensive Boolean   @default(false) // set by moderation adapter (legacy)
-  moderationFlagged Boolean  @default(false) // NearMe v2 AI moderation flag
-  readAt           DateTime?
-  deletedAt        DateTime? // unsend / delete-for-everyone
+  flaggedOffensive  Boolean   @default(false)
+  moderationFlagged Boolean   @default(false)
+  readAt            DateTime?
+  deletedAt         DateTime?
 
   createdAt DateTime @default(now())
 
@@ -484,18 +552,14 @@ model Call {
   endedAt     DateTime?
   durationSec Int?
 
-  // NearMe v2: link to conversation (call only allowed when conversation.callUnlocked=true)
   conversationId String?
 
-  // NearMe v2: Agora SDK channel/token (never exposed to frontend after call ends)
   agoraChannelName String?
   agoraToken       String?
 
-  // NearMe v2: free-tier tracking
-  durationSeconds Int? // alias for durationSec for new code
-  endReason       String? // user_ended | time_limit_reached | blocked | network_error
+  durationSeconds Int?
+  endReason       String?
 
-  // NearMe v2: scheduled call — Gold+
   scheduledAt DateTime?
 
   caller       User          @relation("Caller", fields: [callerId], references: [id], onDelete: Cascade)
@@ -526,8 +590,8 @@ model SavedPhrase {
 
 model Favorite {
   id         String   @id @default(uuid())
-  userId     String // owner
-  favoriteId String // favorited user
+  userId     String
+  favoriteId String
   createdAt  DateTime @default(now())
 
   user     User @relation("FavoriteOwner", fields: [userId], references: [id], onDelete: Cascade)
@@ -595,6 +659,44 @@ model PrivateAlbumGrant {
 }
 
 // ─────────────────────────────────────────────────────────
+// v3: Album feature (Change 7)
+// ─────────────────────────────────────────────────────────
+
+model Album {
+  id           String    @id @default(uuid())
+  userId       String
+  title        String    @db.VarChar(50)
+  coverPhotoId String?   @unique // nullable FK to AlbumPhoto; a photo can be cover of at most one album
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime? // soft delete
+
+  user       User         @relation("UserAlbums", fields: [userId], references: [id], onDelete: Cascade)
+  photos     AlbumPhoto[] @relation("AlbumPhotos")
+  coverPhoto AlbumPhoto?  @relation("AlbumCover", fields: [coverPhotoId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId])
+  @@map("albums")
+}
+
+model AlbumPhoto {
+  id        String   @id @default(uuid())
+  albumId   String
+  userId    String
+  photoUrl  String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  album   Album  @relation("AlbumPhotos", fields: [albumId], references: [id], onDelete: Cascade)
+  user    User   @relation("AlbumPhotoOwner", fields: [userId], references: [id], onDelete: Cascade)
+  coverOf Album? @relation("AlbumCover")
+
+  @@index([albumId, order])
+  @@index([userId])
+  @@map("album_photos")
+}
+
+// ─────────────────────────────────────────────────────────
 // Verification
 // ─────────────────────────────────────────────────────────
 
@@ -603,9 +705,9 @@ model Verification {
   userId     String
   type       VerificationType
   status     VerificationStatus @default(pending)
-  mediaUrl   String // selfie photo / video-selfie URL submitted for review
-  score      Float? // confidence from the AI adapter
-  reason     String? // rejection reason
+  mediaUrl   String
+  score      Float?
+  reason     String?
   createdAt  DateTime           @default(now())
   reviewedAt DateTime?
 
@@ -628,11 +730,10 @@ model Subscription {
   expiresAt   DateTime
   externalRef String?
 
-  // NearMe v2: plan-based subscription fields
   plan        Plan?
   billingCycle BillingCycle?
   priceInr    Int?
-  paymentProvider String? // razorpay | stripe
+  paymentProvider String?
   providerSubscriptionId String?
   cancelledAt DateTime?
 
@@ -693,6 +794,7 @@ model Block {
   blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
 
   @@unique([blockerId, blockedId])
+  @@index([blockedId, blockerId]) // fast reverse lookup for bidirectional block checks
   @@map("blocks")
 }
 
@@ -712,10 +814,9 @@ model Report {
 }
 
 // ─────────────────────────────────────────────────────────
-// NearMe v2 — new models
+// NearMe v2 — models
 // ─────────────────────────────────────────────────────────
 
-// Mute: messages arrive silently, no push notifications
 model Mute {
   id      String @id @default(uuid())
   muterId String
@@ -731,22 +832,21 @@ model Mute {
   @@map("mutes")
 }
 
-// Add-on purchases: boosts, chat packs, travel passes, verified badge top-ups, call top-ups
 model AddOnPurchase {
   id      String    @id @default(uuid())
   userId  String
   addOnType AddOnType
 
   priceInr     Int
-  chatSlotsAdded Int? // for chat_pack_* types
-  audioMinutesAdded Int? // for audio_call_topup
-  videoMinutesAdded Int? // for video_call_topup
+  chatSlotsAdded Int?
+  audioMinutesAdded Int?
+  videoMinutesAdded Int?
 
   activatedAt DateTime @default(now())
-  expiresAt   DateTime? // null for permanent add-ons (verified_badge)
+  expiresAt   DateTime?
   isActive    Boolean   @default(true)
 
-  paymentProvider String // razorpay | stripe
+  paymentProvider String
   providerOrderId String?
 
   createdAt DateTime @default(now())
@@ -758,7 +858,6 @@ model AddOnPurchase {
   @@map("add_on_purchases")
 }
 
-// Saved opening message templates — Premium+
 model MessageTemplate {
   id           String @id @default(uuid())
   userId       String
@@ -774,18 +873,16 @@ model MessageTemplate {
   @@map("message_templates")
 }
 
-// City profiles for Travel & Explore mode — Gold+
 model CityProfile {
   id       String @id @default(uuid())
   userId   String
   cityName String
 
-  // Coordinates never exposed to other users
   lat Float
   lng Float
 
-  isActive         Boolean @default(false) // only one active at a time; overrides real location for grid
-  visitingSoonBadge Boolean @default(true) // shown on profile card when using a city profile
+  isActive         Boolean @default(false)
+  visitingSoonBadge Boolean @default(true)
 
   createdAt DateTime @default(now())
 
@@ -795,20 +892,58 @@ model CityProfile {
   @@map("city_profiles")
 }
 
-// AI moderation flags for messages and photos
 model ModerationFlag {
   id         String             @id @default(uuid())
-  targetType String // message | photo
+  targetType String
   targetId   String
   flagType   ModerationFlagType
-  status     String             @default("pending") // pending | reviewed_actioned | reviewed_cleared
+  status     String             @default("pending")
 
   reviewedAt DateTime?
-  reviewedBy String? // admin userId
+  reviewedBy String?
 
   createdAt DateTime @default(now())
 
   @@index([targetType, targetId])
   @@index([status, createdAt])
   @@map("moderation_flags")
+}
+
+// ─────────────────────────────────────────────────────────
+// v3: Interaction tracking for free-tier lifetime cap (Change 6)
+// ─────────────────────────────────────────────────────────
+
+model UserInteraction {
+  id              String   @id @default(uuid())
+  actorId         String   // user who initiated the interaction
+  targetId        String   // user they interacted with
+  interactionType String   @default("message") // "message" | "like"
+  createdAt       DateTime @default(now())
+
+  actor  User @relation("InteractionActor", fields: [actorId], references: [id], onDelete: Cascade)
+  target User @relation("InteractionTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([actorId, targetId])
+  @@index([actorId])
+  @@map("user_interactions")
+}
+
+// ─────────────────────────────────────────────────────────
+// Security: Refresh token family invalidation (Section 1.1)
+// ─────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  family    String
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([family])
+  @@map("refresh_tokens")
 }

@@ -40,3 +40,16 @@ export function isValidLat(lat: number): boolean {
 export function isValidLng(lng: number): boolean {
   return Number.isFinite(lng) && lng >= -180 && lng <= 180;
 }
+
+/**
+ * Round coordinates to the nearest ~500m grid to prevent precise location tracking
+ * in the Redis geo-index. 0.005 degrees ≈ 555m at equator, ~350m at 50°N.
+ * Exact coordinates are never stored — only this fuzzy bucket.
+ */
+export function fuzzyCoordinates(lat: number, lng: number): { lat: number; lng: number } {
+  const GRID = 0.005;
+  return {
+    lat: Math.round(lat / GRID) * GRID,
+    lng: Math.round(lng / GRID) * GRID,
+  };
+}

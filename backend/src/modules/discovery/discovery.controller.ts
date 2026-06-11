@@ -4,24 +4,32 @@ import { prisma } from '../../config/prisma';
 import { Errors } from '../../utils/httpError';
 import { serializeGridCard } from '../profile/profile.serializer';
 import { emitToUser } from '../../realtime/emitter';
+import { recordInteraction } from '../chat/chat.service';
+import { uuidParam } from '../../utils/validators';
 
 const targetSchema = z.object({ userId: z.string().uuid() });
 
 // ── Favorites ─────────────────────────────────────────────
 
 export async function listFavorites(req: Request, res: Response): Promise<void> {
+  const userId = req.user!.sub;
   const favorites = await prisma.favorite.findMany({
-    where: { userId: req.user!.sub },
+    where: { userId },
     include: { favorite: { include: { photos: { where: { isPrimary: true }, take: 1 } } } },
     orderBy: { createdAt: 'desc' },
   });
-  res.status(200).json({ favorites: favorites.map((f) => serializeGridCard(f.favorite, 0, false, false)) });
+  const favIds = new Set(favorites.map((f) => f.favoriteId));
+  res.status(200).json({ favorites: favorites.map((f) => serializeGridCard(f.favorite, 0, false, false, favIds)) });
 }
 
 export async function addFavorite(req: Request, res: Response): Promise<void> {
   const { userId: favoriteId } = req.body as z.infer<typeof targetSchema>;
   const userId = req.user!.sub;
   if (userId === favoriteId) throw Errors.badRequest('Cannot favorite yourself');
+
+  // Shortlisting counts as a "like" interaction for the free-tier cap
+  await recordInteraction(userId, favoriteId, 'like');
+
   const fav = await prisma.favorite.upsert({
     where: { userId_favoriteId: { userId, favoriteId } },
     update: {},
@@ -31,14 +39,16 @@ export async function addFavorite(req: Request, res: Response): Promise<void> {
 }
 
 export async function removeFavorite(req: Request, res: Response): Promise<void> {
-  const { userId: favoriteId } = req.params;
+  const parsedFavoriteId = uuidParam.safeParse(req.params.userId);
+  if (!parsedFavoriteId.success) { res.status(400).json({ error: 'validation_error', message: 'Invalid ID format' }); return; }
+  const favoriteId = parsedFavoriteId.data;
   await prisma.favorite.deleteMany({ where: { userId: req.user!.sub, favoriteId } });
   res.status(204).send();
 }
 
 export { targetSchema as favoriteSchema };
 
-// ── Taps ─────────────────────────────────────────────────
+// ── Taps (Likes) ─────────────────────────────────────────
 
 export const tapSchema = z.object({ userId: z.string().uuid() });
 
@@ -49,22 +59,33 @@ export async function sendTap(req: Request, res: Response): Promise<void> {
 
   const blocked = await prisma.block.findFirst({
     where: { OR: [{ blockerId: senderId, blockedId: receiverId }, { blockerId: receiverId, blockedId: senderId }] },
+    select: { id: true },
   });
   if (blocked) throw Errors.forbidden('Cannot tap this user');
 
-  const tap = await prisma.tap.upsert({
-    where: { senderId_receiverId: { senderId, receiverId } },
-    update: { createdAt: new Date() },
-    create: { senderId, receiverId },
-  });
+  await recordInteraction(senderId, receiverId, 'like');
 
-  emitToUser(receiverId, 'tap.received', { tapId: tap.id, senderId, createdAt: tap.createdAt });
+  const [tap, sender] = await Promise.all([
+    prisma.tap.upsert({
+      where: { senderId_receiverId: { senderId, receiverId } },
+      update: { createdAt: new Date() },
+      create: { senderId, receiverId },
+    }),
+    prisma.user.findUnique({
+      where: { id: senderId },
+      include: { photos: { where: { isPrimary: true, isPrivate: false }, take: 1 }, settings: true, cityProfiles: { where: { isActive: true }, take: 1 } },
+    }),
+  ]);
+
+  const senderCard = sender ? serializeGridCard(sender, 0, false, false) : null;
+  emitToUser(receiverId, 'tap.received', { tapId: tap.id, senderId, senderCard, createdAt: tap.createdAt });
   res.status(201).json({ id: tap.id });
 }
 
 export async function receivedTaps(req: Request, res: Response): Promise<void> {
+  const userId = req.user!.sub;
   const taps = await prisma.tap.findMany({
-    where: { receiverId: req.user!.sub },
+    where: { receiverId: userId },
     include: { sender: { include: { photos: { where: { isPrimary: true }, take: 1 } } } },
     orderBy: { createdAt: 'desc' },
     take: 50,
@@ -72,16 +93,33 @@ export async function receivedTaps(req: Request, res: Response): Promise<void> {
   res.status(200).json({ taps: taps.map((t) => ({ id: t.id, sender: serializeGridCard(t.sender, 0, false, false), createdAt: t.createdAt })) });
 }
 
-// ── Viewed Me (premium) ──────────────────────────────────
+// ── Viewed Me (Gold+) ────────────────────────────────────
 
 export async function viewedMe(req: Request, res: Response): Promise<void> {
+  if (!req.effectiveLimits?.whoViewedMe) {
+    throw Errors.forbidden('Who viewed me requires a Gold or Platinum plan');
+  }
   const views = await prisma.profileView.findMany({
     where: { viewedId: req.user!.sub },
-    include: { viewer: { include: { photos: { where: { isPrimary: true }, take: 1 } } } },
+    include: {
+      viewer: {
+        include: {
+          photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },
+          settings: true,
+          cityProfiles: { where: { isActive: true }, take: 1 },
+        },
+      },
+    },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
-  res.status(200).json({ views: views.map((v) => ({ id: v.id, viewer: serializeGridCard(v.viewer, 0, false, false), viewedAt: v.createdAt })) });
+  res.status(200).json({
+    views: views.map((v) => ({
+      id: v.id,
+      viewer: serializeGridCard(v.viewer, 0, false, false),
+      viewedAt: v.createdAt,
+    })),
+  });
 }
 
 // ── Private Albums ────────────────────────────────────────
@@ -117,7 +155,11 @@ export async function grantAlbumAccess(req: Request, res: Response): Promise<voi
 }
 
 export async function revokeAlbumAccess(req: Request, res: Response): Promise<void> {
-  const { albumId, userId: granteeId } = req.params;
+  const parsedAlbumId = uuidParam.safeParse(req.params.albumId);
+  const parsedGranteeId = uuidParam.safeParse(req.params.userId);
+  if (!parsedAlbumId.success || !parsedGranteeId.success) { res.status(400).json({ error: 'validation_error', message: 'Invalid ID format' }); return; }
+  const albumId = parsedAlbumId.data;
+  const granteeId = parsedGranteeId.data;
   const album = await prisma.privateAlbum.findFirst({ where: { id: albumId, ownerId: req.user!.sub } });
   if (!album) throw Errors.notFound('Album not found');
   await prisma.privateAlbumGrant.deleteMany({ where: { albumId, granteeId } });

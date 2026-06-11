@@ -1,10 +1,52 @@
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { env } from '../../config/env';
-import { activityStatus } from '../../utils/geo';
-import { MIN_PHOTOS_FOR_DISCOVERY } from '../profile/catalogs';
+import { getBlockedIds } from '../../utils/blocks';
 
-const CANDIDATE_FETCH = 300;
+const CANDIDATE_FETCH = 500;
+const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+// v3 ranking tier score — lower = higher priority
+function planTierScore(plan: string): number {
+  switch (plan) {
+    case 'platinum': return 1;
+    case 'gold':     return 2;
+    case 'premium':  return 3;
+    default:         return 4;
+  }
+}
+
+/** Map gender/genderIdentity to a WantToSee label for orientation filtering. */
+function toDiscoverLabel(gender: string | null, genderIdentity: string | null): string | null {
+  if (genderIdentity === 'non_binary' || gender === 'nonbinary') return 'non_binary_people';
+  if (gender === 'male')   return 'men';
+  if (gender === 'female') return 'women';
+  return null;
+}
+
+/** Orientation-aware visibility check: viewer × candidate cross-reference. */
+function orientationVisible(
+  viewerWantToSee: string[],
+  viewerGender: string | null,
+  viewerGenderIdentity: string | null,
+  candidateWhoCanDiscoverMe: string[],
+  candidateGender: string | null,
+  candidateGenderIdentity: string | null,
+): boolean {
+  // Step 1: viewer wants to see this candidate's gender
+  if (viewerWantToSee.length > 0 && !viewerWantToSee.includes('everyone')) {
+    const candidateLabel = toDiscoverLabel(candidateGender, candidateGenderIdentity);
+    if (candidateLabel && !viewerWantToSee.includes(candidateLabel)) return false;
+  }
+
+  // Step 2: candidate is discoverable by viewer's gender
+  if (candidateWhoCanDiscoverMe.length > 0 && !candidateWhoCanDiscoverMe.includes('everyone')) {
+    const viewerLabel = toDiscoverLabel(viewerGender, viewerGenderIdentity);
+    if (viewerLabel && !candidateWhoCanDiscoverMe.includes(viewerLabel)) return false;
+  }
+
+  return true;
+}
 
 export interface GridFilters {
   viewerId: string;
@@ -13,7 +55,7 @@ export interface GridFilters {
   radiusM: number;
   limit: number;
   offset: number;
-  // optional filters
+  planLimit: number | null;
   onlineOnly?: boolean;
   ageMin?: number;
   ageMax?: number;
@@ -23,16 +65,23 @@ export interface GridFilters {
   tribes?: string[];
   tags?: string[];
   lookingFor?: string[];
-  sort?: 'distance' | 'fresh'; // default = distance (+ boost + reputation)
+  sort?: 'distance' | 'fresh';
   nationwideMode?: boolean;
+  // plan-gated filters
+  verifiedOnly?: boolean;
+  activeLast5Min?: boolean;
+  activeLast30Min?: boolean;
+  recentlyJoined?: boolean;
+  highReplyRate?: boolean;
 }
 
-/** Build the geo-sourced ranked grid page with all server-side filters applied. */
 export async function getGrid(filters: GridFilters) {
-  const { viewerId, lat, lng, radiusM, limit, offset, nationwideMode } = filters;
+  const {
+    viewerId, lat, lng, radiusM, limit, offset, nationwideMode, planLimit,
+  } = filters;
   const effectiveRadius = nationwideMode ? env.nationwideRadiusM : radiusM;
 
-  // 1. Pull nearest candidates from the Redis geo index.
+  // 1. Geo-candidates from Redis
   const raw = (await redis.geosearch(
     RedisKeys.geoUsers,
     'FROMLONLAT', lng, lat,
@@ -42,118 +91,165 @@ export async function getGrid(filters: GridFilters) {
 
   const distanceById = new Map<string, number>();
   for (const [member, dist] of raw) {
-    if (member !== viewerId) distanceById.set(member, Number(dist));
+    if (member !== viewerId) distanceById.set(member, Number(dist) * 1000); // km→m
   }
-  if (distanceById.size === 0) return { total: 0, page: [] as never[] };
+  if (distanceById.size === 0) return { total: 0, page: [] };
 
-  // 2. Viewer settings + block list.
-  const [viewerSettings, blocks] = await Promise.all([
-    prisma.userSettings.findUnique({ where: { userId: viewerId } }),
-    prisma.block.findMany({
-      where: { OR: [{ blockerId: viewerId }, { blockedId: viewerId }] },
-      select: { blockerId: true, blockedId: true },
+  // 2. Load viewer + blocked IDs
+  const [viewer, blockedIds] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: viewerId },
+      select: {
+        wantToSee: true, gender: true, genderIdentity: true,
+        settings: true,
+      },
     }),
+    getBlockedIds(viewerId),
   ]);
 
-  const blockedIds = new Set<string>();
-  for (const b of blocks) blockedIds.add(b.blockerId === viewerId ? b.blockedId : b.blockerId);
+  const candidateIds = [...distanceById.keys()].filter((id) => !blockedIds.has(id));
 
-  // 3. DB filter — applies profile-level filters.
-  const candidateIds = [...distanceById.keys()];
-
-  // Online-only: check Redis presence.
+  // 3. Online presence check for onlineOnly filter
   let onlineIds: Set<string> | null = null;
   if (filters.onlineOnly) {
     const pipeline = redis.pipeline();
     for (const id of candidateIds) pipeline.get(RedisKeys.presence(id));
-    const presenceResults = await pipeline.exec();
+    const results = await pipeline.exec();
     onlineIds = new Set<string>();
-    candidateIds.forEach((id, i) => {
-      if (presenceResults?.[i]?.[1]) onlineIds!.add(id);
-    });
+    candidateIds.forEach((id, i) => { if (results?.[i]?.[1]) onlineIds!.add(id); });
   }
+
+  // 4. Inactivity threshold
+  const activeThreshold = new Date(Date.now() - FOURTEEN_DAYS_MS);
+
+  // 5. Build DB where clause for plan-gated time-based filters
+  const fiveMinAgo   = filters.activeLast5Min  ? new Date(Date.now() - 5 * 60 * 1000)  : null;
+  const thirtyMinAgo = filters.activeLast30Min ? new Date(Date.now() - 30 * 60 * 1000) : null;
+  const twoDaysAgo   = filters.recentlyJoined  ? new Date(Date.now() - 48 * 60 * 60 * 1000) : null;
 
   const users = await prisma.user.findMany({
     where: {
       id: { in: candidateIds },
       phoneVerified: true,
-      name: { not: null },
-      settings: {
-        discoverable: true,
-        // location dealbreaker: viewer's setting; handled in app (radius already clamped)
-        // stealthMode users' discoverability: not directly queryable — handled below
-      },
-      ...(viewerSettings?.verifiedOnly ? { isVerified: true } : {}),
-      // photo verification filter
-      ...(filters.bodyType ? { bodyType: filters.bodyType as any } : {}),
-      ...(filters.ageMin || filters.ageMax ? { age: { ...(filters.ageMin ? { gte: filters.ageMin } : {}), ...(filters.ageMax ? { lte: filters.ageMax } : {}) } } : {}),
-      ...(filters.heightMin || filters.heightMax ? { height: { ...(filters.heightMin ? { gte: filters.heightMin } : {}), ...(filters.heightMax ? { lte: filters.heightMax } : {}) } } : {}),
+      isOnGrid: true,
+      incognitoMode: false,
+      pauseIncomingMessages: false,
+      lastActiveAt: { gte: fiveMinAgo ?? thirtyMinAgo ?? activeThreshold },
+      ...(twoDaysAgo ? { createdAt: { gte: twoDaysAgo } } : {}),
+      settings: { discoverable: true, stealthMode: false },
+      ...(filters.verifiedOnly ? { isVerified: true } : {}),
+      ...(filters.highReplyRate ? { historicalReplyRate: { gt: 0.6 } } : {}),
+      ...(filters.bodyType ? { bodyType: filters.bodyType as never } : {}),
+      ...(filters.ageMin || filters.ageMax ? {
+        age: {
+          ...(filters.ageMin ? { gte: filters.ageMin } : {}),
+          ...(filters.ageMax ? { lte: filters.ageMax } : {}),
+        },
+      } : {}),
+      ...(filters.heightMin || filters.heightMax ? {
+        height: {
+          ...(filters.heightMin ? { gte: filters.heightMin } : {}),
+          ...(filters.heightMax ? { lte: filters.heightMax } : {}),
+        },
+      } : {}),
+      ...(filters.tribes?.length ? { tribes: { hasSome: filters.tribes } } : {}),
+      ...(filters.tags?.length ? { tags: { hasSome: filters.tags } } : {}),
+      ...(filters.lookingFor?.length ? { lookingFor: { hasSome: filters.lookingFor } } : {}),
     },
     include: {
-      photos: { where: { isPrivate: false }, orderBy: { order: 'asc' } },
+      photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },
       settings: true,
+      cityProfiles: { where: { isActive: true }, take: 1 },
     },
   });
 
-  // 4. App-level post-filters.
-  const now = Date.now();
-  const onlineWindowMs = env.grid.onlineWindowSeconds * 1000;
+  // 6. In-memory filters: orientation, onlineOnly, remaining
+  const viewerWantToSee = viewer?.wantToSee ?? [];
+  const viewerGender = viewer?.gender ?? null;
+  const viewerGenderIdentity = viewer?.genderIdentity ?? null;
 
   const visible = users.filter((u) => {
-    if (blockedIds.has(u.id)) return false;
-    if (u.settings?.stealthMode) return false;
-    // must have min 3 public photos for discoverability
-    if (u.photos.length < MIN_PHOTOS_FOR_DISCOVERY) return false;
     if (onlineIds && !onlineIds.has(u.id)) return false;
-    // tribes filter — must have at least one matching tribe
-    if (filters.tribes?.length) {
-      const userTribes = new Set(u.tribes);
-      if (!filters.tribes.some((t) => userTribes.has(t))) return false;
-    }
-    // tags filter
-    if (filters.tags?.length) {
-      const userTags = new Set(u.tags);
-      if (!filters.tags.some((t) => userTags.has(t))) return false;
-    }
-    // lookingFor filter
-    if (filters.lookingFor?.length) {
-      const userLf = new Set(u.lookingFor);
-      if (!filters.lookingFor.some((t) => userLf.has(t))) return false;
-    }
+    // Orientation filter
+    if (
+      !orientationVisible(
+        viewerWantToSee as string[], viewerGender, viewerGenderIdentity,
+        u.whoCanDiscoverMe as string[], u.gender, u.genderIdentity,
+      )
+    ) return false;
     return true;
   });
 
-  // 5. Feed boosts.
-  const boosts = await prisma.feedBoost.findMany({
-    where: { userId: { in: visible.map((u) => u.id) }, expiresAt: { gt: new Date() } },
+  // 7. Load active boost/spotlight add-ons for visible set
+  const visibleIds = visible.map((u) => u.id);
+  const boostPurchases = await prisma.addOnPurchase.findMany({
+    where: {
+      userId: { in: visibleIds },
+      addOnType: { in: ['boost_local', 'boost_extended', 'boost_city_wide', 'mega_boost', 'spotlight'] as never[] },
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
     select: { userId: true },
   });
-  const boostedSet = new Set(boosts.map((b) => b.userId));
+  const boostedSet = new Set(boostPurchases.map((b) => b.userId));
 
-  // 6. Rank.
-  interface RankedEntry { user: typeof visible[number]; distanceMeters: number; boosted: boolean; rankScore: number }
-  const ranked: RankedEntry[] = visible.map((u) => {
-    const distanceMeters = distanceById.get(u.id) ?? effectiveRadius;
-    const { online } = activityStatus(new Date(u.lastActiveAt));
+  // 8. Batch shortlist + tap resolution
+  const [favRows, tapRows] = await Promise.all([
+    prisma.favorite.findMany({ where: { userId: viewerId }, select: { favoriteId: true } }),
+    prisma.tap.findMany({ where: { senderId: viewerId }, select: { receiverId: true } }),
+  ]);
+  const favoritedIds = new Set(favRows.map((f) => f.favoriteId));
+  const tappedIds    = new Set(tapRows.map((t) => t.receiverId));
 
-    let rankScore: number;
-    if (filters.sort === 'fresh') {
-      // "Fresh" — newest profiles first
-      rankScore = -(new Date(u.createdAt).getTime());
-    } else {
-      const distNorm = Math.min(1, distanceMeters / effectiveRadius);
-      const repTerm = 1 - u.reputationScore;
-      const recencyTerm = online ? 0 : now - new Date(u.lastActiveAt).getTime();
-      const recencyNorm = Math.min(1, recencyTerm / (7 * 24 * 3600 * 1000));
-      rankScore = 0.5 * distNorm + 0.3 * repTerm + 0.2 * recencyNorm;
-    }
-    return { user: u, distanceMeters, boosted: boostedSet.has(u.id), rankScore };
-  });
+  // 9. v3 ranking: boosted > platinum > gold > premium > free, then distance, completeness, replyRate
+  interface Ranked { user: typeof visible[number]; distanceMeters: number; boosted: boolean }
+  const ranked: Ranked[] = visible.map((u) => ({
+    user: u,
+    distanceMeters: distanceById.get(u.id) ?? effectiveRadius,
+    boosted: boostedSet.has(u.id),
+  }));
 
-  ranked.sort((a, b) => {
-    if (a.boosted !== b.boosted) return a.boosted ? -1 : 1;
-    return a.rankScore - b.rankScore;
-  });
+  if (filters.sort === 'fresh') {
+    ranked.sort((a, b) => b.user.createdAt.getTime() - a.user.createdAt.getTime());
+  } else {
+    ranked.sort((a, b) => {
+      const boostA = a.boosted ? 0 : 1;
+      const boostB = b.boosted ? 0 : 1;
+      if (boostA !== boostB) return boostA - boostB;
 
-  return { total: ranked.length, page: ranked.slice(offset, offset + limit) };
+      const tierA = planTierScore(a.user.plan);
+      const tierB = planTierScore(b.user.plan);
+      if (tierA !== tierB) return tierA - tierB;
+
+      if (a.distanceMeters !== b.distanceMeters) return a.distanceMeters - b.distanceMeters;
+
+      const compA = a.user.profileCompletenessScore ?? 0;
+      const compB = b.user.profileCompletenessScore ?? 0;
+      if (compA !== compB) return compB - compA;
+
+      const rrA = a.user.historicalReplyRate ?? 0;
+      const rrB = b.user.historicalReplyRate ?? 0;
+      return rrB - rrA;
+    });
+  }
+
+  const total = ranked.length;
+
+  // 10. Plan-gated profile limit
+  const capped = planLimit !== null ? ranked.slice(0, planLimit) : ranked;
+  const page   = capped.slice(offset, offset + limit);
+
+  return {
+    total,
+    page: page.map((p) => ({
+      ...p,
+      isShortlisted: favoritedIds.has(p.user.id),
+      isLiked:       tappedIds.has(p.user.id),
+    })),
+  };
+}
+
+/** Used by explore and for-you — same inactivity + block logic, no geo radius. */
+export async function getBlockedIdsForUser(userId: string): Promise<Set<string>> {
+  return getBlockedIds(userId);
 }

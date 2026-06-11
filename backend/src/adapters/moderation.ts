@@ -1,23 +1,88 @@
-/**
- * AI language filtering / offensive-content detection.
- * Powers "AI Language Filtering" (auto-hide disrespectful messages) and "Block Offensive Language"
- * (reject offensive inbound likes/messages).
- * TODO: wire OpenAI Moderation / Perspective API / a self-hosted classifier.
- */
-export interface ModerationAdapter {
-  classifyText(text: string): Promise<{ offensive: boolean; categories: string[]; score: number }>;
+import { env } from '../config/env';
+import { withTimeout } from '../utils/withTimeout';
+
+export interface ModerationResult {
+  offensive: boolean;
+  categories: string[];
+  score: number;
 }
 
-// Minimal stub word-list so the feature is demonstrable without a provider.
-const STUB_BLOCKLIST = ['slur1', 'slur2', 'offensiveword'];
+export interface ModerationAdapter {
+  classifyText(text: string): Promise<ModerationResult>;
+}
 
-class StubModerationAdapter implements ModerationAdapter {
-  async classifyText(text: string): Promise<{ offensive: boolean; categories: string[]; score: number }> {
-    const lower = text.toLowerCase();
-    const hit = STUB_BLOCKLIST.some((w) => lower.includes(w));
-    // TODO: replace with a real classifier call.
-    return { offensive: hit, categories: hit ? ['harassment'] : [], score: hit ? 0.9 : 0.0 };
+// ── Rule-based fallback (no external dependency) ─────────────────────────────
+
+const BLOCKLIST_PATTERNS = [
+  /\b(slur1|slur2|offensiveword)\b/i,
+  // Extend with project-specific patterns here
+];
+
+function ruleBasedClassify(text: string): ModerationResult {
+  for (const pattern of BLOCKLIST_PATTERNS) {
+    if (pattern.test(text)) {
+      return { offensive: true, categories: ['rule_match'], score: 0.95 };
+    }
+  }
+  return { offensive: false, categories: [], score: 0.0 };
+}
+
+// ── Claude Haiku option A: fetch-based, no SDK required ──────────────────────
+
+async function claudeHaikuClassify(text: string): Promise<ModerationResult> {
+  const apiKey = env.anthropic.apiKey;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+
+  const body = {
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 64,
+    messages: [
+      {
+        role: 'user',
+        content: `You are a content moderation assistant. Classify the following message as offensive or not.\nRespond with JSON only: {"offensive": boolean, "categories": string[], "score": number}\nCategories: harassment, hate_speech, sexual_explicit, threat, spam, none\n\nMessage: ${JSON.stringify(text)}`,
+      },
+    ],
+  };
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) throw new Error(`Anthropic API error: ${resp.status}`);
+
+  const data = await resp.json() as { content: Array<{ text: string }> };
+  const raw = data.content?.[0]?.text ?? '{}';
+  try {
+    return JSON.parse(raw) as ModerationResult;
+  } catch {
+    throw new Error('Failed to parse Claude Haiku moderation response');
   }
 }
 
-export const moderation: ModerationAdapter = new StubModerationAdapter();
+// ── Composite adapter: Claude Haiku → rule-based fallback ────────────────────
+
+class CompositeModerationAdapter implements ModerationAdapter {
+  async classifyText(text: string): Promise<ModerationResult> {
+    if (env.anthropic.apiKey) {
+      try {
+        const result = await withTimeout(
+          claudeHaikuClassify(text),
+          5000,
+          ruleBasedClassify(text), // fallback: rule-based result on timeout
+        );
+        return result;
+      } catch {
+        // fall through to rule-based
+      }
+    }
+    return ruleBasedClassify(text);
+  }
+}
+
+export const moderation: ModerationAdapter = new CompositeModerationAdapter();

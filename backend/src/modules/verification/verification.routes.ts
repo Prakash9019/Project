@@ -7,8 +7,22 @@ import * as c from './verification.controller';
 const router = Router();
 router.use(requireAuth, requireVerifiedPhone);
 
+// Verification status
 router.get('/status', asyncHandler(c.getVerificationStatus));
+
+// Photo & face verification
 router.post('/photo', validate(c.submitSchema), asyncHandler(c.submitPhotoVerification));
 router.post('/face', validate(c.submitSchema), asyncHandler(c.submitFaceVerification));
+
+// Identity verification (DigiLocker / Stripe Identity)
+router.post('/identity', validate(c.identitySchema), asyncHandler(c.verifyIdentity));
+
+// College verification
+router.post('/college', validate(c.collegeSchema), asyncHandler(c.verifyCollege));
+router.post('/college/confirm', validate(c.collegeConfirmSchema), asyncHandler(c.confirmCollegeOtp));
+
+// Profile views & analytics (Gold+)
+router.get('/profile-views', asyncHandler(c.listProfileViews));
+router.get('/analytics', asyncHandler(c.getProfileAnalytics));
 
 export default router;

@@ -6,6 +6,7 @@ import { prisma } from '../config/prisma';
 import { env } from '../config/env';
 import { bindIo, userRoom, emitToUser } from './emitter';
 import { getParticipantConversation, otherParty } from '../modules/chat/chat.service';
+import { activeWsConnections } from '../config/metrics';
 
 export function initSocket(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
@@ -20,6 +21,7 @@ export function initSocket(httpServer: HttpServer): Server {
     try {
       const claims = verifyAccessToken(token);
       socket.data.userId = claims.sub;
+      socket.data.plan = claims.plan ?? 'free';
       next();
     } catch {
       next(new Error('unauthorized'));
@@ -29,6 +31,7 @@ export function initSocket(httpServer: HttpServer): Server {
   io.on('connection', async (socket) => {
     const userId: string = socket.data.userId;
     socket.join(userRoom(userId));
+    activeWsConnections.inc();
     await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
     await prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {});
 
@@ -40,8 +43,11 @@ export function initSocket(httpServer: HttpServer): Server {
       await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
     });
 
-    // ── Typing indicator ────────────────────────────────────
+    // ── Typing indicator (Premium+ only) ───────────────────
     socket.on('typing', async (payload: { conversationId: string; isTyping: boolean }) => {
+      // Gate: only relay if the sender has a paid plan (typingIndicator feature)
+      const plan: string = socket.data.plan ?? 'free';
+      if (plan === 'free') return;
       try {
         const convo = await getParticipantConversation(userId, payload.conversationId);
         emitToUser(otherParty(convo, userId), 'typing', {
@@ -112,6 +118,7 @@ export function initSocket(httpServer: HttpServer): Server {
 
     // ── Disconnect ──────────────────────────────────────────
     socket.on('disconnect', async () => {
+      activeWsConnections.dec();
       const sockets = await io.in(userRoom(userId)).fetchSockets();
       if (sockets.length === 0) await redis.del(RedisKeys.presence(userId));
     });

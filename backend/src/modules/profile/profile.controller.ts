@@ -4,34 +4,58 @@ import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { env } from '../../config/env';
 import { Errors } from '../../utils/httpError';
-import { isValidLat, isValidLng } from '../../utils/geo';
+import { uuidParam } from '../../utils/validators';
+import { isValidLat, isValidLng, fuzzyCoordinates } from '../../utils/geo';
 import { hashPin, verifyPin } from '../../utils/crypto';
 import { serializeSelf, serializePublicProfile, serializeSettings } from './profile.serializer';
 import {
   MAX_TRIBES, MAX_TAGS, MAX_DATING_INTENTIONS,
   TOP_PROMPTS, TRIBES, BODY_TYPES, DATING_INTENTIONS,
+  SKIN_TONES, RELATIONSHIP_STATUSES, LOOKING_FOR_OPTIONS,
+  WHERE_WE_CAN_MEET, FANTASY_TAGS_CURATED,
 } from './catalogs';
+import { recomputeCompletenessScore } from '../../utils/profileScore';
+import { moderateImage } from '../../services/imageModeration';
 
 // ── Schemas ──────────────────────────────────────────────
 
 export const updateProfileSchema = z.object({
-  name:             z.string().min(1).max(60).optional(),
-  age:              z.number().int().min(18).max(120).optional(),
-  gender:           z.enum(['male','female','nonbinary','other']).optional(),
-  bio:              z.string().max(150).optional(),
-  height:           z.number().int().min(50).max(300).optional(),
-  weight:           z.number().int().min(20).max(500).optional(),
-  bodyType:         z.enum(['slim','athletic','average','muscular','curvy','plus_size','other']).optional(),
-  relationshipType: z.enum(['single','dating','open_relationship','married','complicated','prefer_not_to_say']).optional(),
-  lookingFor:       z.array(z.string().max(50)).max(10).optional(),
-  datingIntentions: z.array(z.enum(['casual_dates','intimacy_no_commitment','life_partner','ethical_non_monogamy','marriage','friendship','virtual_dating'])).max(MAX_DATING_INTENTIONS).optional(),
-  interests:        z.array(z.string().max(50)).max(50).optional(),
-  topArtists:       z.array(z.string().max(80)).max(20).optional(),
-  tribes:           z.array(z.string().max(50)).max(MAX_TRIBES).optional(),
-  tags:             z.array(z.string().max(50)).max(MAX_TAGS).optional(),
+  name:               z.string().min(1).max(60).optional(),
+  firstName:          z.string().min(1).max(60).optional(),
+  age:                z.number().int().min(18).max(120).optional(),
+  gender:             z.enum(['male','female','nonbinary','other']).optional(),
+  bio:                z.string().max(600).optional(),
+  height:             z.number().int().min(50).max(300).optional(),
+  weight:             z.number().int().min(20).max(500).optional(),
+  // Change 5: canonical bodyType values
+  bodyType:           z.enum(['slim','athletic','average','curvy','heavyset','prefer_not_to_say']).optional(),
+  relationshipType:   z.enum(['single','dating','open_relationship','married','complicated','prefer_not_to_say']).optional(),
+  // Change 5: typed lookingFor
+  lookingFor:         z.array(z.enum(['fwb','one_night','long_term','short_term','casual','friendship'])).max(10).optional(),
+  datingIntentions:   z.array(z.enum(['casual_dates','intimacy_no_commitment','life_partner','ethical_non_monogamy','marriage','friendship','virtual_dating'])).max(MAX_DATING_INTENTIONS).optional(),
+  interests:          z.array(z.string().max(50)).max(50).optional(),
+  topArtists:         z.array(z.string().max(80)).max(20).optional(),
+  tribes:             z.array(z.string().max(50)).max(MAX_TRIBES).optional(),
+  tags:               z.array(z.string().max(50)).max(MAX_TAGS).optional(),
   virtualDatingBadge: z.boolean().optional(),
+  // Change 5: new profile fields
+  skinTone:           z.enum(['very_fair','fair','medium','olive','brown','dark','prefer_not_to_say']).optional(),
+  aboutMe:            z.string().max(500).optional(),
+  whereAreYouFrom:    z.string().max(100).optional(),
+  relationshipStatus: z.enum(['single','committed','open_relationship','prefer_not_to_say']).optional(),
+  whereWeCanMeet:     z.array(z.enum(['my_place','your_place','restaurant','cafe','hotel','outdoors','virtual'])).optional(),
+  preferences:        z.string().max(500).optional(),
+  fantasyTags:        z.array(z.string().max(50)).max(20).optional(),
+  // v2 identity fields
+  genderIdentity:     z.enum(['man','woman','non_binary','trans_man','trans_woman','genderqueer','genderfluid','other']).optional(),
+  genderIdentityOther: z.string().max(100).optional(),
+  sexualOrientation:  z.enum(['straight','gay','lesbian','bisexual','queer','pansexual','other']).optional(),
+  wantToSee:          z.array(z.enum(['men','women','everyone','non_binary_people'])).optional(),
+  relationshipIntent: z.enum(['dating','friendship','networking','open_to_anything']).optional(),
+  whoCanDiscoverMe:   z.array(z.enum(['men','women','everyone','non_binary_people'])).optional(),
 });
 
+// Change 3.2: profile photo is a single optional upload — no minimum requirement
 export const addPhotoSchema = z.object({
   url:       z.string().url(),
   isPrimary: z.boolean().optional(),
@@ -51,6 +75,14 @@ export const settingsSchema = z.object({
   appIcon:               z.string().max(40).optional(),
   screenshotBlock:       z.boolean().optional(),
   blockOffensiveLanguage: z.boolean().optional(),
+  hideActiveStatus:      z.boolean().optional(),
+  hideLastSeen:          z.boolean().optional(),
+  hideExactDistance:     z.boolean().optional(),
+  showOrientationPublicly: z.boolean().optional(),
+  disceetMode:           z.boolean().optional(),
+  pauseIncomingMessages: z.boolean().optional(),
+  requireProfileCompletenessToMessage: z.boolean().optional(),
+  verifiedUsersOnlyFilter: z.boolean().optional(),
 });
 
 export const locationSchema = z.object({
@@ -76,25 +108,65 @@ export const pinVerifySchema = z.object({
 
 export async function updateProfile(req: Request, res: Response): Promise<void> {
   const data = req.body as z.infer<typeof updateProfileSchema>;
-  const user = await prisma.user.update({
-    where: { id: req.user!.sub },
-    data,
+  const userId = req.user!.sub;
+
+  // Plan-based bio length enforcement (uses JWT claim — no DB hit)
+  if (data.bio !== undefined) {
+    const maxBio = req.effectiveLimits?.bioChars ?? 150;
+    if (data.bio.length > maxBio) {
+      throw Errors.validation(`Bio exceeds plan limit of ${maxBio} characters`);
+    }
+  }
+
+  // Women's safety defaults: set verifiedUsersOnlyFilter=true the first time gender is set to female/woman
+  const needsWomenDefault = data.gender === 'female' || data.genderIdentity === 'woman';
+  const updateData: Record<string, unknown> = { ...data };
+
+  if (needsWomenDefault) {
+    const existing = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { gender: true, genderIdentity: true },
+    });
+    // Only apply default on first-time gender assignment
+    if (!existing?.gender && !existing?.genderIdentity) {
+      updateData.verifiedUsersOnlyFilter = true;
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: updateData as Parameters<typeof prisma.user.update>[0]['data'],
     include: { photos: { orderBy: { order: 'asc' } }, settings: true, prompts: { orderBy: { order: 'asc' } } },
   });
-  res.status(200).json(serializeSelf(user));
+  // Fire-and-forget: recompute completeness score after profile fields change
+  recomputeCompletenessScore(userId).catch(() => {});
+  res.status(200).json(serializeSelf(updated));
 }
 
+// Change 3.2: profile picture is a single optional upload — no min photo requirement
 export async function addPhoto(req: Request, res: Response): Promise<void> {
   const { url, isPrimary, isPrivate, albumId } = req.body as z.infer<typeof addPhotoSchema>;
   const userId = req.user!.sub;
+
+  // Image moderation: reject explicit content; queue for review if suggestive
+  const modResult = await moderateImage(url);
+  if (modResult === 'reject') {
+    throw Errors.badRequest('Photo rejected: content violates community guidelines');
+  }
+  const isPublished = modResult === 'allow';
+
   const count = await prisma.photo.count({ where: { userId, isPrivate: false } });
-  const makePrimary = !isPrivate && (isPrimary || count === 0);
+  // Only mark as primary if it passed moderation (is published)
+  const makePrimary = isPublished && !isPrivate && (isPrimary || count === 0);
 
   const photo = await prisma.$transaction(async (tx) => {
     if (makePrimary) await tx.photo.updateMany({ where: { userId }, data: { isPrimary: false } });
-    return tx.photo.create({ data: { userId, url, isPrimary: makePrimary, isPrivate: isPrivate ?? false, albumId, order: count } });
+    return tx.photo.create({
+      data: { userId, url, isPrimary: makePrimary, isPrivate: isPrivate ?? false, albumId, order: count, isPublished },
+    });
   });
-  res.status(201).json(photo);
+  recomputeCompletenessScore(userId).catch(() => {});
+  res.status(201).json({ ...photo, pendingReview: !isPublished });
 }
 
 export async function setPrimaryPhoto(req: Request, res: Response): Promise<void> {
@@ -115,11 +187,19 @@ export async function deletePhoto(req: Request, res: Response): Promise<void> {
   const photo = await prisma.photo.findFirst({ where: { id: photoId, userId } });
   if (!photo) throw Errors.notFound('Photo not found');
   await prisma.photo.delete({ where: { id: photoId } });
+  recomputeCompletenessScore(userId).catch(() => {});
   res.status(204).send();
 }
 
 export async function updateSettings(req: Request, res: Response): Promise<void> {
   const data = req.body as z.infer<typeof settingsSchema>;
+  const limits = req.effectiveLimits;
+
+  // Plan-gated setting guards
+  if (data.incognito && !limits?.incognitoMode) {
+    throw Errors.forbidden('Incognito mode requires Gold or Platinum plan');
+  }
+
   const settings = await prisma.userSettings.upsert({
     where: { userId: req.user!.sub },
     update: data,
@@ -131,18 +211,36 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
 export async function updateLocation(req: Request, res: Response): Promise<void> {
   const { lat, lng } = req.body as z.infer<typeof locationSchema>;
   const userId = req.user!.sub;
-  await redis.geoadd(RedisKeys.geoUsers, lng, lat, userId);
+
+  // Check for active city profile (travel mode)
+  const activeProfile = await prisma.cityProfile.findFirst({
+    where: { userId, isActive: true },
+  });
+
+  if (activeProfile) {
+    // User is in travel mode — real location update deactivates travel mode ("returning home")
+    await prisma.cityProfile.updateMany({
+      where: { userId },
+      data: { isActive: false, visitingSoonBadge: false },
+    });
+  }
+
+  // Fuzz to ±500m grid before storing — exact coordinates are NEVER persisted
+  const { lat: fuzzyLat, lng: fuzzyLng } = fuzzyCoordinates(lat, lng);
+  await redis.geoadd(RedisKeys.geoUsers, fuzzyLng, fuzzyLat, userId);
   await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
-  await prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } });
   res.status(200).json({ ok: true });
 }
 
 export async function getPublicProfile(req: Request, res: Response): Promise<void> {
   const viewerId = req.user!.sub;
-  const { userId } = req.params;
+  const parsedUserId = uuidParam.safeParse(req.params.userId);
+  if (!parsedUserId.success) { res.status(400).json({ error: 'validation_error', message: 'Invalid ID format' }); return; }
+  const userId = parsedUserId.data;
 
   const blocked = await prisma.block.findFirst({
     where: { OR: [{ blockerId: viewerId, blockedId: userId }, { blockerId: userId, blockedId: viewerId }] },
+    select: { id: true },
   });
   if (blocked) throw Errors.notFound('Profile not available');
 
@@ -155,7 +253,6 @@ export async function getPublicProfile(req: Request, res: Response): Promise<voi
   ]);
   if (!user) throw Errors.notFound('Profile not found');
 
-  // Record the view unless the viewer has incognito on.
   if (!viewer?.settings?.incognito && viewerId !== userId) {
     await prisma.profileView.upsert({
       where: { viewerId_viewedId: { viewerId, viewedId: userId } },
@@ -167,7 +264,7 @@ export async function getPublicProfile(req: Request, res: Response): Promise<voi
   res.status(200).json(serializePublicProfile(user, viewer));
 }
 
-// ── Prompts (Hinge-style personality prompts) ────────────
+// ── Prompts ──────────────────────────────────────────────
 
 export async function listPrompts(req: Request, res: Response): Promise<void> {
   const prompts = await prisma.profilePrompt.findMany({
@@ -231,5 +328,23 @@ export async function verifyPinHandler(req: Request, res: Response): Promise<voi
 // ── Catalogs ─────────────────────────────────────────────
 
 export async function getCatalogs(_req: Request, res: Response): Promise<void> {
-  res.status(200).json({ prompts: TOP_PROMPTS, tribes: TRIBES, bodyTypes: BODY_TYPES, datingIntentions: DATING_INTENTIONS });
+  const cacheKey = RedisKeys.cacheCatalogs;
+  const cached = await redis.get(cacheKey);
+  if (cached) {
+    res.status(200).json(JSON.parse(cached));
+    return;
+  }
+  const payload = {
+    prompts: TOP_PROMPTS,
+    tribes: TRIBES,
+    bodyTypes: BODY_TYPES,
+    skinTones: SKIN_TONES,
+    relationshipStatuses: RELATIONSHIP_STATUSES,
+    lookingForOptions: LOOKING_FOR_OPTIONS,
+    whereWeCanMeet: WHERE_WE_CAN_MEET,
+    fantasyTagsCurated: FANTASY_TAGS_CURATED,
+    datingIntentions: DATING_INTENTIONS,
+  };
+  await redis.set(cacheKey, JSON.stringify(payload), 'EX', 86400);
+  res.status(200).json(payload);
 }

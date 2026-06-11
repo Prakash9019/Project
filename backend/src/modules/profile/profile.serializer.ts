@@ -6,14 +6,22 @@ type UserWithRelations = any;
 function profileFields(user: UserWithRelations) {
   return {
     name: user.name,
+    firstName: user.firstName,
     age: user.age,
     gender: user.gender,
     bio: user.bio,
     height: user.height,
     weight: user.weight,
     bodyType: user.bodyType,
+    skinTone: user.skinTone,
+    aboutMe: user.aboutMe,
+    whereAreYouFrom: user.whereAreYouFrom,
+    relationshipStatus: user.relationshipStatus,
     relationshipType: user.relationshipType,
     lookingFor: user.lookingFor ?? [],
+    whereWeCanMeet: user.whereWeCanMeet ?? [],
+    preferences: user.preferences,
+    fantasyTags: user.fantasyTags ?? [],
     datingIntentions: user.datingIntentions ?? [],
     interests: user.interests ?? [],
     topArtists: user.topArtists ?? [],
@@ -28,12 +36,16 @@ function profileFields(user: UserWithRelations) {
 
 /** Full self-view returned to the authenticated owner. */
 export function serializeSelf(user: UserWithRelations) {
+  const primary = (user.photos ?? []).find((p: any) => p.isPrimary) ?? user.photos?.[0];
   return {
     id: user.id,
     phone: user.phone,
     phoneVerified: user.phoneVerified,
     ...profileFields(user),
+    profilePhoto: primary?.url ?? null,
+    plan: user.plan,
     tier: user.tier,
+    planExpiresAt: user.planExpiresAt,
     reputationScore: user.reputationScore,
     hasPin: Boolean(user.pinHash),
     photos: (user.photos ?? []).map(serializePhoto),
@@ -43,7 +55,7 @@ export function serializeSelf(user: UserWithRelations) {
   };
 }
 
-/** Public profile view (Profile Inspection Overlay). `viewer` enables shared-highlight computation. */
+/** Public profile view. */
 export function serializePublicProfile(user: UserWithRelations, viewer?: UserWithRelations) {
   const shared = viewer
     ? {
@@ -53,44 +65,87 @@ export function serializePublicProfile(user: UserWithRelations, viewer?: UserWit
       }
     : undefined;
 
+  const primary = (user.photos ?? []).find((p: any) => p.isPrimary && !p.isPrivate) ?? user.photos?.[0];
+
   return {
     id: user.id,
     ...profileFields(user),
+    profilePhoto: primary?.url ?? null,
+    activity: activityStatus(new Date(user.lastActiveAt)),
     photos: (user.photos ?? []).filter((p: any) => !p.isPrivate).map(serializePhoto),
     prompts: (user.prompts ?? []).map(serializePrompt),
-    activity: activityStatus(new Date(user.lastActiveAt)),
     ...(shared ? { sharedHighlights: shared } : {}),
   };
 }
 
 /**
- * Compact grid card. `distanceMeters` is raw distance from Redis; we render only a fuzzed label
- * (precise coordinates are never exposed). `showDistance=false` hides the label but order is kept.
+ * Compact grid card: returns all required card fields.
+ * viewerFavs/viewerLikes are used to set isShortlisted/isLiked per card.
  */
 export function serializeGridCard(
   user: UserWithRelations,
   distanceMeters: number,
   boosted: boolean,
   showDistance = true,
+  viewerFavs?: Set<string>,
+  viewerLikes?: Set<string>,
 ) {
-  const primary = (user.photos ?? []).find((p: any) => p.isPrimary) ?? user.photos?.[0];
+  const primary = (user.photos ?? []).find((p: any) => p.isPrimary && !p.isPrivate) ?? user.photos?.[0];
+  const settings = user.settings ?? {};
+
+  // Respect candidate's privacy settings
+  const hideActivity = settings.hideActiveStatus ?? false;
+  const hideLastSeen = settings.hideLastSeen ?? false;
+  const activity = hideActivity ? { label: null, isOnline: false } : activityStatus(new Date(user.lastActiveAt));
+
+  // visiting-soon badge: user has an active city profile with visitingSoonBadge=true
+  const activeCityProfile = (user.cityProfiles ?? []).find((cp: any) => cp.isActive);
+  const visitingSoonBadge = activeCityProfile?.visitingSoonBadge
+    ? { cityName: activeCityProfile.cityName as string }
+    : null;
+
+  // Orientation shown publicly only if user opted in
+  const showOrientation = settings.showOrientationPublicly ?? false;
+
   return {
     id: user.id,
+    profilePhoto: primary?.url ?? null,
+    thumbnailUrl: primary?.url ?? null,
+    firstName: user.firstName,
     name: user.name,
     age: user.age,
     isVerified: user.isVerified,
     photoVerified: user.photoVerified,
     bodyType: user.bodyType,
+    skinTone: user.skinTone,
+    height: user.height,
+    weight: user.weight,
+    aboutMe: user.aboutMe,
+    whereAreYouFrom: user.whereAreYouFrom,
+    relationshipStatus: user.relationshipStatus,
+    lookingFor: user.lookingFor ?? [],
+    whereWeCanMeet: user.whereWeCanMeet ?? [],
+    preferences: user.preferences,
+    fantasyTags: user.fantasyTags ?? [],
+    datingIntentions: user.datingIntentions ?? [],
+    interests: user.interests ?? [],
     tribes: user.tribes ?? [],
-    thumbnailUrl: primary?.url ?? null,
+    tags: user.tags ?? [],
     distanceLabel: showDistance ? distanceLabel(distanceMeters) : null,
-    activity: activityStatus(new Date(user.lastActiveAt)),
+    lastActiveAt: hideLastSeen ? null : activity.label,
+    activity: hideActivity ? null : activity,
     boosted,
+    planBadge: user.plan !== 'free' ? user.plan : null,
+    visitingSoonBadge,
+    ...(showOrientation ? { genderIdentity: user.genderIdentity, sexualOrientation: user.sexualOrientation } : {}),
+    isShortlisted: viewerFavs ? viewerFavs.has(user.id) : undefined,
+    isLiked:       viewerLikes ? viewerLikes.has(user.id) : undefined,
   };
 }
 
 export function serializeSettings(s: UserWithRelations) {
   return {
+    // discovery
     verifiedOnly: s.verifiedOnly,
     proximityShrink: s.proximityShrink,
     stealthMode: s.stealthMode,
@@ -98,10 +153,17 @@ export function serializeSettings(s: UserWithRelations) {
     showDistance: s.showDistance,
     locationDealbreaker: s.locationDealbreaker,
     nationwideMode: s.nationwideMode,
+    customDistanceKm: s.customDistanceKm ?? null,
+    // privacy
     incognito: s.incognito,
     appIcon: s.appIcon,
     screenshotBlock: s.screenshotBlock,
     blockOffensiveLanguage: s.blockOffensiveLanguage,
+    // gold+ filters
+    activeLast5MinFilter: s.activeLast5MinFilter,
+    activeLast30MinFilter: s.activeLast30MinFilter,
+    recentlyJoinedFilter: s.recentlyJoinedFilter,
+    highReplyRateFilter: s.highReplyRateFilter,
   };
 }
 
