@@ -163,3 +163,26 @@ When you're ready to build the frontend, use the frontend-from-spec skill — it
 ✻ Baked for 8m 57s
 
 ※ recap: Built a full production backend for your proximity social app. All 6 task batches complete — schema, adapters, profile, grid/explore/discovery, chat/calls, and Docker. Next: run `docker compose up --build` to start the stack, or begin frontend with the frontend-from-spec skill. (disable recaps in /config)
+
+
+✅ Phase 1 — Centralized Theme System (complete)
+
+┌───────────────────────────────────────────────────────────────────┬───────────────────────────────────┐
+│                               Item                                │              Status               │
+├───────────────────────────────────────────────────────────────────┼───────────────────────────────────┤
+│ src/theme/colors.ts — LightTheme + DarkTheme + AppTheme           │ ✅ Both full palettes, exact spec │
+│                                                                   │  values                           │
+├───────────────────────────────────────────────────────────────────┼───────────────────────────────────┤
+│ src/theme/typography.ts — FontFamily / FontSize / LineHeight      │ ✅                                │
+├───────────────────────────────────────────────────────────────────┼───────────────────────────────────┤
+│ src/theme/ThemeContext.tsx — ThemeProvider + useTheme()           │ ✅ Dark default, AsyncStorage     │
+│                                                                   │ persistence                       │
+├───────────────────────────────────────────────────────────────────┼───────────────────────────────────┤
+│ app/_layout.tsx — wrapped in <ThemeProvider>, status bar +        │ ✅                                │
+│ backgrounds driven by theme                                       │                                   │
+├───────────────────────────────────────────────────────────────────┼───────────────────────────────────┤
+│ Zero TypeScript errors (npx tsc --noEmit)                         │ ✅ TSC_PASS_ZERO_ERRORS           │
+└───────────────────────────────────────────────────────────────────┴───────────────────────────────────┘
+
+One deliberate deviation to call out: instead of rewriting every hardcoded color in all 28 existing screens in this phase (which would be thousands of edits and break the "zero errors per phase" cadence), I kept a @deprecated legacy colors alias mapped onto the NearMe dark palette. Existing screens keep compiling and now render with NearMe brand colors (red-pink #FF4458 instead of Grindr amber). Each subsequent phase migrates the screens it touches to useTheme().theme.*, which is the natural place to do it since those screens are being rewritten for API wiring anyway. By Phase 13 the legacy alias is gone.
+

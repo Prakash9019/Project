@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.1.1",
+    "expo-location": "^56.0.17",
+    "expo-secure-store": "^56.0.4",
+    "install": "^0.13.0",
+    "npm": "^11.17.0",
+    "socket.io-client": "^4.8.3",
+    "zustand": "^5.0.14"
+  }
+}
