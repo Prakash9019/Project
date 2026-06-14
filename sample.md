@@ -186,3 +186,121 @@ When you're ready to build the frontend, use the frontend-from-spec skill — it
 
 One deliberate deviation to call out: instead of rewriting every hardcoded color in all 28 existing screens in this phase (which would be thousands of edits and break the "zero errors per phase" cadence), I kept a @deprecated legacy colors alias mapped onto the NearMe dark palette. Existing screens keep compiling and now render with NearMe brand colors (red-pink #FF4458 instead of Grindr amber). Each subsequent phase migrates the screens it touches to useTheme().theme.*, which is the natural place to do it since those screens are being rewritten for API wiring anyway. By Phase 13 the legacy alias is gone.
 
+
+What you have
+
+- backend/ — Node + TypeScript + Express + Socket.IO API (port 4000), Prisma → PostgreSQL, Redis for geo/OTP/presence.
+- frontend/ — Expo / React Native app (the "NearMe"/Grindr-clone client).
+- Two docker-compose files that conflict:
+  - backend/docker-compose.yml → DB name proximity_social ✅ (matches backend/.env.example)
+  - root docker-compose.yml → DB name nearme ❌ (mismatched, and points at a non-existent ./backend/.env)
+
+👉 Use backend/docker-compose.yml. Ignore the root one for now.
+
+Also: backend/.env does not exist yet — you must create it from .env.example (the most important missing step).
+
+---
+The Playbook
+
+Option A — Everything in Docker (simplest, one command)
+
+cd /Users/suryprakash/Project/backend
+
+# 1. Create your env file (one time)
+cp .env.example .env
+
+# 2. Build + run Postgres, Redis, and the API together.
+#    The api container auto-runs `prisma migrate deploy` then starts the server.
+docker compose up --build
+
+→ API live at http://localhost:4000, Postgres on 5432, Redis on 6379.
+Stop with Ctrl+C; tear down with docker compose down (add -v to also wipe the DB volume).
+
+---
+Option B — DB/Redis in Docker, backend live-reloading on your machine (best for development)
+
+cd /Users/suryprakash/Project/backend
+cp .env.example .env            # one time
+
+# 1. Start only Postgres + Redis
+docker compose up -d postgres redis
+
+# 2. Install deps (one time)
+npm install
+
+# 3. Generate Prisma client + create DB tables (one time / after schema changes)
+npm run prisma:generate
+npm run prisma:migrate          # interactive — name the migration e.g. "init"
+
+# 4. Run the API with hot reload
+npm run dev                     # http://localhost:4000
+
+---
+Frontend (Expo)
+
+cd /Users/suryprakash/Project/frontend
+npm install
+npm start          # then press i (iOS sim), a (Android), or w (web)
+
+---
+Connection links / credentials
+
+┌──────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+│    Thing     │                                       Value                                       │
+├──────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+│ API base URL │ http://localhost:4000                                                             │
+├──────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+│ API prefix   │ /api/v1 (e.g. http://localhost:4000/api/v1/auth/request-otp)                      │
+├──────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+│ WebSocket    │ ws://localhost:4000 (Socket.IO)                                                   │
+├──────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+│ Postgres     │ postgresql://postgres:postgres@localhost:5432/proximity_social?schema=public      │
+├──────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+│ Redis        │ redis://localhost:6379                                                            │
+├──────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+│ OTP in dev   │ OTP_DEV_RETURN=true → the OTP code is returned in the API response, no SMS needed │
+└──────────────┴───────────────────────────────────────────────────────────────────────────────────┘
+
+⚠️ One gotcha for the frontend: frontend/.env has EXPO_PUBLIC_API_URL=http://localhost:4000. localhost works on the iOS simulator and web, but on a physical phone or Android emulator it won't reach your Mac. Use your Mac's LAN IP instead, e.g. EXPO_PUBLIC_API_URL=http://192.168.x.x:4000 (run ipconfig getifaddr en0 to find it).
+
+
+
+✅ Running now
+
+┌─────────────┬───────────────────────┬──────────────────────────────────────────────┐
+│   Service   │        Status         │                     URL                      │
+├─────────────┼───────────────────────┼──────────────────────────────────────────────┤
+│ Postgres    │ healthy (Docker)      │ localhost:5432 (db proximity_social)         │
+├─────────────┼───────────────────────┼──────────────────────────────────────────────┤
+│ Redis       │ healthy (Docker)      │ localhost:6379                               │
+├─────────────┼───────────────────────┼──────────────────────────────────────────────┤
+│ Backend API │ listening, responding │ http://localhost:4000 (routes under /api/v1) │
+└─────────────┴───────────────────────┴──────────────────────────────────────────────┘
+
+Verified end-to-end: POST /api/v1/auth/request-otp returned {"message":"OTP sent","devCode":"210765"} — confirming the API, Redis, and OTP flow all work. Since OTP_DEV_RETURN=true, you get the OTP code right in the response (no SMS needed) for testing login.
+
+What I did
+
+1. Created backend/.env from .env.example
+2. Started Docker Desktop (it wasn't running) → brought up Postgres + Redis
+3. npm install + prisma generate
+4. Hit two problems and fixed both (documented in the playbook):
+  - Broken migrations (type "BodyType" does not exist) → used prisma db push --force-reset to sync the DB straight from schema.prisma
+  - 6 extra required env vars not in .env.example → added dev placeholders so the server boots
+5. Booted the API and confirmed it responds
+
+Two things to know
+
+- The backend server is running in the background in this session. It'll keep running with hot-reload. To stop it later: lsof -ti:4000 | xargs kill, or just close the session.
+- Migrations are broken for fresh DBs — always use npx prisma db push locally, not prisma migrate. Full explanation is in the playbook.
+
+Files created
+
+- PLAYBOOK.md — all commands, connection links, the gotchas above, npm scripts, Docker commands, and the API route map.
+
+Next step — frontend
+
+cd frontend && npm install && npm start
+⚠️ If you test on a physical phone or Android emulator, change EXPO_PUBLIC_API_URL in frontend/.env from localhost to your Mac's LAN IP (ipconfig getifaddr en0). localhost only works on the iOS simulator and web.
+
+
