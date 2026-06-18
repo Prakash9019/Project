@@ -5,7 +5,7 @@ import { useTheme } from '../../src/theme';
 import { NearMeLogo } from '../../src/components/icons';
 import { T } from '../../src/components/ui';
 
-/** NearMe welcome screen — passwordless: both CTAs lead into phone + OTP. */
+/** NearMe welcome screen — email/Google auth. */
 export default function Welcome() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -27,7 +27,7 @@ export default function Welcome() {
         >
           <T style={[styles.primaryText, { color: theme.textInverse }]}>Get Started</T>
         </Pressable>
-        <Pressable style={styles.loginRow} onPress={() => router.push('/onboarding/phone')}>
+        <Pressable style={styles.loginRow} onPress={() => router.push('/onboarding/auth')}>
           <T style={[styles.loginText, { color: theme.textSecondary }]}>
             I have an account  <T style={[styles.loginLink, { color: theme.brand }]}>Log In</T>
           </T>

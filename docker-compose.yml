@@ -12,7 +12,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nearme
+      DATABASE_URL: postgresql://postgres:Prakash%40_2003Nearme@db.xgehqnqorlaxgigdxycr.supabase.co:5432/postgres
       REDIS_URL: redis://redis:6379
       NODE_ENV: development
     restart: unless-stopped

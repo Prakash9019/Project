@@ -40,6 +40,12 @@ export const env = {
     devReturn: bool('OTP_DEV_RETURN', true),
   },
 
+  firebase: {
+    projectId: process.env.FIREBASE_PROJECT_ID ?? '',
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',
+    privateKey: process.env.FIREBASE_PRIVATE_KEY ?? '',
+  },
+
   grid: {
     defaultRadiusM: num('DEFAULT_RADIUS_M', 5000),
     shrinkRadiusM: num('SHRINK_RADIUS_M', 500),
@@ -116,6 +122,12 @@ export const env = {
     from:     process.env.EMAIL_FROM ?? 'noreply@nearme.app',
   },
 
+  sms: {
+    msg91AuthKey:   process.env.MSG91_AUTH_KEY ?? '',
+    msg91TemplateId: process.env.MSG91_TEMPLATE_ID ?? '',
+    msg91SenderId:  process.env.MSG91_SENDER_ID ?? 'PROXIM',
+  },
+
   collegeOtpTtlSeconds: num('COLLEGE_OTP_TTL_SECONDS', 600),
 
   googleMaps: {
@@ -135,7 +147,13 @@ const REQUIRED = [
   'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'AGORA_APP_ID', 'AGORA_APP_CERTIFICATE',
   'GCS_BUCKET_NAME', 'GCS_SERVICE_ACCOUNT_KEY',
 ];
-const OPTIONAL_WARN = ['ANTHROPIC_API_KEY', 'AWS_REKOGNITION_ACCESS_KEY', 'STRIPE_SECRET_KEY', 'DIGILOCKER_CLIENT_ID', 'ENCRYPTION_KEY'];
+// Firebase vars validated lazily by the adapter on first call
+const OPTIONAL_WARN_FIREBASE = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+const OPTIONAL_WARN = [
+  'ANTHROPIC_API_KEY', 'AWS_REKOGNITION_ACCESS_KEY', 'STRIPE_SECRET_KEY',
+  'DIGILOCKER_CLIENT_ID', 'ENCRYPTION_KEY',
+  ...OPTIONAL_WARN_FIREBASE,
+];
 
 export function validateEnv(): void {
   const missing = REQUIRED.filter(k => !process.env[k]);

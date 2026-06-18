@@ -1,39 +1,45 @@
 {
   "project": "NearMe",
-  "description": "Real-Time Proximity Social Discovery — no swipe, no match request. Open chat immediately. Audio/video calls enabled once the other party has replied at least once.",
+  "description": "Real-Time Proximity Social Discovery \u2014 no swipe, no match request. Open chat immediately. Audio/video calls enabled once the other party has replied at least once.",
   "specVersion": "v3.0",
   "baseUrl": "http://localhost:4000",
   "stack": {
     "language": "TypeScript",
-    "framework": "Express (v1) → NestJS (v2 migration)",
+    "framework": "Express (v1) \u2192 NestJS (v2 migration)",
     "database": "PostgreSQL",
     "orm": "Prisma",
-    "auth": "JWT (phone + OTP, passwordless)",
+    "auth": "Firebase Auth (email/password + Google Sign-In) \u2192 custom JWT",
     "realtime": "Socket.IO",
-    "cache": "Redis (geo-spatial index, OTP, rate limits, presence)",
+    "cache": "Redis (geo-spatial index, rate limits, presence)",
     "calling": "Agora SDK or 100ms",
     "ai": "Anthropic Claude API or OpenAI GPT-4o",
     "imageModeration": "AWS Rekognition",
     "pushNotifications": "Firebase Cloud Messaging",
     "payments": "Razorpay (India), Stripe (global)",
     "identityVerification": "DigiLocker (India), Stripe Identity (global)",
-    "storage": "Google Cloud Storage (GCS) — signed URLs for all media"
+    "storage": "Google Cloud Storage (GCS) \u2014 signed URLs for all media"
   },
   "coreMechanic": {
-    "summary": "No swipe. No match request. Person A taps a profile → chat opens immediately. Audio/video call buttons are VISIBLE immediately but DISABLED until Person B sends their first reply. Enforced server-side — no paid override, no bypass.",
+    "summary": "No swipe. No match request. Person A taps a profile \u2192 chat opens immediately. Audio/video call buttons are VISIBLE immediately but DISABLED until Person B sends their first reply. Enforced server-side \u2014 no paid override, no bypass.",
     "callEnableRule": "Calls are enabled once the non-initiating user has sent at least one message. Tracked via aHasReplied/bHasReplied on the Conversation model. Call buttons always visible in UI; only disabled before first reply. No paid override.",
     "freeInteractionCap": {
       "description": "Free users can interact with a maximum of 20 unique people (lifetime cap, not daily)",
       "limit": 20,
       "type": "lifetime",
-      "countsAs": ["sending first message to a new person", "liking (tapping) a new person"],
+      "countsAs": [
+        "sending first message to a new person",
+        "liking (tapping) a new person"
+      ],
       "doesNotCount": "subsequent messages or calls to already-interacted people",
       "paidUsers": "no interaction cap",
-      "tracking": "UserInteraction table — unique (actorId, targetId) pairs",
+      "tracking": "UserInteraction table \u2014 unique (actorId, targetId) pairs",
       "enforcement": "server-side on POST /api/v1/conversations/start and POST /api/v1/discovery/taps"
     },
     "callTimeLimits": {
-      "free": { "audioMinutesPerDay": 5, "videoMinutesPerDay": 2 },
+      "free": {
+        "audioMinutesPerDay": 5,
+        "videoMinutesPerDay": 2
+      },
       "premium": "unlimited",
       "gold": "unlimited",
       "platinum": "unlimited",
@@ -41,8 +47,13 @@
     }
   },
   "subscriptionPlans": {
-    "free":     {
-      "priceInr": { "monthly": 0, "threeMonth": 0, "sixMonth": 0, "annual": 0 },
+    "free": {
+      "priceInr": {
+        "monthly": 0,
+        "threeMonth": 0,
+        "sixMonth": 0,
+        "annual": 0
+      },
       "interactionCap": 20,
       "interactionCapType": "lifetime_unique_people",
       "photos": "unlimited (single profile photo, optional)",
@@ -52,10 +63,18 @@
       "gridProfiles": 100,
       "pinChats": 0,
       "messageTemplates": 0,
-      "albums": { "maxAlbums": 1, "maxPhotosPerAlbum": 10 }
+      "albums": {
+        "maxAlbums": 1,
+        "maxPhotosPerAlbum": 10
+      }
     },
-    "premium":  {
-      "priceInr": { "monthly": 399, "threeMonth": 999, "sixMonth": 1799, "annual": 2999 },
+    "premium": {
+      "priceInr": {
+        "monthly": 399,
+        "threeMonth": 999,
+        "sixMonth": 1799,
+        "annual": 2999
+      },
       "interactionCap": "unlimited",
       "photos": "unlimited",
       "bioChars": 400,
@@ -66,10 +85,18 @@
       "messageTemplates": 5,
       "readReceipts": true,
       "typingIndicator": true,
-      "albums": { "maxAlbums": 3, "maxPhotosPerAlbum": 30 }
+      "albums": {
+        "maxAlbums": 3,
+        "maxPhotosPerAlbum": 30
+      }
     },
-    "gold":     {
-      "priceInr": { "monthly": 799, "threeMonth": 1999, "sixMonth": 3499, "annual": 5999 },
+    "gold": {
+      "priceInr": {
+        "monthly": 799,
+        "threeMonth": 1999,
+        "sixMonth": 3499,
+        "annual": 5999
+      },
       "interactionCap": "unlimited",
       "photos": "unlimited",
       "bioChars": 600,
@@ -83,10 +110,18 @@
       "incognitoMode": true,
       "travelMode": true,
       "whoViewedMe": true,
-      "albums": { "maxAlbums": 5, "maxPhotosPerAlbum": 50 }
+      "albums": {
+        "maxAlbums": 5,
+        "maxPhotosPerAlbum": 50
+      }
     },
     "platinum": {
-      "priceInr": { "monthly": 1499, "threeMonth": 3799, "sixMonth": 6799, "annual": 11499 },
+      "priceInr": {
+        "monthly": 1499,
+        "threeMonth": 3799,
+        "sixMonth": 6799,
+        "annual": 11499
+      },
       "interactionCap": "unlimited",
       "photos": "unlimited",
       "bioChars": 600,
@@ -99,23 +134,91 @@
       "verifiedBadgeIncluded": true,
       "aiFeatures": true,
       "algorithmBoost5x": true,
-      "albums": { "maxAlbums": "unlimited", "maxPhotosPerAlbum": 100 }
+      "albums": {
+        "maxAlbums": "unlimited",
+        "maxPhotosPerAlbum": 100
+      }
     }
   },
   "addOns": [
-    { "id": "boost_local",      "priceInr": 49,  "duration": "30min",   "description": "Top of nearby grid for 30 min" },
-    { "id": "boost_extended",   "priceInr": 99,  "duration": "30min",   "description": "Top of grid with expanded radius" },
-    { "id": "boost_city_wide",  "priceInr": 199, "duration": "30min",   "description": "Top of entire city grid for 30 min" },
-    { "id": "mega_boost",       "priceInr": 499, "duration": "1hour",   "description": "City-wide top placement for 1 hour" },
-    { "id": "spotlight",        "priceInr": 199, "duration": "24hours", "description": "Featured Nearby carousel on home grid" },
-    { "id": "chat_pack_s",      "priceInr": 79,  "chatSlotsAdded": 5,   "description": "5 extra interaction slots (legacy)" },
-    { "id": "chat_pack_m",      "priceInr": 149, "chatSlotsAdded": 15,  "description": "15 extra interaction slots (legacy)" },
-    { "id": "chat_pack_l",      "priceInr": 249, "chatSlotsAdded": 35,  "description": "35 extra interaction slots (legacy)" },
-    { "id": "travel_pass",      "priceInr": 99,  "duration": "24hours", "description": "Travel mode for 24h" },
-    { "id": "travel_pass_week", "priceInr": 299, "duration": "7days",   "description": "Travel mode for 7 days" },
-    { "id": "verified_badge",   "priceInr": 199, "duration": "permanent","description": "Blue verified tick (Gold/Platinum included free)" },
-    { "id": "audio_call_topup", "priceInr": 49,  "audioMinutesAdded": 30, "description": "30 extra audio minutes. Free tier only." },
-    { "id": "video_call_topup", "priceInr": 79,  "videoMinutesAdded": 30, "description": "30 extra video minutes. Free tier only." }
+    {
+      "id": "boost_local",
+      "priceInr": 49,
+      "duration": "30min",
+      "description": "Top of nearby grid for 30 min"
+    },
+    {
+      "id": "boost_extended",
+      "priceInr": 99,
+      "duration": "30min",
+      "description": "Top of grid with expanded radius"
+    },
+    {
+      "id": "boost_city_wide",
+      "priceInr": 199,
+      "duration": "30min",
+      "description": "Top of entire city grid for 30 min"
+    },
+    {
+      "id": "mega_boost",
+      "priceInr": 499,
+      "duration": "1hour",
+      "description": "City-wide top placement for 1 hour"
+    },
+    {
+      "id": "spotlight",
+      "priceInr": 199,
+      "duration": "24hours",
+      "description": "Featured Nearby carousel on home grid"
+    },
+    {
+      "id": "chat_pack_s",
+      "priceInr": 79,
+      "chatSlotsAdded": 5,
+      "description": "5 extra interaction slots (legacy)"
+    },
+    {
+      "id": "chat_pack_m",
+      "priceInr": 149,
+      "chatSlotsAdded": 15,
+      "description": "15 extra interaction slots (legacy)"
+    },
+    {
+      "id": "chat_pack_l",
+      "priceInr": 249,
+      "chatSlotsAdded": 35,
+      "description": "35 extra interaction slots (legacy)"
+    },
+    {
+      "id": "travel_pass",
+      "priceInr": 99,
+      "duration": "24hours",
+      "description": "Travel mode for 24h"
+    },
+    {
+      "id": "travel_pass_week",
+      "priceInr": 299,
+      "duration": "7days",
+      "description": "Travel mode for 7 days"
+    },
+    {
+      "id": "verified_badge",
+      "priceInr": 199,
+      "duration": "permanent",
+      "description": "Blue verified tick (Gold/Platinum included free)"
+    },
+    {
+      "id": "audio_call_topup",
+      "priceInr": 49,
+      "audioMinutesAdded": 30,
+      "description": "30 extra audio minutes. Free tier only."
+    },
+    {
+      "id": "video_call_topup",
+      "priceInr": 79,
+      "videoMinutesAdded": 30,
+      "description": "30 extra video minutes. Free tier only."
+    }
   ],
   "gridRankingAlgorithm": {
     "priorityOrder": [
@@ -133,18 +236,39 @@
   },
   "orientationGridLogic": {
     "notes": "Grid visibility based on WHO THEY WANT TO SEE and WHO WANTS TO SEE THEM.",
-    "rules": ["Straight man → grids of women who want to see men", "Gay man → grids of men who want to see men", "Lesbian woman → grids of women who want to see women", "Bisexual → all matching grids by default", "Non-binary → chooses via whoCanDiscoverMe setting"]
+    "rules": [
+      "Straight man \u2192 grids of women who want to see men",
+      "Gay man \u2192 grids of men who want to see men",
+      "Lesbian woman \u2192 grids of women who want to see women",
+      "Bisexual \u2192 all matching grids by default",
+      "Non-binary \u2192 chooses via whoCanDiscoverMe setting"
+    ]
   },
   "safetySystem": {
     "goldenRule": "Call buttons are always VISIBLE but DISABLED until the other party has sent at least one message. Tracked via aHasReplied / bHasReplied on Conversation. No paid override. No bypass.",
-    "preReply": { "callButtonsDisabled": true, "callButtonsVisible": true, "instantBlock": true, "mute": true, "aiTextModeration": true },
+    "preReply": {
+      "callButtonsDisabled": true,
+      "callButtonsVisible": true,
+      "instantBlock": true,
+      "mute": true,
+      "aiTextModeration": true
+    },
     "blockingSystem": {
-      "mutualVisibility": "Fully mutual — if A blocks B, B also cannot see A in any listing (grid, search, nearby, likes, matches, profile views, recommendations)",
+      "mutualVisibility": "Fully mutual \u2014 if A blocks B, B also cannot see A in any listing (grid, search, nearby, likes, matches, profile views, recommendations)",
       "conversationHiding": "Block immediately sets aIsHidden=bIsHidden=true on the conversation; conversation disappears from both users' inboxes. Messages preserved in DB for moderation. Visibility restores if block is removed.",
       "utility": "isBlocked(userAId, userBId) checks both directions. Every user-listing query must filter blocked users."
     },
-    "lgbtqSafety": { "showOrientationPubliclyOffByDefault": true, "outingProtection": true, "separateReportCategory": "lgbtq_hate", "orientationDataNeverSold": true },
-    "womensSafety": { "verifiedOnlyDefaultForWomen": true, "pauseIncomingMessages": true, "fuzzyDistance": true },
+    "lgbtqSafety": {
+      "showOrientationPubliclyOffByDefault": true,
+      "outingProtection": true,
+      "separateReportCategory": "lgbtq_hate",
+      "orientationDataNeverSold": true
+    },
+    "womensSafety": {
+      "verifiedOnlyDefaultForWomen": true,
+      "pauseIncomingMessages": true,
+      "fuzzyDistance": true
+    },
     "panicHide": "One tap sets isOnGrid=false + pauseIncomingMessages=true. Reversible. Chats preserved."
   },
   "auth": {
@@ -153,72 +277,1045 @@
     "tokenExpiry": "15m",
     "refreshToken": true,
     "refreshExpiry": "7d",
-    "passwordless": true,
-    "flow": "POST /auth/request-otp → POST /auth/verify-otp → accessToken+refreshToken. User upserted on first verification.",
+    "passwordless": false,
+    "identityProvider": "Firebase Auth (email/password + Google Sign-In)",
+    "flow": "Client authenticates with Firebase SDK \u2192 gets Firebase ID token \u2192 POST /api/v1/auth/firebase \u2192 backend verifies with firebase-admin \u2192 upserts user \u2192 issues own JWT pair (accessToken + refreshToken).",
     "endpoints": {
-      "requestOtp": "POST /api/v1/auth/request-otp",
-      "verifyOtp": "POST /api/v1/auth/verify-otp",
+      "firebaseLogin": "POST /api/v1/auth/firebase",
       "refresh": "POST /api/v1/auth/refresh",
       "logout": "POST /api/v1/auth/logout",
       "me": "GET /api/v1/auth/me"
-    }
+    },
+    "removed": [
+      "POST /api/v1/auth/request-otp \u2014 removed, replaced by Firebase",
+      "POST /api/v1/auth/verify-otp \u2014 removed, replaced by Firebase"
+    ],
+    "verifiedGate": "bearer+verified = valid accessToken AND (emailVerified=true OR phoneVerified=true)"
   },
   "endpoints": [
-    {"id":"request-otp","method":"POST","path":"/api/v1/auth/request-otp","auth":"none","summary":"Send 6-digit OTP to phone (E.164).","requestBody":{"required":["phone"],"fields":[{"name":"phone","type":"string","format":"E.164"}]},"responses":{"200":{"schema":{"message":"string","expiresInSeconds":"number"}},"429":{}}},
-    {"id":"verify-otp","method":"POST","path":"/api/v1/auth/verify-otp","auth":"none","summary":"Verify OTP, upsert user, return token pair.","requestBody":{"required":["phone","code"],"fields":[{"name":"phone","type":"string"},{"name":"code","type":"string","format":"6 digits"}]},"responses":{"200":{"schema":{"accessToken":"string","refreshToken":"string","profileComplete":"boolean","isNewUser":"boolean","user":"Self"}},"400":{},"429":{}}},
-    {"id":"refresh-token","method":"POST","path":"/api/v1/auth/refresh","auth":"none","summary":"Exchange refresh token for new access+refresh pair.","requestBody":{"required":["refreshToken"]},"responses":{"200":{"schema":{"accessToken":"string","refreshToken":"string"}},"401":{}}},
-    {"id":"logout","method":"POST","path":"/api/v1/auth/logout","auth":"bearer","summary":"Logout.","responses":{"204":{}}},
-    {"id":"get-me","method":"GET","path":"/api/v1/auth/me","auth":"bearer","summary":"Get authenticated user's full self profile.","responses":{"200":{"schema":"Self"}}},
-    {"id":"update-profile","method":"PATCH","path":"/api/v1/me","auth":"bearer+verified","summary":"Update profile fields. Includes all Change 5 extended fields.","requestBody":{"fields":[
-      {"name":"firstName","type":"string"},{"name":"age","type":"number"},{"name":"gender","type":"enum:Gender"},
-      {"name":"bio","type":"string","notes":"plan-limited: free=150, premium=400, gold/plat=600"},
-      {"name":"height","type":"number","notes":"cm"},{"name":"weight","type":"number","notes":"kg"},
-      {"name":"bodyType","type":"enum:BodyType"},{"name":"skinTone","type":"enum:SkinTone"},
-      {"name":"aboutMe","type":"string","maxLength":500},{"name":"whereAreYouFrom","type":"string"},
-      {"name":"relationshipStatus","type":"enum:RelationshipStatus"},
-      {"name":"lookingFor","type":"array<LookingForOption>"},
-      {"name":"whereWeCanMeet","type":"array<WhereWeCanMeet>"},
-      {"name":"preferences","type":"string","maxLength":500},
-      {"name":"fantasyTags","type":"array<string>","notes":"free-form; curated set available via /catalogs"},
-      {"name":"datingIntentions","type":"array<DatingIntention>","max":2},
-      {"name":"interests","type":"array<string>"},{"name":"tribes","type":"array<string>","max":3},
-      {"name":"tags","type":"array<string>","max":10}
-    ]},"responses":{"200":{"schema":"Self"},"422":{}}},
-    {"id":"update-settings","method":"PATCH","path":"/api/v1/me/settings","auth":"bearer+verified","summary":"Update safety/visibility/privacy toggles.","responses":{"200":{"schema":"UserSettings"},"403":{}}},
-    {"id":"update-location","method":"POST","path":"/api/v1/me/location","auth":"bearer+verified","summary":"Push live GPS to Redis geo index. Coordinates never persisted or returned.","requestBody":{"required":["lat","lng"]},"responses":{"200":{"schema":{"ok":"boolean"}}}},
-    {"id":"add-photo","method":"POST","path":"/api/v1/me/photos","auth":"bearer+verified","summary":"Add a profile photo. Change 3.2: single optional profile picture, no minimum required. First public photo auto-set as primary.","requestBody":{"required":["url"],"fields":[{"name":"url","type":"string"},{"name":"isPrimary","type":"boolean"},{"name":"isPrivate","type":"boolean"}]},"responses":{"201":{"schema":"Photo"}}},
-    {"id":"set-primary-photo","method":"PUT","path":"/api/v1/me/photos/:photoId/primary","auth":"bearer+verified","summary":"Set primary profile photo.","responses":{"200":{"schema":{"ok":"boolean"}}}},
-    {"id":"delete-photo","method":"DELETE","path":"/api/v1/me/photos/:photoId","auth":"bearer+verified","summary":"Delete a photo.","responses":{"204":{}}},
-    {"id":"get-public-profile","method":"GET","path":"/api/v1/users/:userId","auth":"bearer+verified","summary":"Public profile. Returns isVerified, all card fields. Respects block rules.","responses":{"200":{"schema":"PublicProfile"},"404":{}}},
-    {"id":"get-grid","method":"GET","path":"/api/v1/grid","auth":"bearer+verified","summary":"Orientation-aware proximity grid. Change 4: users inactive >14d are hidden. Change 5: cards include all extended fields.","query":[{"name":"lat","required":true},{"name":"lng","required":true},{"name":"radius","notes":"meters"},{"name":"limit","default":20},{"name":"offset","default":0},{"name":"onlineOnly","type":"boolean"},{"name":"ageMin"},{"name":"ageMax"},{"name":"heightMin"},{"name":"heightMax"},{"name":"bodyType"},{"name":"tribes"},{"name":"tags"},{"name":"lookingFor"},{"name":"sort","enum":["distance","fresh"]}],"responses":{"200":{"schema":{"cards":"array<UserCard>","total":"number","limit":"number","offset":"number"}}},"notes":"UserCard fields: profilePhoto, firstName, age, distance, lastActiveAt (human-readable), isVerified, height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked, boosted"},
-    {"id":"start-conversation","method":"POST","path":"/api/v1/conversations/start","auth":"bearer+verified","summary":"Open a chat. Change 6: enforces lifetime interaction cap (free=20 unique people). Returns audioCallEnabled/videoCallEnabled instead of callUnlocked.","requestBody":{"required":["userId"]},"responses":{"200":{"schema":{"id":"uuid","state":"string","audioCallEnabled":"boolean","videoCallEnabled":"boolean"},"description":"Existing conversation"},"201":{"schema":{"id":"uuid","state":"pending","audioCallEnabled":false,"videoCallEnabled":false},"description":"New conversation — calls disabled until other party replies"},"403":{"schema":{"error":"interaction_limit_reached","message":"string","limit":20},"description":"Free-tier lifetime interaction cap reached"}}},
-    {"id":"list-conversations","method":"GET","path":"/api/v1/conversations","auth":"bearer+verified","summary":"List conversations. Change 1: hidden conversations (from blocks) excluded. Change 2: returns audioCallEnabled/videoCallEnabled per conversation.","query":[{"name":"folder","enum":["inbox","requests"]}],"responses":{"200":{"schema":{"folder":"string","conversations":"array<ConversationSummary>"}}},"notes":"ConversationSummary includes: id, state, isPinned, peer, lastMessageAt, lastMessage, audioCallEnabled, videoCallEnabled. Hidden conversations (aIsHidden/bIsHidden) are filtered out."},
-    {"id":"list-messages","method":"GET","path":"/api/v1/conversations/:conversationId/messages","auth":"bearer+verified","summary":"Paginated messages. Returns audioCallEnabled/videoCallEnabled in response.","responses":{"200":{"schema":{"messages":"array<Message>","audioCallEnabled":"boolean","videoCallEnabled":"boolean"}}}},
-    {"id":"send-message","method":"POST","path":"/api/v1/conversations/:conversationId/messages","auth":"bearer+verified","summary":"Send a message. Change 2: updates aHasReplied/bHasReplied. Returns updated call flags.","requestBody":{"fields":[{"name":"type","enum":["text","photo","video","voice","expiring_photo","voice_note"]},{"name":"content","type":"string"},{"name":"ciphertext","type":"string"},{"name":"mediaUrls","type":"array<string>"},{"name":"viewOnce","type":"boolean"},{"name":"expiresInSeconds","type":"number"}]},"responses":{"201":{"schema":"Message + {audioCallEnabled: boolean, videoCallEnabled: boolean}"},"402":{},"451":{}}},
-    {"id":"calls-initiate","method":"POST","path":"/api/v1/calls","auth":"bearer+verified","summary":"Change 2: Initiate audio or video call. Requires other party to have replied (bHasReplied or aHasReplied). Returns Agora channel + token.","requestBody":{"required":["conversationId","type"],"fields":[{"name":"conversationId","type":"uuid"},{"name":"type","enum":["audio","video"]}]},"responses":{"201":{"schema":{"id":"uuid","agoraChannelName":"string","agoraToken":"string","type":"audio|video"}},"403":{"description":"Other party has not replied yet.","schema":{"error":"calls_not_yet_enabled","message":"Calls will be enabled after the other person replies to your message at least once."}}}},
-    {"id":"calls-update","method":"PATCH","path":"/api/v1/calls/:callId","auth":"bearer+verified","summary":"Update call status (answered, declined, ended). Server sets durationSeconds on end.","requestBody":{"required":["status"],"fields":[{"name":"status","enum":["answered","declined","ended","missed"]},{"name":"endReason","enum":["normal","timeout","no_answer","error"]}]},"responses":{"200":{"schema":{"id":"uuid","status":"string","durationSeconds":"number|null"}}}},
-    {"id":"call-history","method":"GET","path":"/api/v1/calls","auth":"bearer+verified","summary":"Recent call history.","responses":{"200":{"schema":{"calls":"array<CallRecord>"}}}},
-    {"id":"safety-block","method":"POST","path":"/api/users/:userId/block","auth":"bearer+verified","summary":"Change 1: Block a user. Immediately hides conversation for BOTH users (aIsHidden=bIsHidden=true). Both users excluded from each other's results in ALL listing queries (grid, search, nearby, recommendations, likes, profile views).","responses":{"201":{"schema":{"ok":"boolean"}}}},
-    {"id":"safety-unblock","method":"DELETE","path":"/api/users/:userId/block","auth":"bearer+verified","summary":"Unblock. Restores conversation visibility (aIsHidden=bIsHidden=false).","responses":{"204":{}}},
-    {"id":"safety-list-blocks","method":"GET","path":"/api/v1/safety/blocks","auth":"bearer+verified","summary":"List blocked users.","responses":{"200":{"schema":{"blocked":"array<{blockedId,createdAt}>"}}}},
-    {"id":"safety-report","method":"POST","path":"/api/users/:userId/report","auth":"bearer+verified","summary":"Report a user.","requestBody":{"required":["reason"],"fields":[{"name":"reason","enum":["spam","harassment","fake_profile","inappropriate_content","lgbtq_hate","other"]},{"name":"details","type":"string","maxLength":500},{"name":"messageId","type":"uuid"}]},"responses":{"201":{"schema":{"ok":"boolean"}}}},
-    {"id":"verification-status","method":"GET","path":"/api/v1/verification/status","auth":"bearer+verified","summary":"Change 3.1: isVerified = phoneVerified AND faceVerified. Returns computed value.","responses":{"200":{"schema":{"phoneVerified":"boolean","photoVerified":"boolean","faceVerified":"boolean","isVerified":"boolean","history":"array"}}}},
-    {"id":"verify-photo","method":"POST","path":"/api/v1/verification/photo","auth":"bearer+verified","summary":"Submit selfie for photo verification. No profile photos required.","requestBody":{"required":["mediaUrl"]},"responses":{"201":{"schema":{"id":"uuid","status":"string","score":"number"}}}},
-    {"id":"verify-face","method":"POST","path":"/api/v1/verification/face","auth":"bearer+verified","summary":"Change 3.1: Submit face verification. Sets isVerified=true if phoneVerified is also true.","requestBody":{"required":["mediaUrl"]},"responses":{"201":{"schema":{"id":"uuid","status":"string","score":"number"}}}},
-    {"id":"list-albums","method":"GET","path":"/api/albums","auth":"bearer+verified","summary":"Change 7: List current user's albums with cover photo and photo count.","responses":{"200":{"schema":{"albums":"array<AlbumSummary>"}}}},
-    {"id":"create-album","method":"POST","path":"/api/albums","auth":"bearer+verified","summary":"Change 7: Create album. Enforces plan album limit (free=1, premium=3, gold=5, platinum=unlimited).","requestBody":{"required":["title"],"fields":[{"name":"title","type":"string","maxLength":50}]},"responses":{"201":{"schema":"AlbumSummary"},"403":{"description":"Plan album limit reached"}}},
-    {"id":"get-album","method":"GET","path":"/api/albums/:albumId","auth":"bearer+verified","summary":"Change 7: Get album detail with all photos (cursor-based pagination).","query":[{"name":"cursor","type":"uuid"},{"name":"limit","default":20}],"responses":{"200":{"schema":{"id":"uuid","title":"string","coverPhoto":"object|null","photos":"array<AlbumPhotoResponse>","nextCursor":"uuid|null","hasMore":"boolean"}}}},
-    {"id":"update-album","method":"PATCH","path":"/api/albums/:albumId","auth":"bearer+verified","summary":"Change 7: Update album title or cover photo.","requestBody":{"fields":[{"name":"title","type":"string","maxLength":50},{"name":"coverPhotoId","type":"uuid","nullable":true}]},"responses":{"200":{"schema":"AlbumSummary"}}},
-    {"id":"delete-album","method":"DELETE","path":"/api/albums/:albumId","auth":"bearer+verified","summary":"Change 7: Soft-delete album and all its photos.","responses":{"204":{}}},
-    {"id":"album-add-photo","method":"POST","path":"/api/albums/:albumId/photos","auth":"bearer+verified","summary":"Change 7: Upload photo to album (JPEG/PNG/WebP, max 10MB). Runs AWS Rekognition moderation. Enforces per-album photo limit.","requestBody":{"required":["url"],"fields":[{"name":"url","type":"string","notes":"GCS signed URL after client-side upload"}]},"responses":{"201":{"schema":"AlbumPhotoResponse"},"403":{"description":"Plan photo limit reached"}}},
-    {"id":"album-remove-photo","method":"DELETE","path":"/api/albums/:albumId/photos/:photoId","auth":"bearer+verified","summary":"Change 7: Remove photo from album.","responses":{"204":{}}},
-    {"id":"album-reorder-photos","method":"PATCH","path":"/api/albums/:albumId/photos/reorder","auth":"bearer+verified","summary":"Change 7: Reorder photos within an album.","requestBody":{"required":["order"],"fields":[{"name":"order","type":"array<{photoId:uuid, order:number}>"}]},"responses":{"200":{"schema":{"ok":"boolean"}}}},
-    {"id":"view-user-albums","method":"GET","path":"/api/v1/users/:userId/albums","auth":"bearer+verified","summary":"Change 7: View another user's albums. Respects block rules in both directions.","responses":{"200":{"schema":{"albums":"array<AlbumSummary>"}},"404":{"description":"User not found or blocked"}}},
-    {"id":"billing-plans","method":"GET","path":"/api/v1/billing/plans","auth":"none","summary":"Localized pricing catalog.","responses":{"200":{"schema":"PricingMatrix"}}},
-    {"id":"subscriptions-create","method":"POST","path":"/api/subscriptions","auth":"bearer+verified","summary":"Initiate subscription purchase.","requestBody":{"required":["plan","billingCycle","paymentProvider"],"fields":[{"name":"plan","enum":["premium","gold","platinum"]},{"name":"billingCycle","enum":["monthly","three_month","six_month","annual"]},{"name":"paymentProvider","enum":["razorpay","stripe"]}]},"responses":{"201":{"schema":{"orderId":"string","amount":"number","currency":"INR|USD"}}}},
-    {"id":"subscriptions-verify","method":"POST","path":"/api/subscriptions/verify","auth":"bearer+verified","summary":"Verify payment and activate plan.","responses":{"200":{"schema":{"plan":"string","planExpiresAt":"iso8601","ok":true}}}},
-    {"id":"subscriptions-current","method":"GET","path":"/api/subscriptions/current","auth":"bearer+verified","summary":"Get active subscription.","responses":{"200":{"schema":{"plan":"string","billingCycle":"string","expiresAt":"iso8601","autoRenew":"boolean"}}}},
-    {"id":"ai-daily-top10","method":"GET","path":"/api/ai/top-10","auth":"bearer+verified","premium":true,"summary":"AI-curated daily top-10 profiles (Platinum). Change 1: blocked users excluded. Change 4: inactive >14d excluded.","responses":{"200":{"schema":{"profiles":"array<UserCard>","refreshesAt":"iso8601"}}}}
+    {
+      "id": "firebase-login",
+      "method": "POST",
+      "path": "/api/v1/auth/firebase",
+      "auth": "none",
+      "summary": "Exchange Firebase ID token for NearMe JWT pair. Upserts user on first login.",
+      "requestBody": {
+        "required": [
+          "idToken"
+        ],
+        "fields": [
+          {
+            "name": "idToken",
+            "type": "string",
+            "notes": "Firebase ID token obtained from Firebase client SDK"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "accessToken": "string",
+            "refreshToken": "string",
+            "profileComplete": "boolean",
+            "isNewUser": "boolean",
+            "user": "Self"
+          }
+        },
+        "401": {
+          "schema": {
+            "error": "invalid_firebase_token"
+          }
+        },
+        "429": {
+          "schema": {
+            "error": "rate_limited"
+          }
+        }
+      }
+    },
+    {
+      "id": "refresh-token",
+      "method": "POST",
+      "path": "/api/v1/auth/refresh",
+      "auth": "none",
+      "summary": "Exchange refresh token for new access+refresh pair.",
+      "requestBody": {
+        "required": [
+          "refreshToken"
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "accessToken": "string",
+            "refreshToken": "string"
+          }
+        },
+        "401": {}
+      }
+    },
+    {
+      "id": "logout",
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "auth": "bearer",
+      "summary": "Logout.",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "get-me",
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "auth": "bearer",
+      "summary": "Get authenticated user's full self profile.",
+      "responses": {
+        "200": {
+          "schema": "Self"
+        }
+      }
+    },
+    {
+      "id": "update-profile",
+      "method": "PATCH",
+      "path": "/api/v1/me",
+      "auth": "bearer+verified",
+      "summary": "Update profile fields. Includes all Change 5 extended fields.",
+      "requestBody": {
+        "fields": [
+          {
+            "name": "firstName",
+            "type": "string"
+          },
+          {
+            "name": "age",
+            "type": "number"
+          },
+          {
+            "name": "gender",
+            "type": "enum:Gender"
+          },
+          {
+            "name": "bio",
+            "type": "string",
+            "notes": "plan-limited: free=150, premium=400, gold/plat=600"
+          },
+          {
+            "name": "height",
+            "type": "number",
+            "notes": "cm"
+          },
+          {
+            "name": "weight",
+            "type": "number",
+            "notes": "kg"
+          },
+          {
+            "name": "bodyType",
+            "type": "enum:BodyType"
+          },
+          {
+            "name": "skinTone",
+            "type": "enum:SkinTone"
+          },
+          {
+            "name": "aboutMe",
+            "type": "string",
+            "maxLength": 500
+          },
+          {
+            "name": "whereAreYouFrom",
+            "type": "string"
+          },
+          {
+            "name": "relationshipStatus",
+            "type": "enum:RelationshipStatus"
+          },
+          {
+            "name": "lookingFor",
+            "type": "array<LookingForOption>"
+          },
+          {
+            "name": "whereWeCanMeet",
+            "type": "array<WhereWeCanMeet>"
+          },
+          {
+            "name": "preferences",
+            "type": "string",
+            "maxLength": 500
+          },
+          {
+            "name": "fantasyTags",
+            "type": "array<string>",
+            "notes": "free-form; curated set available via /catalogs"
+          },
+          {
+            "name": "datingIntentions",
+            "type": "array<DatingIntention>",
+            "max": 2
+          },
+          {
+            "name": "interests",
+            "type": "array<string>"
+          },
+          {
+            "name": "tribes",
+            "type": "array<string>",
+            "max": 3
+          },
+          {
+            "name": "tags",
+            "type": "array<string>",
+            "max": 10
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": "Self"
+        },
+        "422": {}
+      }
+    },
+    {
+      "id": "update-settings",
+      "method": "PATCH",
+      "path": "/api/v1/me/settings",
+      "auth": "bearer+verified",
+      "summary": "Update safety/visibility/privacy toggles.",
+      "responses": {
+        "200": {
+          "schema": "UserSettings"
+        },
+        "403": {}
+      }
+    },
+    {
+      "id": "update-location",
+      "method": "POST",
+      "path": "/api/v1/me/location",
+      "auth": "bearer+verified",
+      "summary": "Push live GPS to Redis geo index. Coordinates never persisted or returned.",
+      "requestBody": {
+        "required": [
+          "lat",
+          "lng"
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "add-photo",
+      "method": "POST",
+      "path": "/api/v1/me/photos",
+      "auth": "bearer+verified",
+      "summary": "Add a profile photo. Change 3.2: single optional profile picture, no minimum required. First public photo auto-set as primary.",
+      "requestBody": {
+        "required": [
+          "url"
+        ],
+        "fields": [
+          {
+            "name": "url",
+            "type": "string"
+          },
+          {
+            "name": "isPrimary",
+            "type": "boolean"
+          },
+          {
+            "name": "isPrivate",
+            "type": "boolean"
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": "Photo"
+        }
+      }
+    },
+    {
+      "id": "set-primary-photo",
+      "method": "PUT",
+      "path": "/api/v1/me/photos/:photoId/primary",
+      "auth": "bearer+verified",
+      "summary": "Set primary profile photo.",
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete-photo",
+      "method": "DELETE",
+      "path": "/api/v1/me/photos/:photoId",
+      "auth": "bearer+verified",
+      "summary": "Delete a photo.",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "get-public-profile",
+      "method": "GET",
+      "path": "/api/v1/users/:userId",
+      "auth": "bearer+verified",
+      "summary": "Public profile. Returns isVerified, all card fields. Respects block rules.",
+      "responses": {
+        "200": {
+          "schema": "PublicProfile"
+        },
+        "404": {}
+      }
+    },
+    {
+      "id": "get-grid",
+      "method": "GET",
+      "path": "/api/v1/grid",
+      "auth": "bearer+verified",
+      "summary": "Orientation-aware proximity grid. Change 4: users inactive >14d are hidden. Change 5: cards include all extended fields.",
+      "query": [
+        {
+          "name": "lat",
+          "required": true
+        },
+        {
+          "name": "lng",
+          "required": true
+        },
+        {
+          "name": "radius",
+          "notes": "meters"
+        },
+        {
+          "name": "limit",
+          "default": 20
+        },
+        {
+          "name": "offset",
+          "default": 0
+        },
+        {
+          "name": "onlineOnly",
+          "type": "boolean"
+        },
+        {
+          "name": "ageMin"
+        },
+        {
+          "name": "ageMax"
+        },
+        {
+          "name": "heightMin"
+        },
+        {
+          "name": "heightMax"
+        },
+        {
+          "name": "bodyType"
+        },
+        {
+          "name": "tribes"
+        },
+        {
+          "name": "tags"
+        },
+        {
+          "name": "lookingFor"
+        },
+        {
+          "name": "sort",
+          "enum": [
+            "distance",
+            "fresh"
+          ]
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "cards": "array<UserCard>",
+            "total": "number",
+            "limit": "number",
+            "offset": "number"
+          }
+        }
+      },
+      "notes": "UserCard fields: profilePhoto, firstName, age, distance, lastActiveAt (human-readable), isVerified, height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked, boosted"
+    },
+    {
+      "id": "start-conversation",
+      "method": "POST",
+      "path": "/api/v1/conversations/start",
+      "auth": "bearer+verified",
+      "summary": "Open a chat. Change 6: enforces lifetime interaction cap (free=20 unique people). Returns audioCallEnabled/videoCallEnabled instead of callUnlocked.",
+      "requestBody": {
+        "required": [
+          "userId"
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "id": "uuid",
+            "state": "string",
+            "audioCallEnabled": "boolean",
+            "videoCallEnabled": "boolean"
+          },
+          "description": "Existing conversation"
+        },
+        "201": {
+          "schema": {
+            "id": "uuid",
+            "state": "pending",
+            "audioCallEnabled": false,
+            "videoCallEnabled": false
+          },
+          "description": "New conversation \u2014 calls disabled until other party replies"
+        },
+        "403": {
+          "schema": {
+            "error": "interaction_limit_reached",
+            "message": "string",
+            "limit": 20
+          },
+          "description": "Free-tier lifetime interaction cap reached"
+        }
+      }
+    },
+    {
+      "id": "list-conversations",
+      "method": "GET",
+      "path": "/api/v1/conversations",
+      "auth": "bearer+verified",
+      "summary": "List conversations. Change 1: hidden conversations (from blocks) excluded. Change 2: returns audioCallEnabled/videoCallEnabled per conversation.",
+      "query": [
+        {
+          "name": "folder",
+          "enum": [
+            "inbox",
+            "requests"
+          ]
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "folder": "string",
+            "conversations": "array<ConversationSummary>"
+          }
+        }
+      },
+      "notes": "ConversationSummary includes: id, state, isPinned, peer, lastMessageAt, lastMessage, audioCallEnabled, videoCallEnabled. Hidden conversations (aIsHidden/bIsHidden) are filtered out."
+    },
+    {
+      "id": "list-messages",
+      "method": "GET",
+      "path": "/api/v1/conversations/:conversationId/messages",
+      "auth": "bearer+verified",
+      "summary": "Paginated messages. Returns audioCallEnabled/videoCallEnabled in response.",
+      "responses": {
+        "200": {
+          "schema": {
+            "messages": "array<Message>",
+            "audioCallEnabled": "boolean",
+            "videoCallEnabled": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "send-message",
+      "method": "POST",
+      "path": "/api/v1/conversations/:conversationId/messages",
+      "auth": "bearer+verified",
+      "summary": "Send a message. Change 2: updates aHasReplied/bHasReplied. Returns updated call flags.",
+      "requestBody": {
+        "fields": [
+          {
+            "name": "type",
+            "enum": [
+              "text",
+              "photo",
+              "video",
+              "voice",
+              "expiring_photo",
+              "voice_note"
+            ]
+          },
+          {
+            "name": "content",
+            "type": "string"
+          },
+          {
+            "name": "ciphertext",
+            "type": "string"
+          },
+          {
+            "name": "mediaUrls",
+            "type": "array<string>"
+          },
+          {
+            "name": "viewOnce",
+            "type": "boolean"
+          },
+          {
+            "name": "expiresInSeconds",
+            "type": "number"
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": "Message + {audioCallEnabled: boolean, videoCallEnabled: boolean}"
+        },
+        "402": {},
+        "451": {}
+      }
+    },
+    {
+      "id": "calls-initiate",
+      "method": "POST",
+      "path": "/api/v1/calls",
+      "auth": "bearer+verified",
+      "summary": "Change 2: Initiate audio or video call. Requires other party to have replied (bHasReplied or aHasReplied). Returns Agora channel + token.",
+      "requestBody": {
+        "required": [
+          "conversationId",
+          "type"
+        ],
+        "fields": [
+          {
+            "name": "conversationId",
+            "type": "uuid"
+          },
+          {
+            "name": "type",
+            "enum": [
+              "audio",
+              "video"
+            ]
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": {
+            "id": "uuid",
+            "agoraChannelName": "string",
+            "agoraToken": "string",
+            "type": "audio|video"
+          }
+        },
+        "403": {
+          "description": "Other party has not replied yet.",
+          "schema": {
+            "error": "calls_not_yet_enabled",
+            "message": "Calls will be enabled after the other person replies to your message at least once."
+          }
+        }
+      }
+    },
+    {
+      "id": "calls-update",
+      "method": "PATCH",
+      "path": "/api/v1/calls/:callId",
+      "auth": "bearer+verified",
+      "summary": "Update call status (answered, declined, ended). Server sets durationSeconds on end.",
+      "requestBody": {
+        "required": [
+          "status"
+        ],
+        "fields": [
+          {
+            "name": "status",
+            "enum": [
+              "answered",
+              "declined",
+              "ended",
+              "missed"
+            ]
+          },
+          {
+            "name": "endReason",
+            "enum": [
+              "normal",
+              "timeout",
+              "no_answer",
+              "error"
+            ]
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "id": "uuid",
+            "status": "string",
+            "durationSeconds": "number|null"
+          }
+        }
+      }
+    },
+    {
+      "id": "call-history",
+      "method": "GET",
+      "path": "/api/v1/calls",
+      "auth": "bearer+verified",
+      "summary": "Recent call history.",
+      "responses": {
+        "200": {
+          "schema": {
+            "calls": "array<CallRecord>"
+          }
+        }
+      }
+    },
+    {
+      "id": "safety-block",
+      "method": "POST",
+      "path": "/api/users/:userId/block",
+      "auth": "bearer+verified",
+      "summary": "Change 1: Block a user. Immediately hides conversation for BOTH users (aIsHidden=bIsHidden=true). Both users excluded from each other's results in ALL listing queries (grid, search, nearby, recommendations, likes, profile views).",
+      "responses": {
+        "201": {
+          "schema": {
+            "ok": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "safety-unblock",
+      "method": "DELETE",
+      "path": "/api/users/:userId/block",
+      "auth": "bearer+verified",
+      "summary": "Unblock. Restores conversation visibility (aIsHidden=bIsHidden=false).",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "safety-list-blocks",
+      "method": "GET",
+      "path": "/api/v1/safety/blocks",
+      "auth": "bearer+verified",
+      "summary": "List blocked users.",
+      "responses": {
+        "200": {
+          "schema": {
+            "blocked": "array<{blockedId,createdAt}>"
+          }
+        }
+      }
+    },
+    {
+      "id": "safety-report",
+      "method": "POST",
+      "path": "/api/users/:userId/report",
+      "auth": "bearer+verified",
+      "summary": "Report a user.",
+      "requestBody": {
+        "required": [
+          "reason"
+        ],
+        "fields": [
+          {
+            "name": "reason",
+            "enum": [
+              "spam",
+              "harassment",
+              "fake_profile",
+              "inappropriate_content",
+              "lgbtq_hate",
+              "other"
+            ]
+          },
+          {
+            "name": "details",
+            "type": "string",
+            "maxLength": 500
+          },
+          {
+            "name": "messageId",
+            "type": "uuid"
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": {
+            "ok": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "verification-status",
+      "method": "GET",
+      "path": "/api/v1/verification/status",
+      "auth": "bearer+verified",
+      "summary": "Change 3.1: isVerified = phoneVerified AND faceVerified. Returns computed value.",
+      "responses": {
+        "200": {
+          "schema": {
+            "phoneVerified": "boolean",
+            "photoVerified": "boolean",
+            "faceVerified": "boolean",
+            "isVerified": "boolean",
+            "history": "array"
+          }
+        }
+      }
+    },
+    {
+      "id": "verify-photo",
+      "method": "POST",
+      "path": "/api/v1/verification/photo",
+      "auth": "bearer+verified",
+      "summary": "Submit selfie for photo verification. No profile photos required.",
+      "requestBody": {
+        "required": [
+          "mediaUrl"
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": {
+            "id": "uuid",
+            "status": "string",
+            "score": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "verify-face",
+      "method": "POST",
+      "path": "/api/v1/verification/face",
+      "auth": "bearer+verified",
+      "summary": "Change 3.1: Submit face verification. Sets isVerified=true if phoneVerified is also true.",
+      "requestBody": {
+        "required": [
+          "mediaUrl"
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": {
+            "id": "uuid",
+            "status": "string",
+            "score": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "list-albums",
+      "method": "GET",
+      "path": "/api/albums",
+      "auth": "bearer+verified",
+      "summary": "Change 7: List current user's albums with cover photo and photo count.",
+      "responses": {
+        "200": {
+          "schema": {
+            "albums": "array<AlbumSummary>"
+          }
+        }
+      }
+    },
+    {
+      "id": "create-album",
+      "method": "POST",
+      "path": "/api/albums",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Create album. Enforces plan album limit (free=1, premium=3, gold=5, platinum=unlimited).",
+      "requestBody": {
+        "required": [
+          "title"
+        ],
+        "fields": [
+          {
+            "name": "title",
+            "type": "string",
+            "maxLength": 50
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": "AlbumSummary"
+        },
+        "403": {
+          "description": "Plan album limit reached"
+        }
+      }
+    },
+    {
+      "id": "get-album",
+      "method": "GET",
+      "path": "/api/albums/:albumId",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Get album detail with all photos (cursor-based pagination).",
+      "query": [
+        {
+          "name": "cursor",
+          "type": "uuid"
+        },
+        {
+          "name": "limit",
+          "default": 20
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "id": "uuid",
+            "title": "string",
+            "coverPhoto": "object|null",
+            "photos": "array<AlbumPhotoResponse>",
+            "nextCursor": "uuid|null",
+            "hasMore": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "update-album",
+      "method": "PATCH",
+      "path": "/api/albums/:albumId",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Update album title or cover photo.",
+      "requestBody": {
+        "fields": [
+          {
+            "name": "title",
+            "type": "string",
+            "maxLength": 50
+          },
+          {
+            "name": "coverPhotoId",
+            "type": "uuid",
+            "nullable": true
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": "AlbumSummary"
+        }
+      }
+    },
+    {
+      "id": "delete-album",
+      "method": "DELETE",
+      "path": "/api/albums/:albumId",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Soft-delete album and all its photos.",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "album-add-photo",
+      "method": "POST",
+      "path": "/api/albums/:albumId/photos",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Upload photo to album (JPEG/PNG/WebP, max 10MB). Runs AWS Rekognition moderation. Enforces per-album photo limit.",
+      "requestBody": {
+        "required": [
+          "url"
+        ],
+        "fields": [
+          {
+            "name": "url",
+            "type": "string",
+            "notes": "GCS signed URL after client-side upload"
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": "AlbumPhotoResponse"
+        },
+        "403": {
+          "description": "Plan photo limit reached"
+        }
+      }
+    },
+    {
+      "id": "album-remove-photo",
+      "method": "DELETE",
+      "path": "/api/albums/:albumId/photos/:photoId",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Remove photo from album.",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "album-reorder-photos",
+      "method": "PATCH",
+      "path": "/api/albums/:albumId/photos/reorder",
+      "auth": "bearer+verified",
+      "summary": "Change 7: Reorder photos within an album.",
+      "requestBody": {
+        "required": [
+          "order"
+        ],
+        "fields": [
+          {
+            "name": "order",
+            "type": "array<{photoId:uuid, order:number}>"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "view-user-albums",
+      "method": "GET",
+      "path": "/api/v1/users/:userId/albums",
+      "auth": "bearer+verified",
+      "summary": "Change 7: View another user's albums. Respects block rules in both directions.",
+      "responses": {
+        "200": {
+          "schema": {
+            "albums": "array<AlbumSummary>"
+          }
+        },
+        "404": {
+          "description": "User not found or blocked"
+        }
+      }
+    },
+    {
+      "id": "billing-plans",
+      "method": "GET",
+      "path": "/api/v1/billing/plans",
+      "auth": "none",
+      "summary": "Localized pricing catalog.",
+      "responses": {
+        "200": {
+          "schema": "PricingMatrix"
+        }
+      }
+    },
+    {
+      "id": "subscriptions-create",
+      "method": "POST",
+      "path": "/api/subscriptions",
+      "auth": "bearer+verified",
+      "summary": "Initiate subscription purchase.",
+      "requestBody": {
+        "required": [
+          "plan",
+          "billingCycle",
+          "paymentProvider"
+        ],
+        "fields": [
+          {
+            "name": "plan",
+            "enum": [
+              "premium",
+              "gold",
+              "platinum"
+            ]
+          },
+          {
+            "name": "billingCycle",
+            "enum": [
+              "monthly",
+              "three_month",
+              "six_month",
+              "annual"
+            ]
+          },
+          {
+            "name": "paymentProvider",
+            "enum": [
+              "razorpay",
+              "stripe"
+            ]
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": {
+            "orderId": "string",
+            "amount": "number",
+            "currency": "INR|USD"
+          }
+        }
+      }
+    },
+    {
+      "id": "subscriptions-verify",
+      "method": "POST",
+      "path": "/api/subscriptions/verify",
+      "auth": "bearer+verified",
+      "summary": "Verify payment and activate plan.",
+      "responses": {
+        "200": {
+          "schema": {
+            "plan": "string",
+            "planExpiresAt": "iso8601",
+            "ok": true
+          }
+        }
+      }
+    },
+    {
+      "id": "subscriptions-current",
+      "method": "GET",
+      "path": "/api/subscriptions/current",
+      "auth": "bearer+verified",
+      "summary": "Get active subscription.",
+      "responses": {
+        "200": {
+          "schema": {
+            "plan": "string",
+            "billingCycle": "string",
+            "expiresAt": "iso8601",
+            "autoRenew": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "ai-daily-top10",
+      "method": "GET",
+      "path": "/api/ai/top-10",
+      "auth": "bearer+verified",
+      "premium": true,
+      "summary": "AI-curated daily top-10 profiles (Platinum). Change 1: blocked users excluded. Change 4: inactive >14d excluded.",
+      "responses": {
+        "200": {
+          "schema": {
+            "profiles": "array<UserCard>",
+            "refreshesAt": "iso8601"
+          }
+        }
+      }
+    }
   ],
   "models": [
     {
@@ -226,79 +1323,375 @@
       "table": "users",
       "notes": "v3: added extended profile fields (Change 5), removed dailyNewChatCount/dailyNewChatResetDate (Change 6), isVerified now computed = phoneVerified && faceVerified (Change 3.1).",
       "fields": [
-        {"name":"id","type":"uuid","primaryKey":true},
-        {"name":"phone","type":"string","frontendVisible":false},
-        {"name":"phoneVerified","type":"boolean"},
-        {"name":"name","type":"string","nullable":true},
-        {"name":"firstName","type":"string","nullable":true},
-        {"name":"age","type":"number","nullable":true},
-        {"name":"gender","type":"enum:Gender","nullable":true},
-        {"name":"genderIdentity","type":"enum:GenderIdentity","nullable":true},
-        {"name":"sexualOrientation","type":"enum:SexualOrientation","nullable":true},
-        {"name":"wantToSee","type":"array<WantToSee>"},
-        {"name":"relationshipIntent","type":"enum:RelationshipIntent","nullable":true},
-        {"name":"whoCanDiscoverMe","type":"array<WantToSee>"},
-        {"name":"bio","type":"string","nullable":true,"notes":"plan-limited chars: free=150, premium=400, gold/plat=600"},
-        {"name":"height","type":"number","nullable":true,"notes":"cm"},
-        {"name":"weight","type":"number","nullable":true,"notes":"kg"},
-        {"name":"bodyType","type":"enum:BodyType","nullable":true},
-        {"name":"skinTone","type":"enum:SkinTone","nullable":true,"notes":"NEW (Change 5)"},
-        {"name":"aboutMe","type":"string","nullable":true,"maxLength":500,"notes":"NEW (Change 5)"},
-        {"name":"whereAreYouFrom","type":"string","nullable":true,"notes":"NEW (Change 5)"},
-        {"name":"relationshipStatus","type":"enum:RelationshipStatus","nullable":true,"notes":"NEW (Change 5)"},
-        {"name":"lookingFor","type":"array<string>","notes":"Values validated against LookingForOption enum at app layer"},
-        {"name":"whereWeCanMeet","type":"array<WhereWeCanMeet>","notes":"NEW (Change 5)"},
-        {"name":"preferences","type":"string","nullable":true,"notes":"NEW (Change 5)"},
-        {"name":"fantasyTags","type":"array<string>","notes":"NEW (Change 5) — curated + free-form tags"},
-        {"name":"datingIntentions","type":"array<DatingIntention>","notes":"max 2"},
-        {"name":"interests","type":"array<string>"},
-        {"name":"topArtists","type":"array<string>"},
-        {"name":"tribes","type":"array<string>","notes":"max 3"},
-        {"name":"tags","type":"array<string>","notes":"max 10"},
-        {"name":"virtualDatingBadge","type":"boolean"},
-        {"name":"voiceClipUrl","type":"string","nullable":true},
-        {"name":"videoClipUrl","type":"string","nullable":true},
-        {"name":"isVerified","type":"boolean","notes":"Change 3.1: computed = phoneVerified && faceVerified. Updated whenever either changes."},
-        {"name":"verifiedBadge","type":"boolean","notes":"legacy blue tick — superseded by isVerified rule"},
-        {"name":"isCollegeVerified","type":"boolean"},
-        {"name":"photoVerified","type":"boolean"},
-        {"name":"faceVerified","type":"boolean"},
-        {"name":"profileCompletenessScore","type":"number"},
-        {"name":"plan","type":"enum:Plan"},
-        {"name":"planExpiresAt","type":"timestamp","nullable":true},
-        {"name":"tier","type":"enum:SubscriptionTier","notes":"legacy"},
-        {"name":"reputationScore","type":"number","frontendVisible":false},
-        {"name":"historicalReplyRate","type":"number","nullable":true},
-        {"name":"locationLat","type":"number","nullable":true,"frontendVisible":false},
-        {"name":"locationLng","type":"number","nullable":true,"frontendVisible":false},
-        {"name":"locationUpdatedAt","type":"timestamp","nullable":true},
-        {"name":"isOnGrid","type":"boolean","notes":"false = panic-hide. 14-day inactivity is enforced via lastActiveAt query filter, NOT this field."},
-        {"name":"incognitoMode","type":"boolean"},
-        {"name":"hideActiveStatus","type":"boolean"},
-        {"name":"hideLastSeen","type":"boolean"},
-        {"name":"hideExactDistance","type":"boolean"},
-        {"name":"showOrientationPublicly","type":"boolean"},
-        {"name":"disceetMode","type":"boolean"},
-        {"name":"pauseIncomingMessages","type":"boolean"},
-        {"name":"requireProfileCompletenessToMessage","type":"boolean"},
-        {"name":"verifiedUsersOnlyFilter","type":"boolean"},
-        {"name":"dailyAudioMinutesUsed","type":"number","frontendVisible":false},
-        {"name":"dailyVideoMinutesUsed","type":"number","frontendVisible":false},
-        {"name":"dailyCallMinutesResetDate","type":"date","nullable":true,"frontendVisible":false},
-        {"name":"aiOptInFeatures","type":"object","nullable":true},
-        {"name":"pinHash","type":"string","nullable":true,"frontendVisible":false},
-        {"name":"restrictedUntil","type":"timestamp","nullable":true,"frontendVisible":false,"notes":"NEW (Phase 9) — user restricted from interactions until this time (e.g. after report/penalty)"},
-        {"name":"isBanned","type":"boolean","frontendVisible":false,"notes":"NEW (Phase 9) — account banned; prevents re-login. Also used as soft-delete flag on account deletion."},
-        {"name":"bannedAt","type":"timestamp","nullable":true,"frontendVisible":false,"notes":"NEW (Phase 9) — timestamp when account was banned"},
-        {"name":"interactionPenaltyUntil","type":"timestamp","nullable":true,"frontendVisible":false,"notes":"NEW (Phase 9) — interaction-rate penalty expires at this time"},
-        {"name":"interactionPenaltyMultiplier","type":"number","nullable":true,"frontendVisible":false,"notes":"NEW (Phase 9) — multiplier applied to interaction cost during penalty window (default 1.0)"},
-        {"name":"lastActiveAt","type":"timestamp"},
-        {"name":"createdAt","type":"timestamp"},
-        {"name":"updatedAt","type":"timestamp"}
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "phone",
+          "type": "string",
+          "frontendVisible": false,
+          "nullable": true,
+          "notes": "Optional \u2014 only set if user adds phone for 2FA; not used for auth"
+        },
+        {
+          "name": "phoneVerified",
+          "type": "boolean",
+          "notes": "Legacy OTP verification flag. For Firebase users, mirrors emailVerified."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "firstName",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "age",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "gender",
+          "type": "enum:Gender",
+          "nullable": true
+        },
+        {
+          "name": "genderIdentity",
+          "type": "enum:GenderIdentity",
+          "nullable": true
+        },
+        {
+          "name": "sexualOrientation",
+          "type": "enum:SexualOrientation",
+          "nullable": true
+        },
+        {
+          "name": "wantToSee",
+          "type": "array<WantToSee>"
+        },
+        {
+          "name": "relationshipIntent",
+          "type": "enum:RelationshipIntent",
+          "nullable": true
+        },
+        {
+          "name": "whoCanDiscoverMe",
+          "type": "array<WantToSee>"
+        },
+        {
+          "name": "bio",
+          "type": "string",
+          "nullable": true,
+          "notes": "plan-limited chars: free=150, premium=400, gold/plat=600"
+        },
+        {
+          "name": "height",
+          "type": "number",
+          "nullable": true,
+          "notes": "cm"
+        },
+        {
+          "name": "weight",
+          "type": "number",
+          "nullable": true,
+          "notes": "kg"
+        },
+        {
+          "name": "bodyType",
+          "type": "enum:BodyType",
+          "nullable": true
+        },
+        {
+          "name": "skinTone",
+          "type": "enum:SkinTone",
+          "nullable": true,
+          "notes": "NEW (Change 5)"
+        },
+        {
+          "name": "aboutMe",
+          "type": "string",
+          "nullable": true,
+          "maxLength": 500,
+          "notes": "NEW (Change 5)"
+        },
+        {
+          "name": "whereAreYouFrom",
+          "type": "string",
+          "nullable": true,
+          "notes": "NEW (Change 5)"
+        },
+        {
+          "name": "relationshipStatus",
+          "type": "enum:RelationshipStatus",
+          "nullable": true,
+          "notes": "NEW (Change 5)"
+        },
+        {
+          "name": "lookingFor",
+          "type": "array<string>",
+          "notes": "Values validated against LookingForOption enum at app layer"
+        },
+        {
+          "name": "whereWeCanMeet",
+          "type": "array<WhereWeCanMeet>",
+          "notes": "NEW (Change 5)"
+        },
+        {
+          "name": "preferences",
+          "type": "string",
+          "nullable": true,
+          "notes": "NEW (Change 5)"
+        },
+        {
+          "name": "fantasyTags",
+          "type": "array<string>",
+          "notes": "NEW (Change 5) \u2014 curated + free-form tags"
+        },
+        {
+          "name": "datingIntentions",
+          "type": "array<DatingIntention>",
+          "notes": "max 2"
+        },
+        {
+          "name": "interests",
+          "type": "array<string>"
+        },
+        {
+          "name": "topArtists",
+          "type": "array<string>"
+        },
+        {
+          "name": "tribes",
+          "type": "array<string>",
+          "notes": "max 3"
+        },
+        {
+          "name": "tags",
+          "type": "array<string>",
+          "notes": "max 10"
+        },
+        {
+          "name": "virtualDatingBadge",
+          "type": "boolean"
+        },
+        {
+          "name": "voiceClipUrl",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "videoClipUrl",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "isVerified",
+          "type": "boolean",
+          "notes": "Change 3.1: computed = phoneVerified && faceVerified. Updated whenever either changes."
+        },
+        {
+          "name": "verifiedBadge",
+          "type": "boolean",
+          "notes": "legacy blue tick \u2014 superseded by isVerified rule"
+        },
+        {
+          "name": "isCollegeVerified",
+          "type": "boolean"
+        },
+        {
+          "name": "photoVerified",
+          "type": "boolean"
+        },
+        {
+          "name": "faceVerified",
+          "type": "boolean"
+        },
+        {
+          "name": "profileCompletenessScore",
+          "type": "number"
+        },
+        {
+          "name": "plan",
+          "type": "enum:Plan"
+        },
+        {
+          "name": "planExpiresAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "tier",
+          "type": "enum:SubscriptionTier",
+          "notes": "legacy"
+        },
+        {
+          "name": "reputationScore",
+          "type": "number",
+          "frontendVisible": false
+        },
+        {
+          "name": "historicalReplyRate",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "locationLat",
+          "type": "number",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "locationLng",
+          "type": "number",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "locationUpdatedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "isOnGrid",
+          "type": "boolean",
+          "notes": "false = panic-hide. 14-day inactivity is enforced via lastActiveAt query filter, NOT this field."
+        },
+        {
+          "name": "incognitoMode",
+          "type": "boolean"
+        },
+        {
+          "name": "hideActiveStatus",
+          "type": "boolean"
+        },
+        {
+          "name": "hideLastSeen",
+          "type": "boolean"
+        },
+        {
+          "name": "hideExactDistance",
+          "type": "boolean"
+        },
+        {
+          "name": "showOrientationPublicly",
+          "type": "boolean"
+        },
+        {
+          "name": "disceetMode",
+          "type": "boolean"
+        },
+        {
+          "name": "pauseIncomingMessages",
+          "type": "boolean"
+        },
+        {
+          "name": "requireProfileCompletenessToMessage",
+          "type": "boolean"
+        },
+        {
+          "name": "verifiedUsersOnlyFilter",
+          "type": "boolean"
+        },
+        {
+          "name": "dailyAudioMinutesUsed",
+          "type": "number",
+          "frontendVisible": false
+        },
+        {
+          "name": "dailyVideoMinutesUsed",
+          "type": "number",
+          "frontendVisible": false
+        },
+        {
+          "name": "dailyCallMinutesResetDate",
+          "type": "date",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "aiOptInFeatures",
+          "type": "object",
+          "nullable": true
+        },
+        {
+          "name": "pinHash",
+          "type": "string",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "restrictedUntil",
+          "type": "timestamp",
+          "nullable": true,
+          "frontendVisible": false,
+          "notes": "NEW (Phase 9) \u2014 user restricted from interactions until this time (e.g. after report/penalty)"
+        },
+        {
+          "name": "isBanned",
+          "type": "boolean",
+          "frontendVisible": false,
+          "notes": "NEW (Phase 9) \u2014 account banned; prevents re-login. Also used as soft-delete flag on account deletion."
+        },
+        {
+          "name": "bannedAt",
+          "type": "timestamp",
+          "nullable": true,
+          "frontendVisible": false,
+          "notes": "NEW (Phase 9) \u2014 timestamp when account was banned"
+        },
+        {
+          "name": "interactionPenaltyUntil",
+          "type": "timestamp",
+          "nullable": true,
+          "frontendVisible": false,
+          "notes": "NEW (Phase 9) \u2014 interaction-rate penalty expires at this time"
+        },
+        {
+          "name": "interactionPenaltyMultiplier",
+          "type": "number",
+          "nullable": true,
+          "frontendVisible": false,
+          "notes": "NEW (Phase 9) \u2014 multiplier applied to interaction cost during penalty window (default 1.0)"
+        },
+        {
+          "name": "lastActiveAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "updatedAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "firebaseUid",
+          "type": "string",
+          "nullable": true,
+          "frontendVisible": false,
+          "notes": "Firebase UID \u2014 primary identity key for Firebase Auth users"
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": true,
+          "frontendVisible": true
+        },
+        {
+          "name": "emailVerified",
+          "type": "boolean",
+          "frontendVisible": true
+        }
       ],
       "removed": [
-        "dailyNewChatCount — replaced by UserInteraction lifetime cap (Change 6)",
-        "dailyNewChatResetDate — no longer needed (Change 6)"
+        "dailyNewChatCount \u2014 replaced by UserInteraction lifetime cap (Change 6)",
+        "dailyNewChatResetDate \u2014 no longer needed (Change 6)"
       ]
     },
     {
@@ -306,26 +1699,85 @@
       "table": "conversations",
       "notes": "v3: removed callUnlocked; added aHasReplied/bHasReplied for call gate (Change 2); added aIsHidden/bIsHidden for block-based conversation hiding (Change 1).",
       "fields": [
-        {"name":"id","type":"uuid"},
-        {"name":"userAId","type":"uuid"},
-        {"name":"userBId","type":"uuid"},
-        {"name":"initiatorId","type":"uuid"},
-        {"name":"state","type":"enum:ConversationState"},
-        {"name":"aHasReplied","type":"boolean","notes":"NEW (Change 2) — User A has sent at least one message. Call buttons enabled for B when this is true."},
-        {"name":"bHasReplied","type":"boolean","notes":"NEW (Change 2) — User B has sent at least one message. Call buttons enabled for A when this is true."},
-        {"name":"aIsHidden","type":"boolean","notes":"NEW (Change 1) — true when conversation hidden from User A's inbox (set by block). Messages preserved."},
-        {"name":"bIsHidden","type":"boolean","notes":"NEW (Change 1) — true when conversation hidden from User B's inbox."},
-        {"name":"aPinned","type":"boolean"},
-        {"name":"bPinned","type":"boolean"},
-        {"name":"aArchivedAt","type":"timestamp","nullable":true},
-        {"name":"bArchivedAt","type":"timestamp","nullable":true},
-        {"name":"aDeletedAt","type":"timestamp","nullable":true},
-        {"name":"bDeletedAt","type":"timestamp","nullable":true},
-        {"name":"createdAt","type":"timestamp"},
-        {"name":"lastMessageAt","type":"timestamp"}
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "userAId",
+          "type": "uuid"
+        },
+        {
+          "name": "userBId",
+          "type": "uuid"
+        },
+        {
+          "name": "initiatorId",
+          "type": "uuid"
+        },
+        {
+          "name": "state",
+          "type": "enum:ConversationState"
+        },
+        {
+          "name": "aHasReplied",
+          "type": "boolean",
+          "notes": "NEW (Change 2) \u2014 User A has sent at least one message. Call buttons enabled for B when this is true."
+        },
+        {
+          "name": "bHasReplied",
+          "type": "boolean",
+          "notes": "NEW (Change 2) \u2014 User B has sent at least one message. Call buttons enabled for A when this is true."
+        },
+        {
+          "name": "aIsHidden",
+          "type": "boolean",
+          "notes": "NEW (Change 1) \u2014 true when conversation hidden from User A's inbox (set by block). Messages preserved."
+        },
+        {
+          "name": "bIsHidden",
+          "type": "boolean",
+          "notes": "NEW (Change 1) \u2014 true when conversation hidden from User B's inbox."
+        },
+        {
+          "name": "aPinned",
+          "type": "boolean"
+        },
+        {
+          "name": "bPinned",
+          "type": "boolean"
+        },
+        {
+          "name": "aArchivedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "bArchivedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "aDeletedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "bDeletedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "lastMessageAt",
+          "type": "timestamp"
+        }
       ],
       "removed": [
-        "callUnlocked — replaced by aHasReplied/bHasReplied (Change 2)"
+        "callUnlocked \u2014 replaced by aHasReplied/bHasReplied (Change 2)"
       ]
     },
     {
@@ -333,27 +1785,57 @@
       "table": "blocks",
       "notes": "v3: added reverse-lookup index for bidirectional block checks (Change 1.2). Blocking is fully mutual.",
       "fields": [
-        {"name":"id","type":"uuid"},
-        {"name":"blockerId","type":"uuid"},
-        {"name":"blockedId","type":"uuid"},
-        {"name":"createdAt","type":"timestamp"}
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "blockerId",
+          "type": "uuid"
+        },
+        {
+          "name": "blockedId",
+          "type": "uuid"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        }
       ],
       "indexes": [
         "UNIQUE(blockerId, blockedId)",
-        "INDEX(blockedId, blockerId) — reverse lookup for bidirectional checks (Change 1.2)"
+        "INDEX(blockedId, blockerId) \u2014 reverse lookup for bidirectional checks (Change 1.2)"
       ],
       "effects": "Block immediately hides conversation for both users (aIsHidden=bIsHidden=true). Both users excluded from each other's results in ALL user-listing queries."
     },
     {
       "name": "UserInteraction",
       "table": "user_interactions",
-      "notes": "NEW (Change 6) — tracks unique interactions for the free-tier lifetime cap of 20 unique people. Each (actorId, targetId) pair stored once regardless of how many messages/taps follow.",
+      "notes": "NEW (Change 6) \u2014 tracks unique interactions for the free-tier lifetime cap of 20 unique people. Each (actorId, targetId) pair stored once regardless of how many messages/taps follow.",
       "fields": [
-        {"name":"id","type":"uuid"},
-        {"name":"actorId","type":"uuid","notes":"user who initiated"},
-        {"name":"targetId","type":"uuid","notes":"user they interacted with"},
-        {"name":"interactionType","type":"string","notes":"'message' | 'like'"},
-        {"name":"createdAt","type":"timestamp"}
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "actorId",
+          "type": "uuid",
+          "notes": "user who initiated"
+        },
+        {
+          "name": "targetId",
+          "type": "uuid",
+          "notes": "user they interacted with"
+        },
+        {
+          "name": "interactionType",
+          "type": "string",
+          "notes": "'message' | 'like'"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        }
       ],
       "indexes": [
         "UNIQUE(actorId, targetId)",
@@ -363,138 +1845,993 @@
     {
       "name": "Album",
       "table": "albums",
-      "notes": "NEW (Change 7) — user photo albums. Separate from PrivateAlbum (legacy grant system). Plan limits enforced at app layer.",
+      "notes": "NEW (Change 7) \u2014 user photo albums. Separate from PrivateAlbum (legacy grant system). Plan limits enforced at app layer.",
       "fields": [
-        {"name":"id","type":"uuid"},
-        {"name":"userId","type":"uuid"},
-        {"name":"title","type":"string","maxLength":50},
-        {"name":"coverPhotoId","type":"uuid","nullable":true,"notes":"FK to AlbumPhoto; set to first photo on upload, updateable"},
-        {"name":"createdAt","type":"timestamp"},
-        {"name":"updatedAt","type":"timestamp"},
-        {"name":"deletedAt","type":"timestamp","nullable":true,"notes":"soft delete"}
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "maxLength": 50
+        },
+        {
+          "name": "coverPhotoId",
+          "type": "uuid",
+          "nullable": true,
+          "notes": "FK to AlbumPhoto; set to first photo on upload, updateable"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "updatedAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "deletedAt",
+          "type": "timestamp",
+          "nullable": true,
+          "notes": "soft delete"
+        }
       ],
       "planLimits": {
-        "free":     {"maxAlbums": 1,           "maxPhotosPerAlbum": 10},
-        "premium":  {"maxAlbums": 3,           "maxPhotosPerAlbum": 30},
-        "gold":     {"maxAlbums": 5,           "maxPhotosPerAlbum": 50},
-        "platinum": {"maxAlbums": "unlimited", "maxPhotosPerAlbum": 100}
+        "free": {
+          "maxAlbums": 1,
+          "maxPhotosPerAlbum": 10
+        },
+        "premium": {
+          "maxAlbums": 3,
+          "maxPhotosPerAlbum": 30
+        },
+        "gold": {
+          "maxAlbums": 5,
+          "maxPhotosPerAlbum": 50
+        },
+        "platinum": {
+          "maxAlbums": "unlimited",
+          "maxPhotosPerAlbum": 100
+        }
       }
     },
     {
       "name": "AlbumPhoto",
       "table": "album_photos",
-      "notes": "NEW (Change 7) — photos within an Album. Signed GCS URLs, 15 min expiry. Validated: JPEG/PNG/WebP, max 10MB. Moderated via AWS Rekognition on upload.",
+      "notes": "NEW (Change 7) \u2014 photos within an Album. Signed GCS URLs, 15 min expiry. Validated: JPEG/PNG/WebP, max 10MB. Moderated via AWS Rekognition on upload.",
       "fields": [
-        {"name":"id","type":"uuid"},
-        {"name":"albumId","type":"uuid"},
-        {"name":"userId","type":"uuid","notes":"owner — for fast ownership checks"},
-        {"name":"photoUrl","type":"string","notes":"GCS path; served as signed URL (15 min expiry)"},
-        {"name":"order","type":"number","notes":"for gallery ordering"},
-        {"name":"createdAt","type":"timestamp"}
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "albumId",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid",
+          "notes": "owner \u2014 for fast ownership checks"
+        },
+        {
+          "name": "photoUrl",
+          "type": "string",
+          "notes": "GCS path; served as signed URL (15 min expiry)"
+        },
+        {
+          "name": "order",
+          "type": "number",
+          "notes": "for gallery ordering"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        }
       ]
     },
-    {"name":"Message","table":"messages","notes":"v3: added voice_note to MessageType. aHasReplied/bHasReplied on Conversation updated after insert.","fields":[{"name":"id","type":"uuid"},{"name":"conversationId","type":"uuid"},{"name":"senderId","type":"uuid"},{"name":"type","type":"enum:MessageType"},{"name":"ciphertext","type":"string","nullable":true},{"name":"content","type":"string","nullable":true},{"name":"mediaUrls","type":"array<string>"},{"name":"mediaUrl","type":"string","nullable":true},{"name":"viewOnce","type":"boolean"},{"name":"expiresInSeconds","type":"number","nullable":true},{"name":"viewedAt","type":"timestamp","nullable":true},{"name":"expiresAfterView","type":"boolean"},{"name":"isUnsent","type":"boolean"},{"name":"unsentAt","type":"timestamp","nullable":true},{"name":"isEdited","type":"boolean"},{"name":"editedAt","type":"timestamp","nullable":true},{"name":"originalContent","type":"string","nullable":true,"frontendVisible":false},{"name":"translatedContent","type":"string","nullable":true},{"name":"flaggedOffensive","type":"boolean"},{"name":"moderationFlagged","type":"boolean"},{"name":"readAt","type":"timestamp","nullable":true},{"name":"deletedAt","type":"timestamp","nullable":true},{"name":"createdAt","type":"timestamp"}]},
-    {"name":"Call","table":"calls","notes":"v3: call initiation requires bHasReplied/aHasReplied check (Change 2). Added initiated/ongoing to CallStatus.","fields":[{"name":"id","type":"uuid"},{"name":"callerId","type":"uuid"},{"name":"calleeId","type":"uuid"},{"name":"conversationId","type":"uuid","nullable":true},{"name":"type","type":"enum:CallType"},{"name":"status","type":"enum:CallStatus"},{"name":"agoraChannelName","type":"string","nullable":true,"frontendVisible":false},{"name":"agoraToken","type":"string","nullable":true,"frontendVisible":false},{"name":"startedAt","type":"timestamp"},{"name":"answeredAt","type":"timestamp","nullable":true},{"name":"endedAt","type":"timestamp","nullable":true},{"name":"durationSec","type":"number","nullable":true},{"name":"durationSeconds","type":"number","nullable":true},{"name":"endReason","type":"string","nullable":true},{"name":"scheduledAt","type":"timestamp","nullable":true}]},
-    {"name":"Verification","table":"verifications","notes":"v3: added none/verified to VerificationStatus. isVerified on User now computed = phoneVerified && faceVerified.","fields":[{"name":"id","type":"uuid"},{"name":"userId","type":"uuid"},{"name":"type","type":"enum:VerificationType"},{"name":"status","type":"enum:VerificationStatus"},{"name":"mediaUrl","type":"string"},{"name":"score","type":"number","nullable":true},{"name":"reason","type":"string","nullable":true},{"name":"createdAt","type":"timestamp"},{"name":"reviewedAt","type":"timestamp","nullable":true}]},
-    {"name":"Subscription","table":"subscriptions","fields":[{"name":"id","type":"uuid"},{"name":"userId","type":"uuid"},{"name":"plan","type":"enum:Plan","nullable":true},{"name":"billingCycle","type":"enum:BillingCycle","nullable":true},{"name":"priceInr","type":"number","nullable":true},{"name":"active","type":"boolean"},{"name":"startedAt","type":"timestamp"},{"name":"expiresAt","type":"timestamp"},{"name":"paymentProvider","type":"string","nullable":true},{"name":"cancelledAt","type":"timestamp","nullable":true}]},
+    {
+      "name": "Message",
+      "table": "messages",
+      "notes": "v3: added voice_note to MessageType. aHasReplied/bHasReplied on Conversation updated after insert.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "conversationId",
+          "type": "uuid"
+        },
+        {
+          "name": "senderId",
+          "type": "uuid"
+        },
+        {
+          "name": "type",
+          "type": "enum:MessageType"
+        },
+        {
+          "name": "ciphertext",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "mediaUrls",
+          "type": "array<string>"
+        },
+        {
+          "name": "mediaUrl",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "viewOnce",
+          "type": "boolean"
+        },
+        {
+          "name": "expiresInSeconds",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "viewedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "expiresAfterView",
+          "type": "boolean"
+        },
+        {
+          "name": "isUnsent",
+          "type": "boolean"
+        },
+        {
+          "name": "unsentAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "isEdited",
+          "type": "boolean"
+        },
+        {
+          "name": "editedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "originalContent",
+          "type": "string",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "translatedContent",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "flaggedOffensive",
+          "type": "boolean"
+        },
+        {
+          "name": "moderationFlagged",
+          "type": "boolean"
+        },
+        {
+          "name": "readAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "deletedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        }
+      ]
+    },
+    {
+      "name": "Call",
+      "table": "calls",
+      "notes": "v3: call initiation requires bHasReplied/aHasReplied check (Change 2). Added initiated/ongoing to CallStatus.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "callerId",
+          "type": "uuid"
+        },
+        {
+          "name": "calleeId",
+          "type": "uuid"
+        },
+        {
+          "name": "conversationId",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "type",
+          "type": "enum:CallType"
+        },
+        {
+          "name": "status",
+          "type": "enum:CallStatus"
+        },
+        {
+          "name": "agoraChannelName",
+          "type": "string",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "agoraToken",
+          "type": "string",
+          "nullable": true,
+          "frontendVisible": false
+        },
+        {
+          "name": "startedAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "answeredAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "endedAt",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "durationSec",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "durationSeconds",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "endReason",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "scheduledAt",
+          "type": "timestamp",
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "name": "Verification",
+      "table": "verifications",
+      "notes": "v3: added none/verified to VerificationStatus. isVerified on User now computed = phoneVerified && faceVerified.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "type",
+          "type": "enum:VerificationType"
+        },
+        {
+          "name": "status",
+          "type": "enum:VerificationStatus"
+        },
+        {
+          "name": "mediaUrl",
+          "type": "string"
+        },
+        {
+          "name": "score",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "reviewedAt",
+          "type": "timestamp",
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "name": "Subscription",
+      "table": "subscriptions",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "plan",
+          "type": "enum:Plan",
+          "nullable": true
+        },
+        {
+          "name": "billingCycle",
+          "type": "enum:BillingCycle",
+          "nullable": true
+        },
+        {
+          "name": "priceInr",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "active",
+          "type": "boolean"
+        },
+        {
+          "name": "startedAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "expiresAt",
+          "type": "timestamp"
+        },
+        {
+          "name": "paymentProvider",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "cancelledAt",
+          "type": "timestamp",
+          "nullable": true
+        }
+      ]
+    },
     {
       "name": "Photo",
       "table": "photos",
-      "notes": "Phase 9: added isPublished field. Profile photos — Change 3.2: single optional profile picture, no minimum. First public photo auto-set as primary.",
+      "notes": "Phase 9: added isPublished field. Profile photos \u2014 Change 3.2: single optional profile picture, no minimum. First public photo auto-set as primary.",
       "fields": [
-        {"name":"id","type":"uuid","primaryKey":true},
-        {"name":"userId","type":"uuid"},
-        {"name":"url","type":"string","notes":"GCS path; served as signed URL"},
-        {"name":"isPrimary","type":"boolean","notes":"Only one photo can be primary per user"},
-        {"name":"isPrivate","type":"boolean","notes":"Private photos visible only to user"},
-        {"name":"isPublished","type":"boolean","notes":"NEW (Phase 9) — false = pending manual moderation review. Unpublished photos hidden from all public listings."},
-        {"name":"albumId","type":"uuid","nullable":true,"notes":"FK to PrivateAlbum (legacy grant system)"},
-        {"name":"order","type":"number","notes":"Display ordering"},
-        {"name":"createdAt","type":"timestamp"}
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "notes": "GCS path; served as signed URL"
+        },
+        {
+          "name": "isPrimary",
+          "type": "boolean",
+          "notes": "Only one photo can be primary per user"
+        },
+        {
+          "name": "isPrivate",
+          "type": "boolean",
+          "notes": "Private photos visible only to user"
+        },
+        {
+          "name": "isPublished",
+          "type": "boolean",
+          "notes": "NEW (Phase 9) \u2014 false = pending manual moderation review. Unpublished photos hidden from all public listings."
+        },
+        {
+          "name": "albumId",
+          "type": "uuid",
+          "nullable": true,
+          "notes": "FK to PrivateAlbum (legacy grant system)"
+        },
+        {
+          "name": "order",
+          "type": "number",
+          "notes": "Display ordering"
+        },
+        {
+          "name": "createdAt",
+          "type": "timestamp"
+        }
       ]
     }
   ],
   "enums": [
-    {"name":"Gender","values":["male","female","nonbinary","other"]},
-    {"name":"Plan","values":["free","premium","gold","platinum"]},
-    {"name":"BillingCycle","values":["monthly","three_month","six_month","annual"]},
-    {"name":"GenderIdentity","values":["man","woman","non_binary","trans_man","trans_woman","genderqueer","genderfluid","other"]},
-    {"name":"SexualOrientation","values":["straight","gay","lesbian","bisexual","queer","pansexual","other"]},
-    {"name":"WantToSee","values":["men","women","everyone","non_binary_people"]},
-    {"name":"RelationshipIntent","values":["dating","friendship","networking","open_to_anything"]},
-    {"name":"BodyType","values":["slim","athletic","average","curvy","heavyset","prefer_not_to_say"],"notes":"v3 canonical values (Change 5). Legacy DB values muscular/plus_size/other preserved for migration safety."},
-    {"name":"SkinTone","values":["very_fair","fair","medium","olive","brown","dark","prefer_not_to_say"],"notes":"NEW (Change 5)"},
-    {"name":"RelationshipStatus","values":["single","committed","open_relationship","prefer_not_to_say"],"notes":"NEW (Change 5) — distinct from legacy RelationshipType"},
-    {"name":"LookingForOption","values":["fwb","one_night","long_term","short_term","casual","friendship"],"notes":"NEW (Change 5) — lookingFor field values validated against these at app layer"},
-    {"name":"WhereWeCanMeet","values":["my_place","your_place","restaurant","cafe","hotel","outdoors","virtual"],"notes":"NEW (Change 5)"},
-    {"name":"RelationshipType","values":["single","dating","open_relationship","married","complicated","prefer_not_to_say"],"notes":"legacy — keep for existing profiles"},
-    {"name":"DatingIntention","values":["casual_dates","intimacy_no_commitment","life_partner","ethical_non_monogamy","marriage","friendship","virtual_dating"]},
-    {"name":"ConversationState","values":["pending","active","dismissed"]},
-    {"name":"MessageType","values":["text","photo","video","voice","expiring_photo","voice_note"],"notes":"v3: added voice_note"},
-    {"name":"CallType","values":["audio","video"]},
-    {"name":"CallStatus","values":["ringing","accepted","declined","missed","canceled","ended","initiated","ongoing"],"notes":"v3: added initiated, ongoing"},
-    {"name":"VerificationType","values":["photo","face"]},
-    {"name":"VerificationStatus","values":["pending","approved","rejected","none","verified"],"notes":"v3: added none, verified"},
-    {"name":"ReportReason","values":["spam","harassment","fake_profile","inappropriate_content","lgbtq_hate","other"]},
-    {"name":"AddOnType","values":["boost_local","boost_extended","boost_city_wide","mega_boost","spotlight","chat_pack_s","chat_pack_m","chat_pack_l","travel_pass","travel_pass_week","verified_badge","audio_call_topup","video_call_topup"]},
-    {"name":"ModerationFlagType","values":["explicit_sexual","threat","hate_speech","anti_lgbtq","nudity","spam"]}
+    {
+      "name": "Gender",
+      "values": [
+        "male",
+        "female",
+        "nonbinary",
+        "other"
+      ]
+    },
+    {
+      "name": "Plan",
+      "values": [
+        "free",
+        "premium",
+        "gold",
+        "platinum"
+      ]
+    },
+    {
+      "name": "BillingCycle",
+      "values": [
+        "monthly",
+        "three_month",
+        "six_month",
+        "annual"
+      ]
+    },
+    {
+      "name": "GenderIdentity",
+      "values": [
+        "man",
+        "woman",
+        "non_binary",
+        "trans_man",
+        "trans_woman",
+        "genderqueer",
+        "genderfluid",
+        "other"
+      ]
+    },
+    {
+      "name": "SexualOrientation",
+      "values": [
+        "straight",
+        "gay",
+        "lesbian",
+        "bisexual",
+        "queer",
+        "pansexual",
+        "other"
+      ]
+    },
+    {
+      "name": "WantToSee",
+      "values": [
+        "men",
+        "women",
+        "everyone",
+        "non_binary_people"
+      ]
+    },
+    {
+      "name": "RelationshipIntent",
+      "values": [
+        "dating",
+        "friendship",
+        "networking",
+        "open_to_anything"
+      ]
+    },
+    {
+      "name": "BodyType",
+      "values": [
+        "slim",
+        "athletic",
+        "average",
+        "curvy",
+        "heavyset",
+        "prefer_not_to_say"
+      ],
+      "notes": "v3 canonical values (Change 5). Legacy DB values muscular/plus_size/other preserved for migration safety."
+    },
+    {
+      "name": "SkinTone",
+      "values": [
+        "very_fair",
+        "fair",
+        "medium",
+        "olive",
+        "brown",
+        "dark",
+        "prefer_not_to_say"
+      ],
+      "notes": "NEW (Change 5)"
+    },
+    {
+      "name": "RelationshipStatus",
+      "values": [
+        "single",
+        "committed",
+        "open_relationship",
+        "prefer_not_to_say"
+      ],
+      "notes": "NEW (Change 5) \u2014 distinct from legacy RelationshipType"
+    },
+    {
+      "name": "LookingForOption",
+      "values": [
+        "fwb",
+        "one_night",
+        "long_term",
+        "short_term",
+        "casual",
+        "friendship"
+      ],
+      "notes": "NEW (Change 5) \u2014 lookingFor field values validated against these at app layer"
+    },
+    {
+      "name": "WhereWeCanMeet",
+      "values": [
+        "my_place",
+        "your_place",
+        "restaurant",
+        "cafe",
+        "hotel",
+        "outdoors",
+        "virtual"
+      ],
+      "notes": "NEW (Change 5)"
+    },
+    {
+      "name": "RelationshipType",
+      "values": [
+        "single",
+        "dating",
+        "open_relationship",
+        "married",
+        "complicated",
+        "prefer_not_to_say"
+      ],
+      "notes": "legacy \u2014 keep for existing profiles"
+    },
+    {
+      "name": "DatingIntention",
+      "values": [
+        "casual_dates",
+        "intimacy_no_commitment",
+        "life_partner",
+        "ethical_non_monogamy",
+        "marriage",
+        "friendship",
+        "virtual_dating"
+      ]
+    },
+    {
+      "name": "ConversationState",
+      "values": [
+        "pending",
+        "active",
+        "dismissed"
+      ]
+    },
+    {
+      "name": "MessageType",
+      "values": [
+        "text",
+        "photo",
+        "video",
+        "voice",
+        "expiring_photo",
+        "voice_note"
+      ],
+      "notes": "v3: added voice_note"
+    },
+    {
+      "name": "CallType",
+      "values": [
+        "audio",
+        "video"
+      ]
+    },
+    {
+      "name": "CallStatus",
+      "values": [
+        "ringing",
+        "accepted",
+        "declined",
+        "missed",
+        "canceled",
+        "ended",
+        "initiated",
+        "ongoing"
+      ],
+      "notes": "v3: added initiated, ongoing"
+    },
+    {
+      "name": "VerificationType",
+      "values": [
+        "photo",
+        "face"
+      ]
+    },
+    {
+      "name": "VerificationStatus",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "none",
+        "verified"
+      ],
+      "notes": "v3: added none, verified"
+    },
+    {
+      "name": "ReportReason",
+      "values": [
+        "spam",
+        "harassment",
+        "fake_profile",
+        "inappropriate_content",
+        "lgbtq_hate",
+        "other"
+      ]
+    },
+    {
+      "name": "AddOnType",
+      "values": [
+        "boost_local",
+        "boost_extended",
+        "boost_city_wide",
+        "mega_boost",
+        "spotlight",
+        "chat_pack_s",
+        "chat_pack_m",
+        "chat_pack_l",
+        "travel_pass",
+        "travel_pass_week",
+        "verified_badge",
+        "audio_call_topup",
+        "video_call_topup"
+      ]
+    },
+    {
+      "name": "ModerationFlagType",
+      "values": [
+        "explicit_sexual",
+        "threat",
+        "hate_speech",
+        "anti_lgbtq",
+        "nudity",
+        "spam"
+      ]
+    }
   ],
   "events": [
-    {"name":"message.created","transport":"websocket","direction":"server→client","payload":{"id":"uuid","conversationId":"uuid","senderId":"uuid","type":"MessageType","content":"string|null","ciphertext":"string|null","mediaUrls":"array","viewOnce":"boolean","expiresInSeconds":"number|null","createdAt":"iso8601"}},
-    {"name":"message.read","transport":"websocket","direction":"server→client","payload":{"conversationId":"uuid","readerId":"uuid"}},
-    {"name":"message.unsend","transport":"websocket","direction":"server→client","payload":{"conversationId":"uuid","messageId":"uuid"}},
-    {"name":"message.deleted","transport":"websocket","direction":"server→client","payload":{"conversationId":"uuid","messageId":"uuid"}},
-    {"name":"message.viewed","transport":"websocket","direction":"server→client","payload":{"conversationId":"uuid","messageId":"uuid","viewedAt":"iso8601"}},
-    {"name":"message.edited","transport":"websocket","direction":"server→client","payload":{"conversationId":"uuid","messageId":"uuid","content":"string","editedAt":"iso8601","isEdited":true}},
-    {"name":"typing","transport":"websocket","direction":"bidirectional","payload":{"conversationId":"uuid","userId":"uuid","isTyping":"boolean"}},
-    {"name":"tap.received","transport":"websocket","direction":"server→client","payload":{"tapId":"uuid","senderId":"uuid","createdAt":"iso8601"}},
-    {"name":"call:invite","transport":"websocket","direction":"server→client","payload":{"callId":"uuid","callerId":"uuid","type":"audio|video"},"notes":"LEGACY WebRTC — v2 uses Agora SDK"},
-    {"name":"call:answer","transport":"websocket","direction":"server→client","payload":{"callId":"uuid"},"notes":"LEGACY WebRTC"},
-    {"name":"call:decline","transport":"websocket","direction":"server→client","payload":{"callId":"uuid"}},
-    {"name":"call:end","transport":"websocket","direction":"server→client","payload":{"callId":"uuid","durationSec":"number|null"}},
-    {"name":"location:update","transport":"websocket","direction":"client→server","payload":{"lat":"number","lng":"number"}},
-    {"name":"heartbeat","transport":"websocket","direction":"client→server","payload":{}},
-    {"name":"boost.activated","transport":"websocket","direction":"server→client","payload":{"boostId":"uuid","boostType":"string","expiresAt":"iso8601"}}
+    {
+      "name": "message.created",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "id": "uuid",
+        "conversationId": "uuid",
+        "senderId": "uuid",
+        "type": "MessageType",
+        "content": "string|null",
+        "ciphertext": "string|null",
+        "mediaUrls": "array",
+        "viewOnce": "boolean",
+        "expiresInSeconds": "number|null",
+        "createdAt": "iso8601"
+      }
+    },
+    {
+      "name": "message.read",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "conversationId": "uuid",
+        "readerId": "uuid"
+      }
+    },
+    {
+      "name": "message.unsend",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "conversationId": "uuid",
+        "messageId": "uuid"
+      }
+    },
+    {
+      "name": "message.deleted",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "conversationId": "uuid",
+        "messageId": "uuid"
+      }
+    },
+    {
+      "name": "message.viewed",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "conversationId": "uuid",
+        "messageId": "uuid",
+        "viewedAt": "iso8601"
+      }
+    },
+    {
+      "name": "message.edited",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "conversationId": "uuid",
+        "messageId": "uuid",
+        "content": "string",
+        "editedAt": "iso8601",
+        "isEdited": true
+      }
+    },
+    {
+      "name": "typing",
+      "transport": "websocket",
+      "direction": "bidirectional",
+      "payload": {
+        "conversationId": "uuid",
+        "userId": "uuid",
+        "isTyping": "boolean"
+      }
+    },
+    {
+      "name": "tap.received",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "tapId": "uuid",
+        "senderId": "uuid",
+        "createdAt": "iso8601"
+      }
+    },
+    {
+      "name": "call:invite",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "callId": "uuid",
+        "callerId": "uuid",
+        "type": "audio|video"
+      },
+      "notes": "LEGACY WebRTC \u2014 v2 uses Agora SDK"
+    },
+    {
+      "name": "call:answer",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "callId": "uuid"
+      },
+      "notes": "LEGACY WebRTC"
+    },
+    {
+      "name": "call:decline",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "callId": "uuid"
+      }
+    },
+    {
+      "name": "call:end",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "callId": "uuid",
+        "durationSec": "number|null"
+      }
+    },
+    {
+      "name": "location:update",
+      "transport": "websocket",
+      "direction": "client\u2192server",
+      "payload": {
+        "lat": "number",
+        "lng": "number"
+      }
+    },
+    {
+      "name": "heartbeat",
+      "transport": "websocket",
+      "direction": "client\u2192server",
+      "payload": {}
+    },
+    {
+      "name": "boost.activated",
+      "transport": "websocket",
+      "direction": "server\u2192client",
+      "payload": {
+        "boostId": "uuid",
+        "boostType": "string",
+        "expiresAt": "iso8601"
+      }
+    }
   ],
   "environment": [
-    {"key":"PORT","description":"API server port","example":"4000"},
-    {"key":"DATABASE_URL","description":"PostgreSQL connection string","required":true},
-    {"key":"REDIS_URL","description":"Redis connection string","required":true},
-    {"key":"JWT_ACCESS_SECRET","required":true},
-    {"key":"JWT_REFRESH_SECRET","required":true},
-    {"key":"CORS_ORIGIN","example":"*"},
-    {"key":"RAZORPAY_KEY_ID","required":true},
-    {"key":"RAZORPAY_KEY_SECRET","required":true},
-    {"key":"RAZORPAY_WEBHOOK_SECRET","required":true},
-    {"key":"STRIPE_SECRET_KEY","required":true},
-    {"key":"STRIPE_WEBHOOK_SECRET","required":true},
-    {"key":"AGORA_APP_ID","required":true},
-    {"key":"AGORA_APP_CERTIFICATE","description":"Server-side only — NEVER expose to client","required":true},
-    {"key":"GCS_BUCKET_NAME","description":"Google Cloud Storage bucket for media","required":true},
-    {"key":"GCS_SERVICE_ACCOUNT_KEY","description":"GCS service account JSON for signed URL generation","required":true},
-    {"key":"AWS_REKOGNITION_ACCESS_KEY","description":"For image moderation on album photo uploads"},
-    {"key":"AWS_REKOGNITION_SECRET_KEY"},
-    {"key":"AWS_REGION","example":"ap-south-1"},
-    {"key":"ANTHROPIC_API_KEY","description":"For AI features (Platinum)"},
-    {"key":"DIGILOCKER_CLIENT_ID"},
-    {"key":"DIGILOCKER_CLIENT_SECRET"},
-    {"key":"NEXT_PUBLIC_API_URL","required":true},
-    {"key":"NEXT_PUBLIC_WS_URL","required":true},
-    {"key":"NEXT_PUBLIC_RAZORPAY_KEY_ID","required":true},
-    {"key":"NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY","required":true},
-    {"key":"NEXT_PUBLIC_AGORA_APP_ID","required":true}
+    {
+      "key": "PORT",
+      "description": "API server port",
+      "example": "4000"
+    },
+    {
+      "key": "DATABASE_URL",
+      "description": "PostgreSQL connection string",
+      "required": true
+    },
+    {
+      "key": "REDIS_URL",
+      "description": "Redis connection string",
+      "required": true
+    },
+    {
+      "key": "JWT_ACCESS_SECRET",
+      "required": true
+    },
+    {
+      "key": "JWT_REFRESH_SECRET",
+      "required": true
+    },
+    {
+      "key": "CORS_ORIGIN",
+      "example": "*"
+    },
+    {
+      "key": "RAZORPAY_KEY_ID",
+      "required": true
+    },
+    {
+      "key": "RAZORPAY_KEY_SECRET",
+      "required": true
+    },
+    {
+      "key": "RAZORPAY_WEBHOOK_SECRET",
+      "required": true
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "required": true
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "required": true
+    },
+    {
+      "key": "AGORA_APP_ID",
+      "required": true
+    },
+    {
+      "key": "AGORA_APP_CERTIFICATE",
+      "description": "Server-side only \u2014 NEVER expose to client",
+      "required": true
+    },
+    {
+      "key": "GCS_BUCKET_NAME",
+      "description": "Google Cloud Storage bucket for media",
+      "required": true
+    },
+    {
+      "key": "GCS_SERVICE_ACCOUNT_KEY",
+      "description": "GCS service account JSON for signed URL generation",
+      "required": true
+    },
+    {
+      "key": "AWS_REKOGNITION_ACCESS_KEY",
+      "description": "For image moderation on album photo uploads"
+    },
+    {
+      "key": "AWS_REKOGNITION_SECRET_KEY"
+    },
+    {
+      "key": "AWS_REGION",
+      "example": "ap-south-1"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "description": "For AI features (Platinum)"
+    },
+    {
+      "key": "DIGILOCKER_CLIENT_ID"
+    },
+    {
+      "key": "DIGILOCKER_CLIENT_SECRET"
+    },
+    {
+      "key": "NEXT_PUBLIC_API_URL",
+      "required": true
+    },
+    {
+      "key": "NEXT_PUBLIC_WS_URL",
+      "required": true
+    },
+    {
+      "key": "NEXT_PUBLIC_RAZORPAY_KEY_ID",
+      "required": true
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "required": true
+    },
+    {
+      "key": "NEXT_PUBLIC_AGORA_APP_ID",
+      "required": true
+    },
+    {
+      "key": "FIREBASE_PROJECT_ID",
+      "description": "Firebase project ID",
+      "required": true
+    },
+    {
+      "key": "FIREBASE_CLIENT_EMAIL",
+      "description": "Firebase Admin SDK service account email",
+      "required": true
+    },
+    {
+      "key": "FIREBASE_PRIVATE_KEY",
+      "description": "Firebase Admin SDK private key (contains \\n line breaks)",
+      "required": true
+    },
+    {
+      "key": "EXPO_PUBLIC_FIREBASE_API_KEY",
+      "description": "[Frontend] Firebase web API key",
+      "required": true
+    },
+    {
+      "key": "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN",
+      "description": "[Frontend] Firebase auth domain",
+      "required": true
+    },
+    {
+      "key": "EXPO_PUBLIC_FIREBASE_PROJECT_ID",
+      "description": "[Frontend] Firebase project ID",
+      "required": true
+    },
+    {
+      "key": "EXPO_PUBLIC_GOOGLE_CLIENT_ID",
+      "description": "[Frontend] Google Sign-In client ID (iOS/Android)",
+      "required": true
+    }
   ],
   "notes": [
-    "Socket.IO: connect with io(baseUrl, {auth:{token}}) — socket joins room user:<id> on connect.",
+    "Socket.IO: connect with io(baseUrl, {auth:{token}}) \u2014 socket joins room user:<id> on connect.",
     "Auth: Authorization: Bearer <accessToken>. Refresh on 401 via /auth/refresh.",
     "Error envelope: {error:string, message:string, requestId:string, details?:any}. Every request gets a unique requestId (UUID) echoed in X-Request-ID response header. Pass X-Request-ID in requests to correlate logs.",
-    "Fuzzy location: API NEVER returns lat/lng — only distanceLabel or 'Near you' for hideExactDistance users.",
-    "CRITICAL — Call gate (Change 2): calls enabled when the OTHER party has replied. aHasReplied = User A has sent a message; bHasReplied = User B has. Call buttons always visible; returns audioCallEnabled/videoCallEnabled=false until flag is true. No paid override.",
-    "CRITICAL — Blocking (Change 1): bidirectional — if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
-    "CRITICAL — Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
-    "CRITICAL — 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
-    "CRITICAL — isVerified (Change 3.1): computed = phoneVerified AND faceVerified. Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
-    "CRITICAL — Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
+    "Fuzzy location: API NEVER returns lat/lng \u2014 only distanceLabel or 'Near you' for hideExactDistance users.",
+    "CRITICAL \u2014 Call gate (Change 2): calls enabled when the OTHER party has replied. aHasReplied = User A has sent a message; bHasReplied = User B has. Call buttons always visible; returns audioCallEnabled/videoCallEnabled=false until flag is true. No paid override.",
+    "CRITICAL \u2014 Blocking (Change 1): bidirectional \u2014 if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
+    "CRITICAL \u2014 Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
+    "CRITICAL \u2014 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
+    "CRITICAL \u2014 isVerified (Change 3.1): computed = phoneVerified AND faceVerified. Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
+    "CRITICAL \u2014 Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
     "UserCard response fields (Change 5): profilePhoto, firstName, age, distance, lastActiveAt (human-readable), isVerified, height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked.",
     "Albums (Change 7): /api/albums endpoints. Plan limits: free=1/10, premium=3/30, gold=5/50, platinum=unlimited/100. Photos: JPEG/PNG/WebP, max 10MB, AWS Rekognition moderated. Served as signed GCS URLs (15 min expiry). Block check on /api/v1/users/:userId/albums.",
     "Plan enforcement: check user.plan and user.planExpiresAt on every gated endpoint. Expired plan = free tier.",
@@ -502,8 +2839,10 @@
     "Women safety defaults on signup: verifiedUsersOnlyFilter=true for users who specify gender=woman.",
     "Moderation: AWS Rekognition scans all uploaded photos/clips before publish. Required for all album photo uploads.",
     "AI features: use claude-sonnet-4-6 for icebreakers/reply suggestions/profile optimizer. All opt-in.",
-    "Health endpoints (no auth): GET /health → {status:'ok'}, GET /health/live → {status:'ok'}, GET /health/ready → checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
+    "Health endpoints (no auth): GET /health \u2192 {status:'ok'}, GET /health/live \u2192 {status:'ok'}, GET /health/ready \u2192 checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
     "Request logger: every response emits structured JSON {requestId, userId, method, path, statusCode, durationMs, plan} to stdout.",
-    "Spec: /Users/suryprakash/Project/backend-spec.json (use frontend-from-spec skill to consume)."
+    "Spec: /Users/suryprakash/Project/backend-spec.json (use frontend-from-spec skill to consume).",
+    "Auth: Firebase Auth handles identity. Client gets Firebase ID token via Firebase SDK, exchanges at POST /api/v1/auth/firebase for NearMe JWT pair (accessToken + refreshToken).",
+    "bearer+verified gate: valid accessToken AND (emailVerified=true OR phoneVerified=true). Google Sign-In users are always verified. Email+password users must verify their email first."
   ]
 }

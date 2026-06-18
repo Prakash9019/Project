@@ -55,10 +55,11 @@ function refreshLastActive(userId: string): void {
   }).catch(() => {});
 }
 
-/** Requires the authenticated user to have completed phone verification. */
+/** Requires the authenticated user to be verified (email via Firebase, or phone via legacy OTP). */
 export function requireVerifiedPhone(req: Request, _res: Response, next: NextFunction): void {
-  if (!req.user?.phoneVerified) {
-    return next(Errors.forbidden('Phone verification required'));
+  const verified = req.user?.emailVerified || req.user?.phoneVerified;
+  if (!verified) {
+    return next(Errors.forbidden('Account verification required'));
   }
   next();
 }

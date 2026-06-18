@@ -37,7 +37,7 @@ export default function Intro() {
   const [index, setIndex] = useState(0);
   const ref = useRef<FlatList>(null);
 
-  const go = () => router.replace('/onboarding/phone');
+  const go = () => router.replace('/onboarding/auth');
   const next = () => {
     if (index < SLIDES.length - 1) ref.current?.scrollToIndex({ index: index + 1 });
     else go();

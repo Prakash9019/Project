@@ -1,3 +1,4 @@
+import '@react-native-firebase/app';
 import { useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';

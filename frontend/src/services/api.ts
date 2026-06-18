@@ -93,22 +93,16 @@ async function request<T>(
 
 /* ─────────────────────────────── Auth ─────────────────────────────── */
 
-export interface RequestOtpResponse {
-  message: string;
-  expiresInSeconds: number;
-}
-export const requestOtp = (phone: string) =>
-  request<RequestOtpResponse>('POST', '/api/v1/auth/request-otp', { phone }, { auth: false });
-
-export interface VerifyOtpResponse {
+export interface FirebaseLoginResponse {
   accessToken: string;
   refreshToken: string;
   profileComplete: boolean;
   isNewUser: boolean;
   user: Self;
 }
-export const verifyOtp = (phone: string, code: string) =>
-  request<VerifyOtpResponse>('POST', '/api/v1/auth/verify-otp', { phone, code }, { auth: false });
+export const firebaseLogin = (idToken: string) =>
+  request<FirebaseLoginResponse>('POST', '/api/v1/auth/firebase', { idToken }, { auth: false });
+
 
 export const logout = () => request<void>('POST', '/api/v1/auth/logout');
 

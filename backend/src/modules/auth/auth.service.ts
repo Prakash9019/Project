@@ -1,31 +1,37 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../../config/prisma';
-import { issueOtp, verifyOtp } from '../../utils/otp';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } from '../../utils/jwt';
 import { Errors } from '../../utils/httpError';
-import { sms } from '../../adapters/sms';
-// TODO: encrypt phone before storing — use encrypt(phone) when migrating existing data
-import { encrypt } from '../../utils/encrypt'; // eslint-disable-line @typescript-eslint/no-unused-vars
+import { verifyFirebaseToken } from '../../adapters/firebase';
 
-export async function requestOtp(phone: string): Promise<{ devCode?: string }> {
-  const code = await issueOtp(phone);
-  await sms.sendOtp(phone, code);
-  return { devCode: code };
-}
+export async function loginWithFirebase(idToken: string) {
+  const decoded = await verifyFirebaseToken(idToken).catch(() => {
+    throw Errors.unauthorized('Invalid Firebase ID token');
+  });
 
-export async function verifyOtpAndIssueTokens(phone: string, code: string) {
-  await verifyOtp(phone, code);
+  const firebaseUid = decoded.uid;
+  const email = decoded.email ?? null;
+  const emailVerified = decoded.email_verified ?? false;
 
-  const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
+  const existing = await prisma.user.findFirst({
+    where: { OR: [{ firebaseUid }, ...(email ? [{ email }] : [])] },
+    select: { id: true },
+  });
   const isNewUser = !existing;
 
   const user = await prisma.user.upsert({
-    where: { phone },
-    update: { phoneVerified: true, lastActiveAt: new Date() },
+    where: { firebaseUid },
+    update: {
+      email,
+      emailVerified,
+      phoneVerified: emailVerified,  // keeps existing DB filters (grid/explore) working
+      lastActiveAt: new Date(),
+    },
     create: {
-      // TODO: encrypt phone before storing — use encrypt(phone) when migrating existing data
-      phone,
-      phoneVerified: true,
+      firebaseUid,
+      email,
+      emailVerified,
+      phoneVerified: emailVerified,  // grid/explore filter on phoneVerified: true
       settings: { create: {} },
       wallet: { create: {} },
     },
@@ -33,12 +39,11 @@ export async function verifyOtpAndIssueTokens(phone: string, code: string) {
   });
 
   const profileComplete = Boolean(user.name || user.firstName);
-  const tokens = await issueTokenPair(user.id, user.phoneVerified, user.tier, user.plan, user.planExpiresAt);
+  const tokens = await issueTokenPair(user.id, user.emailVerified, user.tier, user.plan, user.planExpiresAt);
   return { user, tokens, profileComplete, isNewUser };
 }
 
 export async function refreshTokens(refreshToken: string) {
-  // 1. Verify JWT signature/expiry
   let claims;
   try {
     claims = verifyRefreshToken(refreshToken);
@@ -46,29 +51,22 @@ export async function refreshTokens(refreshToken: string) {
     throw Errors.unauthorized('Invalid refresh token');
   }
 
-  // 2. Look up RefreshToken by hash
   const tokenHash = hashToken(refreshToken);
   const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
-  // 3. Not found → 401
-  if (!stored) {
-    throw Errors.unauthorized('Invalid refresh token');
-  }
+  if (!stored) throw Errors.unauthorized('Invalid refresh token');
 
-  // 4. Already used → token reuse detected → revoke entire family
   if (stored.usedAt !== null) {
     await prisma.refreshToken.deleteMany({ where: { family: stored.family } });
     throw Errors.unauthorized('Token reuse detected — all sessions invalidated');
   }
 
-  // 5. Mark old token as used
   await prisma.refreshToken.update({ where: { id: stored.id }, data: { usedAt: new Date() } });
 
-  // 6. Fetch user and issue new token pair in same family
   const user = await prisma.user.findUnique({ where: { id: claims.sub } });
   if (!user) throw Errors.unauthorized('User no longer exists');
 
-  return issueTokenPair(user.id, user.phoneVerified, user.tier, user.plan, user.planExpiresAt, stored.family);
+  return issueTokenPair(user.id, user.emailVerified, user.tier, user.plan, user.planExpiresAt, stored.family);
 }
 
 export async function logoutSession(refreshToken: string): Promise<void> {
@@ -76,7 +74,7 @@ export async function logoutSession(refreshToken: string): Promise<void> {
   try {
     tokenHash = hashToken(refreshToken);
   } catch {
-    return; // silently ignore malformed tokens on logout
+    return;
   }
   const stored = await prisma.refreshToken.findUnique({ where: { tokenHash }, select: { family: true } });
   if (stored) {
@@ -84,7 +82,6 @@ export async function logoutSession(refreshToken: string): Promise<void> {
   }
 }
 
-/** Call on account delete or ban — invalidates ALL sessions for a user. */
 export async function revokeAllUserTokens(userId: string): Promise<void> {
   await prisma.refreshToken.deleteMany({ where: { userId } });
 }
@@ -97,7 +94,7 @@ function effectivePlan(plan: string, planExpiresAt: Date | null): string {
 
 async function issueTokenPair(
   userId: string,
-  phoneVerified: boolean,
+  emailVerified: boolean,
   tier: string,
   plan: string,
   planExpiresAt: Date | null,
@@ -106,7 +103,8 @@ async function issueTokenPair(
   const effectPlan = effectivePlan(plan, planExpiresAt);
   const accessToken = signAccessToken({
     sub: userId,
-    phoneVerified,
+    phoneVerified: false,  // OTP auth removed; always false for Firebase users
+    emailVerified,
     tier,
     plan: effectPlan,
     planExpiresAt:
@@ -114,7 +112,7 @@ async function issueTokenPair(
   });
   const refreshToken = signRefreshToken(userId);
   const family = existingFamily ?? randomUUID();
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   await prisma.refreshToken.create({
     data: {

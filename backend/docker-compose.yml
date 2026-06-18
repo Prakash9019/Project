@@ -36,6 +36,8 @@ services:
     build: .
     container_name: proximity_api
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,7 +46,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/proximity_social?schema=public"
+      DATABASE_URL: "postgresql://postgres.xgehqnqorlaxgigdxycr:Prakash%40_2003Nearme@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
       REDIS_URL: "redis://redis:6379"
       JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-change-me-access-secret}"
       JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-change-me-refresh-secret}"

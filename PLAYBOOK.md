@@ -48,9 +48,24 @@ npm run dev                     # API with hot reload → http://localhost:4000
 
 ## Frontend (Expo)
 
+export ANDROID_HOME=$HOME/Library/Android/sdk
+export ANDROID_SDK_ROOT=$ANDROID_HOME
+export PATH=$PATH:$ANDROID_HOME/platform-tools
+export PATH=$PATH:$ANDROID_HOME/emulator
+
+ source ~/.zshrc 
+ 
+```bash
+cd android          
+./gradlew clean
+cd ..
+npx expo run:android
+```
+
 ```bash
 cd frontend
 npm install
+npx expo run:android
 npm start                       # press i (iOS), a (Android), or w (web)
 ```
 

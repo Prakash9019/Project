@@ -1,29 +1,32 @@
-# Stage 1: Build
-FROM node:20-alpine AS builder
+# Stage 1
+FROM node:20-slim AS builder
+
+RUN apt-get update && apt-get install -y openssl
+
 WORKDIR /app
+
 COPY package*.json ./
-RUN npm ci --include=dev
+RUN npm ci
+
 COPY . .
+
 RUN npx prisma generate
 RUN npm run build
 
-# Stage 2: Production
-FROM node:20-alpine AS production
-WORKDIR /app
+# Stage 2
+FROM node:20-slim AS production
 
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN apt-get update && apt-get install -y openssl
+
+WORKDIR /app
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./
 
-USER appuser
-
 ENV NODE_ENV=production
-EXPOSE 4000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:4000/health/live || exit 1
+EXPOSE 4000
 
 CMD ["node", "dist/index.js"]

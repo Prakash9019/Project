@@ -36,11 +36,9 @@ export const RedisKeys = {
   lastActive: (userId: string) => `lastActive:${userId}`,
   aiTop10: (userId: string) => `ai:top10:${userId}`,
 
-  // Rate-limiting keys (Section 1.2)
-  otpReqRate: (phone: string) => `otp_req:${phone}`,
-  otpFailRate: (phone: string) => `otp_fail:${phone}`,
-  otpLocked:   (phone: string) => `otp_locked:${phone}`,
-  refreshRate: (ip: string)   => `refresh_rate:${ip}`,
+  // Rate-limiting keys
+  refreshRate: (ip: string)       => `refresh_rate:${ip}`,
+  firebaseLoginRate: (ip: string) => `firebase_login:${ip}`,
 
   // Section 2.3 — blocked IDs cache (30s TTL)
   blockedIds: (userId: string) => `blocked:${userId}`,

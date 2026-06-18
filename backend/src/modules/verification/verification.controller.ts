@@ -40,13 +40,13 @@ export async function getVerificationStatus(req: Request, res: Response): Promis
   const [user, verifications] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
-      select: { phoneVerified: true, photoVerified: true, faceVerified: true, isVerified: true, isCollegeVerified: true },
+      select: { phoneVerified: true, emailVerified: true, photoVerified: true, faceVerified: true, isVerified: true, isCollegeVerified: true },
     }),
     prisma.verification.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 10 }),
   ]);
   if (!user) throw Errors.notFound();
 
-  const computedIsVerified = user.phoneVerified && user.faceVerified;
+  const computedIsVerified = (user.phoneVerified || user.emailVerified) && user.faceVerified;
   if (computedIsVerified !== user.isVerified) {
     await prisma.user.update({ where: { id: userId }, data: { isVerified: computedIsVerified } });
   }
@@ -115,8 +115,8 @@ export async function submitFaceVerification(req: Request, res: Response): Promi
   });
 
   if (result.approved) {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { phoneVerified: true } });
-    const isVerified = !!(user?.phoneVerified && result.approved);
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { phoneVerified: true, emailVerified: true } });
+    const isVerified = !!((user?.phoneVerified || user?.emailVerified) && result.approved);
     await prisma.user.update({ where: { id: userId }, data: { faceVerified: true, isVerified } });
 
     if (isVerified) {

@@ -15,7 +15,9 @@
         "NSMicrophoneUsageDescription": "NearMe uses your microphone for audio and video calls.",
         "NSPhotoLibraryUsageDescription": "NearMe lets you add photos to your profile and albums.",
         "NSLocationWhenInUseUsageDescription": "NearMe shows people near you based on your location."
-      }
+      },
+      "bundleIdentifier": "com.nearme.app",
+      "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
       "adaptiveIcon": {
@@ -34,7 +36,8 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ],
-      "package": "com.anonymous.nearme"
+      "package": "com.nearme.app",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -47,6 +50,14 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "NearMe shows people near you based on your location."
+        }
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.1078544839352-3u84umnjqu36lcld7ki7g4dembeum15t"
         }
       ]
     ],

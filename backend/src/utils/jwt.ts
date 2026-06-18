@@ -4,7 +4,8 @@ import { env } from '../config/env';
 
 export interface AccessClaims {
   sub: string; // userId
-  phoneVerified: boolean;
+  phoneVerified: boolean; // true for OTP-verified users (legacy)
+  emailVerified: boolean;  // true for Firebase users with verified email
   tier: string;
   plan: string; // 'free' | 'premium' | 'gold' | 'platinum' — effective at token issue time
   planExpiresAt: number | null; // Unix timestamp (seconds); null for free / lifetime plans

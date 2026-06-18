@@ -304,3 +304,33 @@ cd frontend && npm install && npm start
 ⚠️ If you test on a physical phone or Android emulator, change EXPO_PUBLIC_API_URL in frontend/.env from localhost to your Mac's LAN IP (ipconfig getifaddr en0). localhost only works on the iOS simulator and web.
 
 
+
+Setup steps (you need to do)
+
+1. Firebase Console setup
+- Create project at console.firebase.google.com
+- Enable Authentication → Email/Password and Google
+- Download google-services.json → frontend/android/app/
+- Download GoogleService-Info.plist → frontend/ios/
+
+2. Backend env vars (backend/.env)
+FIREBASE_PROJECT_ID="nearme-99a66"
+FIREBASE_CLIENT_EMAIL="firebase-adminsdk-fbsvc@nearme-99a66.iam.gserviceaccount.com"
+FIREBASE_PRIVATE_KEY=
+
+3. Frontend env vars (frontend/.env)
+EXPO_PUBLIC_FIREBASE_API_KEY=AIza...
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
+EXPO_PUBLIC_FIREBASE_APP_ID=1:xxx:android:yyy
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=xxx.apps.googleusercontent.com
+(Firebase Console → Project Settings → General → Your apps; Web Client ID from Authentication → Sign-in methods → Google)
+
+4. Update app.json — replace YOUR-IOS-CLIENT-ID in the Google Sign-In plugin with your actual iOS client ID from Firebase
+
+5. Run migration
+cd backend && npx prisma migrate deploy
+
+6. Rebuild native app
+cd frontend && expo run:android  # or expo run:ios
+(Required because Firebase SDK adds native modules)
