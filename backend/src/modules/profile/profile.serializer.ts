@@ -37,12 +37,19 @@ function profileFields(user: UserWithRelations) {
 /** Full self-view returned to the authenticated owner. */
 export function serializeSelf(user: UserWithRelations) {
   const primary = (user.photos ?? []).find((p: any) => p.isPrimary) ?? user.photos?.[0];
+  // primaryPhotoUrl: the published primary photo. Photo.url is stored as a fully
+  // qualified URL (addPhotoSchema requires url()), so it is already client-safe.
+  const primaryPublished = (user.photos ?? []).find((p: any) => p.isPrimary && p.isPublished);
   return {
     id: user.id,
     phone: user.phone,
     phoneVerified: user.phoneVerified,
     ...profileFields(user),
     profilePhoto: primary?.url ?? null,
+    primaryPhotoUrl: primaryPublished?.url ?? null,
+    rightNowStatus: user.rightNowStatus ?? null,
+    rightNowCategory: user.rightNowCategory ?? null,
+    rightNowExpiresAt: user.rightNowExpiresAt ?? null,
     plan: user.plan,
     tier: user.tier,
     planExpiresAt: user.planExpiresAt,
@@ -107,9 +114,15 @@ export function serializeGridCard(
   // Orientation shown publicly only if user opted in
   const showOrientation = settings.showOrientationPublicly ?? false;
 
+  // Right Now: only surface the status while it's still active.
+  const rightNowActive = !!(user.rightNowExpiresAt && new Date(user.rightNowExpiresAt) > new Date());
+
   return {
     id: user.id,
     profilePhoto: primary?.url ?? null,
+    rightNowActive,
+    rightNowStatus: rightNowActive ? user.rightNowStatus ?? null : null,
+    rightNowCategory: rightNowActive ? user.rightNowCategory ?? null : null,
     thumbnailUrl: primary?.url ?? null,
     firstName: user.firstName,
     name: user.name,

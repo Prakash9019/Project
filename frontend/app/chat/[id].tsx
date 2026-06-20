@@ -25,8 +25,9 @@ import {
 import { connectSocket, emitTyping } from '../../src/services/socket';
 import { useAuthStore } from '../../src/store/authStore';
 import { useChatStore } from '../../src/store/chatStore';
-import { clockTime } from '../../src/lib/format';
+import { clockTime, planAtLeast } from '../../src/lib/format';
 import { ChatSkeleton } from '../../src/components/Skeleton';
+import { MessageTick } from '../../src/components/MessageTick';
 import type { Message } from '../../src/types/api';
 
 const CALL_DISABLED_TOOLTIP =
@@ -38,6 +39,8 @@ export default function Chat() {
   const { theme } = useTheme();
   const me = useAuthStore((s) => s.user);
   const markRead = useChatStore((s) => s.markRead);
+  const canReadReceipts = planAtLeast(me?.plan, 'premium'); // effectiveLimits.readReceipts
+  const listRef = useRef<FlatList<Message>>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(false);
@@ -250,7 +253,9 @@ export default function Chat() {
           {item.isEdited && !item.isUnsent && (
             <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
           )}
-          {mine && item.readAt && <Ionicons name="checkmark-done" size={13} color={theme.info} style={{ marginLeft: 3 }} />}
+          {mine && !item.isUnsent && (
+            <MessageTick status={item.readAt ? 'read' : 'delivered'} isPremium={canReadReceipts} />
+          )}
         </View>
       </View>
     );
@@ -304,15 +309,22 @@ export default function Chat() {
         </View>
       )}
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        style={{ flex: 1 }}
+      >
         {loading ? (
           <ChatSkeleton />
         ) : (
           <FlatList
+            ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
             contentContainerStyle={{ padding: 16, gap: 10 }}
             renderItem={({ item }) => renderMessage(item)}
+            automaticallyAdjustKeyboardInsets
+            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
           />
         )}
 

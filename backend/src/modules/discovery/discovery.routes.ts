@@ -20,6 +20,9 @@ router.get('/taps', asyncHandler(c.receivedTaps));
 // Viewed me (premium)
 router.get('/views', premiumFeature('viewed_me'), asyncHandler(c.viewedMe));
 
+// Right Now feed (nearby users with an active status)
+router.get('/right-now', asyncHandler(c.rightNowFeed));
+
 // Private albums
 router.get('/albums', asyncHandler(c.listMyAlbums));
 router.post('/albums', validate(c.createAlbumSchema), asyncHandler(c.createAlbum));

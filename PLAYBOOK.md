@@ -128,6 +128,7 @@ media upload (GCS) — auth, grid, intro requests, and chat all work without the
 | `npm run prisma:generate` | Regenerate Prisma client |
 | `npm run prisma:migrate` | Create + apply a dev migration |
 | `npm run prisma:deploy` | Apply existing migrations (prod / CI) |
+| `npm run db:seed` | Load 8 demo personas + inbox/taps/views (see below) |
 | `npm run lint` | ESLint |
 
 ---
@@ -160,3 +161,68 @@ docker exec -it proximity_redis redis-cli                                 # redi
 | Safety | `POST /api/v1/safety/block`, `/report` |
 
 Full machine-readable contract: `backend-spec.json`.
+
+---
+
+## Demo seed data (feature testing)
+
+After Postgres + Redis are up and the schema exists (`npx prisma db push`):
+
+```bash
+cd backend
+npm run db:seed
+```
+
+This creates **8 profiles** near Mumbai (`lat=19.076`, `lng=72.8777`), all within ~2 km:
+
+| Email | Persona | Plan | Gender | Use for |
+|---|---|---|---|---|
+| `demo-you-male@nearme.dev` | Rahul | Gold | Male | **Your login** — inbox, calls, who-viewed-me |
+| `demo-you-female@nearme.dev` | Kavya | Platinum | Female | **Your login** — AI features, albums, travel |
+| `arjun@nearme.dev` | Arjun | Free | Male | Grid, free-tier cap, pending chat |
+| `priya@nearme.dev` | Priya | Premium | Female | Active inbox w/ Rahul, private album grant |
+| `rohan@nearme.dev` | Rohan | Gold | Male | Boosted grid card, archived chat w/ Kavya |
+| `meera@nearme.dev` | Meera | Free | Female | Pending request folder |
+| `vikram@nearme.dev` | Vikram | Platinum | Male | Incognito, block (blocked Arjun) |
+| `ananya@nearme.dev` | Ananya | Premium | Female | College verified, taps |
+
+### Demo login — email + password (no Firebase, no AWS verification)
+
+**All 8 accounts use the same password:** `NearMeDemo1!`
+
+In the app: open **Log In**, enter any `@nearme.dev` email + that password. The app skips Firebase and logs you straight into the seeded profile (already verified — no selfie/AWS step needed).
+
+| Email | Password |
+|---|---|
+| `demo-you-male@nearme.dev` | `NearMeDemo1!` |
+| `demo-you-female@nearme.dev` | `NearMeDemo1!` |
+| `arjun@nearme.dev` | `NearMeDemo1!` |
+| `priya@nearme.dev` | `NearMeDemo1!` |
+| `rohan@nearme.dev` | `NearMeDemo1!` |
+| `meera@nearme.dev` | `NearMeDemo1!` |
+| `vikram@nearme.dev` | `NearMeDemo1!` |
+| `ananya@nearme.dev` | `NearMeDemo1!` |
+
+Override the password in `backend/.env`: `DEV_SEED_PASSWORD=your-password`
+
+For Docker local dev, ensure `DEV_LOGIN_ENABLED=true` is set (already in `backend/docker-compose.yml`). Real production deploys must leave it unset/false.
+
+**curl test:**
+
+```bash
+curl -s -X POST http://localhost:4000/api/v1/auth/dev-login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo-you-male@nearme.dev","password":"NearMeDemo1!"}' | jq .
+```
+
+Set your app location to Mumbai (`lat=19.076`, `lng=72.8777`) to see everyone on the grid.
+
+Re-run `npm run db:seed` any time to reset demo data (wipes and recreates seed users only).
+
+### Photo verification (current behavior)
+
+1. **Content moderation** — `moderateImage()` checks AWS Rekognition labels when `AWS_ACCESS_KEY_ID` is set; otherwise dev allows all images.
+2. **AI verification** — `aiVerification.verifyPhoto()` / `verifyFace()` are **stubs** that auto-approve any submitted media (score ~0.95). Profile photo URLs are now passed in for future face-matching, but matching is not wired yet.
+3. **Full verified badge** — `isVerified = true` when `(phoneVerified OR emailVerified) AND faceVerified`. Photo verification sets `photoVerified` separately.
+
+Production TODO: wire AWS Rekognition / Azure Face / FaceTec for liveness + face-match against profile photos.

@@ -3,6 +3,7 @@ import { prisma } from '../../config/prisma';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } from '../../utils/jwt';
 import { Errors } from '../../utils/httpError';
 import { verifyFirebaseToken } from '../../adapters/firebase';
+import { env } from '../../config/env';
 
 export async function loginWithFirebase(idToken: string) {
   const decoded = await verifyFirebaseToken(idToken).catch(() => {
@@ -84,6 +85,31 @@ export async function logoutSession(refreshToken: string): Promise<void> {
 
 export async function revokeAllUserTokens(userId: string): Promise<void> {
   await prisma.refreshToken.deleteMany({ where: { userId } });
+}
+
+const SEED_EMAIL_DOMAIN = '@nearme.dev';
+
+/** Dev-only: issue tokens for a seeded persona without Firebase. */
+export async function devLogin(email: string, password: string) {
+  if (!env.devLoginEnabled) {
+    throw Errors.forbidden('Dev login is disabled. Set DEV_LOGIN_ENABLED=true in backend/.env');
+  }
+  if (!email.endsWith(SEED_EMAIL_DOMAIN)) {
+    throw Errors.badRequest(`Dev login only works for ${SEED_EMAIL_DOMAIN} seed emails`);
+  }
+  if (password !== env.devSeedPassword) {
+    throw Errors.unauthorized('Invalid email or password');
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { photos: true, settings: true },
+  });
+  if (!user) throw Errors.notFound(`No seed user with email ${email}. Run: npm run db:seed`);
+
+  const profileComplete = Boolean(user.name || user.firstName);
+  const tokens = await issueTokenPair(user.id, user.emailVerified, user.tier, user.plan, user.planExpiresAt);
+  return { user, tokens, profileComplete, isNewUser: false };
 }
 
 function effectivePlan(plan: string, planExpiresAt: Date | null): string {

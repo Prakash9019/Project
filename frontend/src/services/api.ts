@@ -23,6 +23,7 @@ import type {
   AddOnType,
   ReportReason,
   ConversationState,
+  RightNowCard,
   Gender,
   BodyType,
   SkinTone,
@@ -103,6 +104,9 @@ export interface FirebaseLoginResponse {
 export const firebaseLogin = (idToken: string) =>
   request<FirebaseLoginResponse>('POST', '/api/v1/auth/firebase', { idToken }, { auth: false });
 
+export const devLogin = (email: string, password: string) =>
+  request<FirebaseLoginResponse>('POST', '/api/v1/auth/dev-login', { email, password }, { auth: false });
+
 
 export const logout = () => request<void>('POST', '/api/v1/auth/logout');
 
@@ -134,6 +138,11 @@ export interface UpdateProfileBody {
   interests?: string[];
   tribes?: string[];
   tags?: string[];
+  // ── Right Now (frontend spec addition; PATCH /me persists these) ──
+  // Set rightNowStatus:null to clear an active status.
+  rightNowStatus?: string | null;
+  rightNowCategory?: string | null;
+  rightNowExpiresAt?: string | null;
 }
 export const updateProfile = (body: UpdateProfileBody) =>
   request<Self>('PATCH', '/api/v1/me', body);
@@ -152,6 +161,36 @@ export const deleteAccount = () => request<void>('DELETE', '/api/v1/me');
 
 export const addPhoto = (url: string, isPrimary?: boolean, isPrivate?: boolean) =>
   request<Photo>('POST', '/api/v1/me/photos', { url, isPrimary, isPrivate });
+
+// ── Direct-to-GCS profile photo upload (upload-url is a frontend spec addition) ──
+export interface PhotoUploadUrl {
+  uploadUrl: string; // presigned GCS PUT URL
+  gcsPath: string; // object path to send to POST /me/photos
+}
+export const getPhotoUploadUrl = () =>
+  request<PhotoUploadUrl>('GET', '/api/v1/me/photos/upload-url');
+
+/**
+ * Upload a picked image as the primary profile photo.
+ * Preferred path: GET upload-url → PUT bytes to GCS → POST /me/photos { gcsPath }.
+ * Falls back to POST /me/photos with the local URI if upload-url isn't live yet.
+ * Returns the created Photo (its `url` is the signed URL to display).
+ */
+export async function uploadProfilePhoto(localUri: string): Promise<Photo> {
+  try {
+    const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
+    const blob = await (await fetch(localUri)).blob();
+    const put = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: blob,
+      headers: { 'Content-Type': (blob as any).type || 'image/jpeg' },
+    });
+    if (!put.ok) throw new Error('GCS upload failed');
+    return await addPhoto(gcsPath, true);
+  } catch {
+    return await addPhoto(localUri, true);
+  }
+}
 
 export const setPrimaryPhoto = (photoId: string) =>
   request<{ ok: boolean }>('PUT', `/api/v1/me/photos/${photoId}/primary`);
@@ -202,11 +241,21 @@ export interface GridQuery {
   ageMax?: number;
   heightMin?: number;
   heightMax?: number;
-  bodyType?: string;
+  bodyType?: string | string[];
   tribes?: string[];
   tags?: string[];
   lookingFor?: string[];
   sort?: 'distance' | 'fresh';
+  // ── Frontend additions (extra query params; see __frontendSpecAdditions) ──
+  gender?: string[];
+  relationshipIntent?: string[];
+  verifiedOnly?: boolean;
+  activeLast5Min?: boolean;
+  activeLast30Min?: boolean;
+  highReplyRate?: boolean;
+  recentlyJoined?: boolean;
+  /** JSON-encoded AdvancedFilters object (Premium+). */
+  advancedFilters?: string;
 }
 export interface GridResponse {
   cards: UserCard[];
@@ -307,6 +356,40 @@ export const getCallHistory = () =>
 export const tapUser = (userId: string) =>
   request<{ ok: boolean }>('POST', '/api/v1/discovery/taps', { userId });
 
+// ── Interest: who viewed me / taps received ──
+// Shapes match the backend exactly (see backend-spec.json notes).
+// Views are Gold+ (whoViewedMe); taps are Premium+ to view detail.
+
+/** GET /api/v1/discovery/views → who viewed my profile (Gold+). */
+export interface ProfileViewItem {
+  id: string; // the ProfileView row id (NOT the user id — use viewer.id to navigate)
+  viewer: UserCard;
+  viewedAt: string; // iso8601
+}
+export interface ViewsResponse {
+  views: ProfileViewItem[];
+}
+export const getViews = () => request<ViewsResponse>('GET', '/api/v1/discovery/views');
+
+/** GET /api/v1/discovery/taps → taps received. */
+export interface TapItem {
+  id: string; // the Tap row id (use sender.id to navigate)
+  sender: UserCard;
+  createdAt: string; // iso8601
+}
+export interface TapsResponse {
+  taps: TapItem[];
+}
+export const getReceivedTaps = () => request<TapsResponse>('GET', '/api/v1/discovery/taps');
+
+// ── Right Now feed ──
+/** GET /api/v1/discovery/right-now → nearby users with an active Right Now status. */
+export interface RightNowResponse {
+  statuses: RightNowCard[];
+  total: number;
+}
+export const getRightNow = () => request<RightNowResponse>('GET', '/api/v1/discovery/right-now');
+
 export const shortlistUser = (userId: string) =>
   request<{ ok: boolean }>('POST', '/api/v1/discovery/favorites', { userId });
 
@@ -382,6 +465,27 @@ export const deleteAlbum = (albumId: string) =>
 
 export const addAlbumPhoto = (albumId: string, url: string) =>
   request<AlbumPhoto>('POST', `/api/albums/${albumId}/photos`, { url });
+
+/**
+ * Upload a picked image into an album. Mirrors uploadProfilePhoto:
+ * GET upload-url → PUT bytes to GCS → POST the gcsPath. Falls back to posting
+ * the local URI directly if the upload-url endpoint isn't available.
+ */
+export async function uploadAlbumPhoto(albumId: string, localUri: string): Promise<AlbumPhoto> {
+  try {
+    const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
+    const blob = await (await fetch(localUri)).blob();
+    const put = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: blob,
+      headers: { 'Content-Type': (blob as any).type || 'image/jpeg' },
+    });
+    if (!put.ok) throw new Error('GCS upload failed');
+    return await addAlbumPhoto(albumId, gcsPath);
+  } catch {
+    return await addAlbumPhoto(albumId, localUri);
+  }
+}
 
 export const removeAlbumPhoto = (albumId: string, photoId: string) =>
   request<void>('DELETE', `/api/albums/${albumId}/photos/${photoId}`);

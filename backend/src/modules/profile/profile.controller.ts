@@ -53,6 +53,10 @@ export const updateProfileSchema = z.object({
   wantToSee:          z.array(z.enum(['men','women','everyone','non_binary_people'])).optional(),
   relationshipIntent: z.enum(['dating','friendship','networking','open_to_anything']).optional(),
   whoCanDiscoverMe:   z.array(z.enum(['men','women','everyone','non_binary_people'])).optional(),
+  // Right Now ephemeral status. Send null to clear. Posting all three together.
+  rightNowStatus:     z.string().max(120).nullable().optional(),
+  rightNowCategory:   z.enum(['drinks','coffee','workout','hangout','other']).nullable().optional(),
+  rightNowExpiresAt:  z.string().datetime().nullable().optional(),
 });
 
 // Change 3.2: profile photo is a single optional upload — no minimum requirement

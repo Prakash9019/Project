@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
-import { getAlbum, addAlbumPhoto, removeAlbumPhoto, ApiError } from '../../src/services/api';
+import { getAlbum, uploadAlbumPhoto, removeAlbumPhoto, ApiError } from '../../src/services/api';
 import type { AlbumPhoto } from '../../src/types/api';
 
 export default function AlbumDetail() {
@@ -49,7 +49,7 @@ export default function AlbumDetail() {
     if (res.canceled || !res.assets[0]) return;
     setUploading(true);
     try {
-      await addAlbumPhoto(id, res.assets[0].uri);
+      await uploadAlbumPhoto(id, res.assets[0].uri);
       load();
     } catch (e) {
       const err = e as ApiError;
@@ -103,7 +103,7 @@ export default function AlbumDetail() {
           }
           renderItem={({ item }) => (
             <Pressable style={{ width: tile, height: tile }} onLongPress={() => remove(item.id)}>
-              <Image source={{ uri: item.photoUrl }} style={StyleSheet.absoluteFill} contentFit="cover" />
+              <Image source={{ uri: item.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
             </Pressable>
           )}
         />

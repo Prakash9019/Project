@@ -19,7 +19,7 @@ import { FormSection, FieldLabel, TextField, ChipSelect } from '../../src/compon
 import { useAuthStore } from '../../src/store/authStore';
 import {
   updateProfile,
-  addPhoto,
+  uploadProfilePhoto,
   getPrompts,
   createPrompt,
   deletePrompt as apiDeletePrompt,
@@ -67,11 +67,13 @@ export default function EditProfile() {
   const { theme } = useTheme();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
+  const setPrimaryPhotoStore = useAuthStore((s) => s.setPrimaryPhoto);
   const refreshUser = useAuthStore((s) => s.refreshUser);
   const plan = user?.plan ?? 'free';
   const canClips = planAtLeast(plan, 'premium');
 
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [primaryPhoto, setPrimaryPhoto] = useState<string | null>(null);
 
   // Form fields
@@ -104,7 +106,7 @@ export default function EditProfile() {
       refreshUser();
       return;
     }
-    setPrimaryPhoto(null);
+    setPrimaryPhoto(user.primaryPhotoUrl ?? null);
     setFirstName(user.firstName ?? '');
     setAge(user.age ? String(user.age) : '');
     setBio(user.bio ?? '');
@@ -137,16 +139,24 @@ export default function EditProfile() {
 
   const pickPrimary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow photo access to set a profile picture.');
+      return;
+    }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, allowsEditing: true, aspect: [1, 1] });
-    if (!res.canceled && res.assets[0]) {
-      const uri = res.assets[0].uri;
-      setPrimaryPhoto(uri);
-      try {
-        await addPhoto(uri, true);
-      } catch {
-        Alert.alert('Photo upload', 'Could not upload photo right now.');
-      }
+    if (res.canceled || !res.assets[0]) return;
+    const uri = res.assets[0].uri;
+    setPrimaryPhoto(uri); // optimistic preview
+    setUploadingPhoto(true);
+    try {
+      const photo = await uploadProfilePhoto(uri);
+      const finalUrl = photo.url || uri;
+      setPrimaryPhoto(finalUrl);
+      setPrimaryPhotoStore(finalUrl); // reflect in grid header / settings immediately
+    } catch {
+      Alert.alert('Photo upload', 'Could not upload photo right now.');
+    } finally {
+      setUploadingPhoto(false);
     }
   };
 
@@ -270,15 +280,24 @@ export default function EditProfile() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
         <FormSection title="PHOTO">
-          <Pressable style={[styles.photoBox, { backgroundColor: theme.inputBackground, borderColor: theme.border }]} onPress={pickPrimary}>
-            {primaryPhoto || user.virtualDatingBadge ? null : null}
+          <Pressable style={[styles.photoBox, { backgroundColor: theme.inputBackground, borderColor: theme.border }]} onPress={pickPrimary} disabled={uploadingPhoto}>
             {primaryPhoto ? (
               <Image source={{ uri: primaryPhoto }} style={styles.photo} contentFit="cover" />
             ) : (
               <>
-                <Ionicons name="camera" size={28} color={theme.textSecondary} />
+                <Ionicons name="person-circle" size={64} color={theme.textTertiary} />
                 <Text style={{ color: theme.textSecondary, marginTop: 8 }}>Set profile photo</Text>
               </>
+            )}
+            {uploadingPhoto && (
+              <View style={styles.photoOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            )}
+            {primaryPhoto && !uploadingPhoto && (
+              <View style={[styles.photoEdit, { backgroundColor: theme.brand }]}>
+                <Ionicons name="camera" size={16} color="#fff" />
+              </View>
             )}
           </Pressable>
         </FormSection>
@@ -393,6 +412,8 @@ const styles = StyleSheet.create({
   done: { fontSize: 16, fontWeight: '700' },
   photoBox: { height: 200, borderRadius: 16, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   photo: { width: '100%', height: '100%' },
+  photoOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
+  photoEdit: { position: 'absolute', right: 12, bottom: 12, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   input: { borderRadius: 12, paddingHorizontal: 14, height: 48, fontSize: 15 },
   tagInputRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   addBtn: { width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

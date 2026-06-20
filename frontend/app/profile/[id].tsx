@@ -9,6 +9,9 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -19,15 +22,18 @@ import { ReportSheet } from '../../src/components/ReportSheet';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import {
   getPublicProfile,
+  getUserAlbums,
   startConversation,
+  sendMessage,
   tapUser,
   shortlistUser,
   unshortlistUser,
   blockUser,
   ApiError,
 } from '../../src/services/api';
+import { showSuccess, showError } from '../../src/lib/toast';
 import { planBadgeColor, labelize } from '../../src/lib/format';
-import type { PublicProfile } from '../../src/types/api';
+import type { PublicProfile, AlbumSummary } from '../../src/types/api';
 
 export default function ProfileDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -43,6 +49,9 @@ export default function ProfileDetail() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [albums, setAlbums] = useState<AlbumSummary[]>([]);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +67,13 @@ export default function ProfileDetail() {
       } finally {
         if (active) setLoading(false);
       }
+      // Albums are optional — never block the profile on them.
+      try {
+        const res = await getUserAlbums(id);
+        if (active) setAlbums(res.albums);
+      } catch {
+        /* no albums / not permitted — ignore */
+      }
     })();
     return () => {
       active = false;
@@ -69,12 +85,32 @@ export default function ProfileDetail() {
     if (err.status === 403 && err.code === 'interaction_limit_reached') setUpgradeOpen(true);
   };
 
-  const message = async () => {
+  // Open the full chat thread.
+  const openChat = async () => {
     try {
       const conv = await startConversation(id);
       router.push({ pathname: '/chat/[id]', params: { id: conv.id, peerName: profile?.firstName ?? '' } });
     } catch (e) {
       handleCapError(e);
+    }
+  };
+
+  // Send a message inline without leaving the profile.
+  const sendInline = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      const conv = await startConversation(id);
+      await sendMessage(conv.id, { type: 'text', content: text });
+      setDraft('');
+      showSuccess('Message sent', `Say hi to ${profile?.firstName ?? 'them'} 👋`);
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.status === 403 && err.code === 'interaction_limit_reached') setUpgradeOpen(true);
+      else showError(err.message ?? 'Could not send message');
+    } finally {
+      setSending(false);
     }
   };
 
@@ -142,7 +178,7 @@ export default function ProfileDetail() {
 
   const badge = planBadgeColor(theme, profile.planBadge);
   const gallery = profile.photos?.length ? profile.photos.map((ph) => ph.url) : profile.profilePhoto ? [profile.profilePhoto] : [];
-  const online = profile.lastActiveAt?.toLowerCase() === 'online';
+  const online = profile.activity?.online ?? profile.lastActiveAt?.toLowerCase() === 'online';
 
   const Section = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <>
@@ -181,9 +217,14 @@ export default function ProfileDetail() {
             <Pressable onPress={() => router.back()} hitSlop={12} style={styles.circleBtn}>
               <Ionicons name="arrow-back" size={22} color="#fff" />
             </Pressable>
-            <Pressable style={styles.circleBtn} onPress={() => setMenuOpen(true)}>
-              <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
-            </Pressable>
+            <View style={styles.heroRight}>
+              <Pressable style={styles.circleBtn} onPress={toggleShortlist}>
+                <Ionicons name={shortlisted ? 'star' : 'star-outline'} size={20} color={shortlisted ? theme.planGold : '#fff'} />
+              </Pressable>
+              <Pressable style={styles.circleBtn} onPress={() => setMenuOpen(true)}>
+                <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
+              </Pressable>
+            </View>
           </SafeAreaView>
         </View>
 
@@ -203,7 +244,7 @@ export default function ProfileDetail() {
 
           <View style={styles.metaRow}>
             <View style={[styles.dot, { backgroundColor: online ? theme.online : theme.textTertiary }]} />
-            <Text style={[styles.meta, { color: theme.textSecondary }]}>{online ? 'Online now' : profile.lastActiveAt}</Text>
+            <Text style={[styles.meta, { color: online ? theme.online : theme.textSecondary }]}>{online ? 'Online now' : profile.activity?.label ?? 'Offline'}</Text>
             <Ionicons name="navigate" size={13} color={theme.textSecondary} style={{ marginLeft: 8 }} />
             <Text style={[styles.meta, { color: theme.textSecondary }]}> {profile.distance}</Text>
           </View>
@@ -314,24 +355,77 @@ export default function ProfileDetail() {
               ))}
             </Section>
           ) : null}
+
+          {albums.length > 0 ? (
+            <Section label="ALBUMS">
+              <View style={styles.albumGrid}>
+                {albums.map((a) => (
+                  <Pressable
+                    key={a.id}
+                    style={[styles.albumTile, { backgroundColor: theme.backgroundTertiary }]}
+                    onPress={() => router.push({ pathname: '/albums/[id]', params: { id: a.id, title: a.title } })}
+                  >
+                    {a.coverPhoto ? (
+                      <Image source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                    ) : (
+                      <View style={[StyleSheet.absoluteFill, styles.noPhoto]}>
+                        <Ionicons name="images" size={28} color={theme.textTertiary} />
+                      </View>
+                    )}
+                    <View style={styles.albumShade} />
+                    <View style={styles.albumMeta}>
+                      <Text style={styles.albumName} numberOfLines={1}>{a.title}</Text>
+                      <View style={styles.albumCount}>
+                        <Ionicons name="images" size={11} color="#fff" />
+                        <Text style={styles.albumCountText}>{a.photoCount}</Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            </Section>
+          ) : null}
         </View>
       </ScrollView>
 
-      {/* Action bar */}
-      <SafeAreaView edges={['bottom']} style={[styles.barWrap, { backgroundColor: theme.background, borderTopColor: theme.border }]}>
-        <View style={styles.bar}>
-          <Pressable style={[styles.iconAction, { backgroundColor: theme.surfaceElevated }]} onPress={toggleShortlist}>
-            <Ionicons name={shortlisted ? 'star' : 'star-outline'} size={22} color={shortlisted ? theme.planGold : theme.textPrimary} />
-          </Pressable>
-          <Pressable style={[styles.iconAction, { backgroundColor: theme.surfaceElevated }]} onPress={toggleTap}>
-            <Ionicons name={liked ? 'heart' : 'heart-outline'} size={22} color={liked ? theme.brand : theme.textPrimary} />
-          </Pressable>
-          <Pressable style={[styles.messageBtn, { backgroundColor: theme.brand }]} onPress={message}>
-            <Ionicons name="chatbubble" size={18} color={theme.textInverse} />
-            <Text style={[styles.messageText, { color: theme.textInverse }]}>Message</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      {/* Action bar — inline message + Tap/Fire + Chat */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.barWrap}
+      >
+        <SafeAreaView edges={['bottom']} style={{ backgroundColor: theme.background, borderTopWidth: 1, borderTopColor: theme.border }}>
+          <View style={styles.bar}>
+            <View style={[styles.inputWrap, { backgroundColor: theme.surfaceElevated }]}>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={`Say something to ${profile.firstName ?? 'them'}…`}
+                placeholderTextColor={theme.textTertiary}
+                style={[styles.input, { color: theme.textPrimary }]}
+                multiline
+                maxLength={1000}
+                onSubmitEditing={sendInline}
+                returnKeyType="send"
+              />
+              {draft.trim().length > 0 && (
+                <Pressable onPress={sendInline} disabled={sending} hitSlop={8} style={styles.sendBtn}>
+                  {sending ? (
+                    <ActivityIndicator size="small" color={theme.brand} />
+                  ) : (
+                    <Ionicons name="arrow-up-circle" size={30} color={theme.brand} />
+                  )}
+                </Pressable>
+              )}
+            </View>
+            <Pressable style={[styles.iconAction, { backgroundColor: theme.surfaceElevated }]} onPress={toggleTap}>
+              <Ionicons name="flame" size={24} color={liked ? theme.brand : theme.textSecondary} />
+            </Pressable>
+            <Pressable style={[styles.iconAction, { backgroundColor: theme.brand }]} onPress={openChat}>
+              <Ionicons name="chatbubble" size={20} color={theme.textInverse} />
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
 
       {/* Action menu */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
@@ -388,6 +482,7 @@ const styles = StyleSheet.create({
   naBtnText: { fontSize: 15, fontWeight: '700' },
   noPhoto: { alignItems: 'center', justifyContent: 'center' },
   heroBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
+  heroRight: { flexDirection: 'row', gap: 10 },
   circleBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   info: { padding: 20, gap: 6 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -413,11 +508,19 @@ const styles = StyleSheet.create({
   promptA: { fontSize: 16, fontWeight: '600', marginTop: 4 },
   mediaPill: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, marginTop: 8 },
   mediaText: { fontSize: 14, fontWeight: '600' },
-  barWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopWidth: 1 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
+  barWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  bar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 24, paddingLeft: 16, paddingRight: 6, minHeight: 48 },
+  input: { flex: 1, fontSize: 15, paddingVertical: 12, maxHeight: 110 },
+  sendBtn: { marginLeft: 4, alignItems: 'center', justifyContent: 'center' },
   iconAction: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  messageBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 48, borderRadius: 999 },
-  messageText: { fontSize: 16, fontWeight: '700' },
+  albumGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 12, overflow: 'hidden', justifyContent: 'flex-end' },
+  albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', backgroundColor: 'rgba(0,0,0,0.4)' },
+  albumMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 6 },
+  albumName: { color: '#fff', fontSize: 12, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 3 },
+  albumCount: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },
+  albumCountText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   menu: { width: '100%', borderRadius: 16, overflow: 'hidden' },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },

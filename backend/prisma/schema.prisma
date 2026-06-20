@@ -337,6 +337,11 @@ model User {
   // ── NearMe v2: Platinum AI opt-in feature flags ──
   aiOptInFeatures Json?
 
+  // ── Right Now: ephemeral "what I'm up to" status (Change: right_now_fields) ──
+  rightNowStatus    String?   @db.VarChar(120)
+  rightNowCategory  String?   // drinks | coffee | workout | hangout | other
+  rightNowExpiresAt DateTime? // status auto-clears once now() passes this
+
   // ── v3 Phase 6: Safety enforcement fields ──
   restrictedUntil             DateTime?
   isBanned                    Boolean   @default(false)
@@ -399,6 +404,7 @@ model User {
   @@index([createdAt])
   @@index([plan])
   @@index([isOnGrid, lastActiveAt])
+  @@index([rightNowExpiresAt])
   @@map("users")
 }
 

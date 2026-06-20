@@ -4,10 +4,15 @@ import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { Errors } from '../../utils/httpError';
 import { serializeSelf } from '../profile/profile.serializer';
+import { getCallLimits } from '../../utils/callLimits';
 import * as authService from './auth.service';
 import { logEvent } from '../../middleware/logger';
 
 export const firebaseLoginSchema = z.object({ idToken: z.string().min(10) });
+export const devLoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
 export const refreshSchema = z.object({ refreshToken: z.string().min(10) });
 export const logoutSchema = z.object({ refreshToken: z.string().min(10) });
 
@@ -41,6 +46,13 @@ export async function firebaseLogin(req: Request, res: Response): Promise<void> 
   res.status(200).json({ ...tokens, profileComplete, isNewUser, user: serializeSelf(user) });
 }
 
+export async function devLogin(req: Request, res: Response): Promise<void> {
+  const { email, password } = req.body as z.infer<typeof devLoginSchema>;
+  const { user, tokens, profileComplete, isNewUser } = await authService.devLogin(email, password);
+  logEvent({ event: 'dev_login_success', userId: user.id, plan: user.plan });
+  res.status(200).json({ ...tokens, profileComplete, isNewUser, user: serializeSelf(user) });
+}
+
 export async function refresh(req: Request, res: Response): Promise<void> {
   const ip = clientIp(req);
   const count = await incrWithTtl(RedisKeys.refreshRate(ip), 60);
@@ -70,5 +82,7 @@ export async function me(req: Request, res: Response): Promise<void> {
     include: { photos: { orderBy: { order: 'asc' } }, settings: true },
   });
   if (!user) throw Errors.notFound('User not found');
-  res.status(200).json(serializeSelf(user));
+  // callLimits: free-tier live call countdown (null for paid plans).
+  const callLimits = await getCallLimits(user.id, user.plan);
+  res.status(200).json({ ...serializeSelf(user), callLimits });
 }

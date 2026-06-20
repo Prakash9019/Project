@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
+import { Avatar } from '../../src/components/Avatar';
 import { useAuthStore } from '../../src/store/authStore';
 import { updateSettings, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
 import { planAtLeast } from '../../src/lib/format';
@@ -202,11 +203,7 @@ export default function Settings() {
         <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
           {/* Profile header */}
           <Pressable style={[styles.profile, { borderBottomColor: theme.border }]} onPress={() => router.push('/settings/edit-profile')}>
-            <View style={[styles.avatar, { backgroundColor: theme.backgroundTertiary }]}>
-              <View style={[styles.editPencil, { backgroundColor: theme.brand, borderColor: theme.background }]}>
-                <Ionicons name="pencil" size={13} color="#fff" />
-              </View>
-            </View>
+            <Avatar uri={user.primaryPhotoUrl} size={60} editable />
             <View style={{ flex: 1 }}>
               <Text style={[styles.name, { color: theme.textPrimary }]}>{user.firstName ?? 'Your profile'}</Text>
               <Text style={[styles.planText, { color: theme.textSecondary }]}>{user.plan.toUpperCase()} plan</Text>

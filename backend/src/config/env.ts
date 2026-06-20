@@ -40,6 +40,11 @@ export const env = {
     devReturn: bool('OTP_DEV_RETURN', true),
   },
 
+  /** Shared password for @nearme.dev seed personas (dev-login only). */
+  devSeedPassword: process.env.DEV_SEED_PASSWORD ?? 'NearMeDemo1!',
+  /** Allow POST /auth/dev-login — off in prod unless explicitly enabled. */
+  devLoginEnabled: bool('DEV_LOGIN_ENABLED', process.env.NODE_ENV !== 'production'),
+
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID ?? '',
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',

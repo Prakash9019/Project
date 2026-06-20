@@ -29,8 +29,8 @@ You open the app and immediately see a live grid of real people near you. You ca
 ```mermaid
 graph LR
     A[Open the app] --> B[See people<br/>nearby on a grid]
-    B --> C[Tap someone<br/>you like]
-    C --> D[Send a message]
+    B --> C[Tap a tile →<br/>view their profile]
+    C --> D[Send a message<br/>or a 🔥 tap]
     D --> E[They reply]
     E --> F[Voice / video call<br/>unlocks]
     F --> G[Meet up<br/>or keep chatting]
@@ -57,10 +57,10 @@ The key rule: **calling only becomes available after the other person has replie
 
 ```mermaid
 graph TD
-    S[Sign up with phone number] --> O[Verify with a 6-digit code]
-    O --> P[Build your profile:<br/>photos, age, interests, what you're looking for]
+    S[Sign in with email or Google] --> P[Build your profile:<br/>photos, age, interests, what you're looking for]
     P --> G[Browse the nearby grid]
-    G --> M[Message someone]
+    G --> T[Tap a tile → view their profile]
+    T --> M[Message, Tap 🔥, or favorite them]
     M --> R{They reply?}
     R -->|Yes| C[Chat freely +<br/>calls unlock]
     R -->|No| G
@@ -68,12 +68,12 @@ graph TD
     C --> U[Optional: upgrade for more reach]
 ```
 
-1. **Join** — sign up with a phone number, confirm a 6-digit code. No passwords.
+1. **Join** — sign in with email & password or "Continue with Google" (powered by Firebase).
 2. **Set up** — add photos, age, what you're into, and what you're looking for.
-3. **Discover** — see a grid of nearby people; filter by age, interests, and more.
-4. **Connect** — message anyone; once they reply, you can call.
+3. **Discover** — see a grid of nearby people; filter by age, interests, online/Right-Now status, and more. A green dot marks who's online.
+4. **View & connect** — tap a tile to open someone's profile, then message them (you can type and send right from the profile), send a 🔥 tap, or favorite them. Once they reply, you can call.
 5. **Stay safe** — verify yourself, block/report anyone, control your visibility.
-6. **Upgrade (optional)** — unlock bigger reach, more filters, calls, and extras.
+6. **Upgrade (optional)** — unlock bigger reach, more filters, who-viewed-me, calls, and extras.
 
 ---
 
@@ -125,7 +125,11 @@ Payments are handled by trusted providers (Razorpay in India, Stripe elsewhere).
 | Term | Plain meaning |
 |---|---|
 | **Grid** | The home screen showing a tiled layout of nearby people |
-| **Tap** | A lightweight "like" you send someone |
+| **Tap** | A lightweight "like" (🔥) you send someone; appears in their Interest → Taps |
+| **Views** | The list of people who opened your profile (seeing who is a Gold+ perk) |
+| **Interest tab** | Where you see your Views and Taps |
+| **Right Now** | A short, time-limited status (drinks, coffee, etc.) broadcast to nearby people |
+| **Online / green dot** | A green indicator shown on people who are active right now |
 | **Shortlist / Favorite** | Saving someone to revisit later |
 | **Intro / conversation** | Starting a chat with someone new |
 | **Reply-gated calling** | Calls only unlock after the other person replies |

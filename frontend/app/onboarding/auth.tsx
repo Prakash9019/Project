@@ -16,7 +16,7 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { T } from '../../src/components/ui';
 import { NearMeLogo } from '../../src/components/icons';
-import { firebaseLogin, ApiError } from '../../src/services/api';
+import { firebaseLogin, devLogin, ApiError } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 
 // Lazy-require Firebase to keep web bundle from breaking
@@ -84,6 +84,14 @@ export default function AuthScreen() {
     }
   };
 
+const SEED_EMAIL_SUFFIX = '@nearme.dev';
+
+  const handleDevLogin = async (email: string, password: string) => {
+    const res = await devLogin(email.trim(), password);
+    await login(res.accessToken, res.refreshToken, res.user);
+    router.replace('/(tabs)');
+  };
+
   const handleEmailAuth = async () => {
     if (loading) return;
     const { email, password, confirmPassword } = fields;
@@ -93,6 +101,10 @@ export default function AuthScreen() {
       return;
     }
     if (tab === 'signup') {
+      if (email.trim().endsWith(SEED_EMAIL_SUFFIX)) {
+        setError('Demo accounts cannot be created here. Use Log In with the demo password from PLAYBOOK.md.');
+        return;
+      }
       if (password.length < 8) {
         setError('Password must be at least 8 characters.');
         return;
@@ -106,6 +118,10 @@ export default function AuthScreen() {
     setLoading(true);
     setError(null);
     try {
+      if (tab === 'login' && email.trim().endsWith(SEED_EMAIL_SUFFIX)) {
+        await handleDevLogin(email, password);
+        return;
+      }
       const auth = getFirebaseAuth();
       let credential;
       if (tab === 'signup') {

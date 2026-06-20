@@ -1,8 +1,11 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
+import { redis, RedisKeys } from '../../config/redis';
 import { Errors } from '../../utils/httpError';
 import { serializeGridCard } from '../profile/profile.serializer';
+import { isOrientationVisible } from '../grid/grid.service';
+import { getBlockedIds } from '../../utils/blocks';
 import { emitToUser } from '../../realtime/emitter';
 import { recordInteraction } from '../chat/chat.service';
 import { uuidParam } from '../../utils/validators';
@@ -120,6 +123,79 @@ export async function viewedMe(req: Request, res: Response): Promise<void> {
       viewedAt: v.createdAt,
     })),
   });
+}
+
+// ── Right Now feed ────────────────────────────────────────
+// Nearby users with an active Right Now status. Honours blocks, the 14-day
+// inactivity rule, grid visibility, and the same orientation filter as the grid.
+
+const RIGHT_NOW_RADIUS_M = 100_000; // 100km — Right Now is a local feature
+const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+export async function rightNowFeed(req: Request, res: Response): Promise<void> {
+  const viewerId = req.user!.sub;
+  const now = new Date();
+
+  const [viewer, blockedIds] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: viewerId },
+      select: { wantToSee: true, gender: true, genderIdentity: true },
+    }),
+    getBlockedIds(viewerId),
+  ]);
+
+  // Proximity candidates from the geo index (if the viewer has a known location).
+  const distanceById = new Map<string, number>();
+  const pos = (await redis.geopos(RedisKeys.geoUsers, viewerId)) as [string, string][] | null;
+  const haveGeo = !!pos?.[0];
+  if (haveGeo) {
+    const [lng, lat] = pos![0];
+    const raw = (await redis.geosearch(
+      RedisKeys.geoUsers,
+      'FROMLONLAT', lng, lat,
+      'BYRADIUS', RIGHT_NOW_RADIUS_M, 'm',
+      'ASC', 'WITHDIST', 'COUNT', 500,
+    )) as [string, string][];
+    for (const [member, dist] of raw) {
+      if (member !== viewerId) distanceById.set(member, Number(dist) * 1000); // km→m
+    }
+  }
+
+  const candidateIds = [...distanceById.keys()].filter((id) => !blockedIds.has(id));
+
+  const users = await prisma.user.findMany({
+    where: {
+      ...(haveGeo ? { id: { in: candidateIds } } : { id: { notIn: [viewerId, ...blockedIds] } }),
+      rightNowExpiresAt: { gt: now },
+      isOnGrid: true,
+      incognitoMode: false,
+      lastActiveAt: { gte: new Date(Date.now() - FOURTEEN_DAYS_MS) },
+      settings: { discoverable: true, stealthMode: false },
+    },
+    include: {
+      photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },
+      settings: true,
+      cityProfiles: { where: { isActive: true }, take: 1 },
+    },
+    orderBy: { lastActiveAt: 'desc' },
+    take: 100,
+  });
+
+  const statuses = users
+    .filter((u) =>
+      isOrientationVisible(
+        { wantToSee: viewer?.wantToSee as string[], gender: viewer?.gender, genderIdentity: viewer?.genderIdentity },
+        { whoCanDiscoverMe: u.whoCanDiscoverMe as string[], gender: u.gender, genderIdentity: u.genderIdentity },
+      ),
+    )
+    .map((u) => ({
+      ...serializeGridCard(u, distanceById.get(u.id) ?? 0, false, true),
+      rightNowStatus: u.rightNowStatus,
+      rightNowCategory: u.rightNowCategory,
+      rightNowExpiresAt: u.rightNowExpiresAt,
+    }));
+
+  res.status(200).json({ statuses, total: statuses.length });
 }
 
 // ── Private Albums ────────────────────────────────────────

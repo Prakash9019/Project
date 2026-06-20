@@ -53,3 +53,30 @@ export function clockTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
+type LastMessageLike =
+  | string
+  | null
+  | undefined
+  | { content?: string | null; type?: string; isUnsent?: boolean };
+
+/** One-line preview for inbox conversation rows. */
+export function formatLastMessagePreview(last: LastMessageLike, fallback = 'Say hello 👋'): string {
+  if (!last) return fallback;
+  if (typeof last === 'string') return last;
+  if (last.isUnsent) return 'Message unsent';
+  if (last.content) return last.content;
+  switch (last.type) {
+    case 'photo':
+      return '📷 Photo';
+    case 'video':
+      return '🎬 Video';
+    case 'voice':
+    case 'voice_note':
+      return '🎤 Voice message';
+    case 'expiring_photo':
+      return '📷 Expiring photo';
+    default:
+      return 'New message';
+  }
+}

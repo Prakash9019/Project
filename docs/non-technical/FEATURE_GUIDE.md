@@ -8,23 +8,24 @@
 
 ## 1. Signing up & logging in
 
-NearMe uses **phone numbers, not passwords**. You get a one-time code by text.
+NearMe signs you in with **Firebase** — either an **email and password** or **"Continue with Google."**
 
 ```mermaid
 sequenceDiagram
     participant U as You
     participant App as NearMe app
-    participant SMS as Text message
-    U->>App: Enter phone number
-    App->>SMS: Send 6-digit code
-    SMS->>U: "Your code is 210765"
-    U->>App: Enter the code
+    participant FB as Firebase
+    U->>App: Email + password (or Google)
+    App->>FB: Verify identity
+    FB->>App: Identity token
+    App->>App: Exchange token for a NearMe session
     App->>U: Logged in ✅
 ```
 
-- Codes expire after a few minutes.
-- For safety, only a few code requests are allowed per phone in a short window, and too many wrong guesses temporarily locks the attempt.
+- Your login session is kept securely on the device and refreshes itself in the background, so you stay signed in.
 - New users go straight into building their profile; returning users land on the home grid.
+
+> *(An older phone/SMS code login still exists in the codebase but is no longer the active sign-in method.)*
 
 ---
 
@@ -57,7 +58,35 @@ graph TD
 
 **Privacy in the grid:** you never see anyone's exact location — only a rounded distance like *"0.8 km away."* The same protection applies to you.
 
-**Filters** let you narrow by age, height, body type, interests, and what people are looking for. Some advanced filters (verified-only, "active in the last 5 minutes," high reply rate) are reserved for paid plans.
+**A green dot** appears on people who are **online right now**, both on grid tiles and on their profile, so you can see who's active.
+
+**Tapping a tile opens that person's full profile** (it does *not* jump straight into a chat). From there you decide whether to tap, like, or message them — see the next section.
+
+**Filters** let you narrow by age range, height, body type, interests, online/Right-Now status, favorites, and what people are looking for. The age and height ranges use a draggable dual-handle slider. Some advanced filters (verified-only, "active in the last 5 minutes," high reply rate) are reserved for paid plans.
+
+---
+
+## 3b. Viewing a profile (and acting on it)
+
+When you tap someone on the grid, you land on their **profile page**, showing their photos, name & age, online status, bio/"About me", stats, interests, prompts, and any **albums** they've shared.
+
+From the profile you can act immediately, without going to the Inbox first:
+
+```mermaid
+graph LR
+    P[Open someone's profile] --> A1[Type in 'Say something…'<br/>and send a message]
+    P --> A2[Tap the 🔥 Fire button<br/>= send a Tap/like]
+    P --> A3[Open the full chat]
+    P --> A4[★ Save to favorites]
+```
+
+- **Say something…** — a text box at the bottom lets you send a first message right there. A confirmation appears and you stay on the profile.
+- **🔥 Fire / Tap** — sends a lightweight "I'm interested" tap; it shows up in the other person's **Interest → Taps**.
+- **Chat** — opens the full conversation thread.
+- **★ Favorite** (top of the screen) — saves them to revisit later.
+- **⋯ Menu** — report or block.
+
+**Important:** simply opening someone's profile counts as a **profile view** for them (unless you're browsing in incognito). That's how the "Views" list stays accurate — see §4b.
 
 ---
 
@@ -83,6 +112,51 @@ graph LR
 - **Expiring photos** — a photo that vanishes after it's viewed once (limited per day on free plans)
 - **Translate** a message into your language
 - **Read receipts** and **typing indicators** (paid plans)
+
+---
+
+## 4b. Interest — who's into you (Views & Taps)
+
+The **Interest** tab shows the attention you're getting, using **real activity** — nothing here is fake or sample data.
+
+| Tab | What it shows | How it fills up |
+|---|---|---|
+| **Views** | People who opened your profile | Recorded automatically when someone taps your tile and lands on your profile |
+| **Taps** | People who sent you a 🔥 tap/like | Recorded when someone taps the Fire button on your profile (or taps back) |
+
+- The counts next to each tab ("Taps 3") update on their own as people interact with you.
+- **Taps** are visible to everyone, and you can **tap back** with one button.
+- **Views** (seeing exactly *who* looked at you) is a **Gold+** feature. Free users see the views area as a blurred, locked grid with an "Unlock" prompt — the people are there, just hidden until you upgrade.
+
+---
+
+## 4c. Right Now — spontaneous, time-limited status
+
+**Right Now** lets you broadcast that you're up for something *at this moment* (e.g. drinks, coffee, a workout, a hangout).
+
+```mermaid
+graph LR
+    S[Set a Right Now status<br/>+ category] --> E[It's visible to nearby people<br/>for a limited time]
+    E --> X[It auto-expires<br/>or you clear it]
+```
+
+- You pick a short status and a category; it shows up on your card and in other people's **Right Now** feed.
+- It's **local and temporary** — only nearby active people see it, and it disappears automatically when it expires.
+- You can clear it any time.
+
+---
+
+## 4d. Inbox — your conversations
+
+The **Inbox** is a clean list of your chats. Each row shows only what matters:
+
+- Profile photo (with a **green dot** if they're online)
+- Name
+- The last message
+- Timestamp
+- An unread-count badge when you have new messages
+
+**One person = one conversation.** If the same person ever appeared more than once, the list now collapses them into a single, most-recent card. Plan/subscription labels and other clutter were removed to keep the focus on conversations.
 
 ---
 
@@ -148,7 +222,9 @@ Verified users stand out and can be prioritized by people who filter for "verifi
 ## 8. Albums & photos
 
 - Organize photos into **albums** with cover images.
-- View other users' public albums from their profile.
+- Add photos from your camera roll — they're uploaded to secure cloud storage and shown back to you (this previously didn't display correctly; it's now fixed).
+- **Albums appear on your profile**, so people who view you can see them.
+- View other users' albums from their profile.
 - (Private album sharing exists in the system for granting specific people access.)
 
 ---
@@ -208,11 +284,13 @@ The app feels alive because of instant updates behind the scenes:
 ## 13. What's not built yet
 
 A few areas are placeholders or partially complete today:
-- **"Right Now" and "Interest" tabs** — coming soon (currently empty).
 - **Explore map UI** — the "set location" map isn't built yet.
-- **Photo/clip uploading** — the screens exist, but the actual file-upload step still needs wiring.
+- **"Who viewed me" count for free users** — free users can see that views exist (locked grid) but not the number; revealing just the count to free users isn't built.
+- **Voice/video clip uploading** — profile and album *photo* upload now works end-to-end; the voice/video intro clips still need the final upload step.
 - **Prompts selection UI, album drag-to-reorder, travel-mode UI** — backend ready, app screens pending.
 - **End-to-end message encryption** — the system is designed for it, but messages are currently sent as plain text.
+
+*Recently completed (this iteration): modern bottom-navigation icons, working online/green-status indicators, tap-to-open-profile with an inline message composer, dynamic Views & Taps, the Right Now status feed, a de-cluttered and de-duplicated Inbox, and the album display/upload fixes.*
 
 ---
 

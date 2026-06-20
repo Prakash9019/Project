@@ -44,7 +44,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
+      DEV_LOGIN_ENABLED: "true"
       PORT: 4000
       DATABASE_URL: "postgresql://postgres.xgehqnqorlaxgigdxycr:Prakash%40_2003Nearme@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
       REDIS_URL: "redis://redis:6379"

@@ -61,6 +61,8 @@ export type DatingIntention =
   | 'marriage'
   | 'friendship'
   | 'virtual_dating';
+/** Right Now status category (frontend spec addition — see backend-spec __frontendSpecAdditions). */
+export type RightNowCategory = 'drinks' | 'coffee' | 'workout' | 'hangout' | 'other';
 export type ConversationState = 'pending' | 'active' | 'dismissed';
 export type MessageType = 'text' | 'photo' | 'video' | 'voice' | 'expiring_photo' | 'voice_note';
 export type CallType = 'audio' | 'video';
@@ -106,6 +108,14 @@ export type ModerationFlagType =
 
 /* ────────────────────────────── Models ────────────────────────────── */
 
+/** Free-tier daily call-minute usage + limit (live call countdown). null for paid plans. */
+export interface CallLimits {
+  audioMinutesUsed: number;
+  audioMinutesLimit: number;
+  videoMinutesUsed: number;
+  videoMinutesLimit: number;
+}
+
 /** AI feature opt-in map (Platinum). */
 export interface AiOptInFeatures {
   icebreakers?: boolean;
@@ -136,6 +146,10 @@ export interface Photo {
 export interface User {
   id: string;
   phoneVerified: boolean;
+  /** Signed URL of the user's primary profile photo (single optional photo). */
+  primaryPhotoUrl?: string | null;
+  /** Free-tier call-minute usage for the live countdown; null for paid plans. */
+  callLimits?: CallLimits | null;
   name: string | null;
   firstName: string | null;
   age: number | null;
@@ -186,6 +200,10 @@ export interface User {
   requireProfileCompletenessToMessage: boolean;
   verifiedUsersOnlyFilter: boolean;
   aiOptInFeatures: AiOptInFeatures | null;
+  // ── Right Now (frontend spec addition; see backend-spec __frontendSpecAdditions) ──
+  rightNowStatus?: string | null;
+  rightNowCategory?: RightNowCategory | null;
+  rightNowExpiresAt?: string | null;
   lastActiveAt: string;
   createdAt: string;
   updatedAt: string;
@@ -218,7 +236,10 @@ export interface UserCard {
   firstName: string | null;
   age: number | null;
   distance: string; // human-readable / fuzzy, e.g. "1.2 km" or "Near you"
-  lastActiveAt: string; // human-readable, e.g. "online", "2 hrs ago"
+  distanceLabel?: string | null; // server-formatted distance (discovery cards)
+  lastActiveAt: string; // human-readable label ("Active Now") on cards; raw ISO on profiles
+  /** Server activity status — `activity.online` is the source of truth for the green dot. */
+  activity?: { online: boolean; label: string | null } | null;
   isVerified: boolean;
   planBadge?: Plan | null;
   height: number | null;
@@ -237,6 +258,17 @@ export interface UserCard {
   isShortlisted: boolean;
   isLiked: boolean;
   boosted: boolean;
+  // ── Right Now indicator ──
+  rightNowStatus?: string | null;
+  rightNowCategory?: RightNowCategory | null;
+  rightNowActive?: boolean;
+}
+
+/** A nearby user with an active Right Now status (GET /discovery/right-now). */
+export interface RightNowCard extends UserCard {
+  rightNowStatus: string | null;
+  rightNowCategory: RightNowCategory | null;
+  rightNowExpiresAt: string | null;
 }
 
 /** A profile prompt (Q&A card). */
@@ -284,6 +316,16 @@ export interface Conversation {
   lastMessageAt: string;
 }
 
+/** Truncated last message in conversation list responses. */
+export interface LastMessagePreview {
+  id: string;
+  type: string;
+  content: string | null;
+  senderId: string;
+  createdAt: string;
+  isUnsent: boolean;
+}
+
 /** Conversation row in inbox/requests listing. */
 export interface ConversationSummary {
   id: string;
@@ -291,7 +333,7 @@ export interface ConversationSummary {
   isPinned: boolean;
   peer: UserCard;
   lastMessageAt: string | null;
-  lastMessage: string | null;
+  lastMessage: LastMessagePreview | string | null;
   audioCallEnabled: boolean;
   videoCallEnabled: boolean;
   unreadCount?: number;
@@ -392,9 +434,8 @@ export interface AlbumSummary {
 /** A photo within an album. */
 export interface AlbumPhoto {
   id: string;
-  albumId: string;
-  userId: string;
-  photoUrl: string; // signed GCS URL (15 min expiry)
+  /** Signed GCS URL (15 min expiry). Backend serializes this field as `url`. */
+  url: string;
   order: number;
   createdAt: string;
 }

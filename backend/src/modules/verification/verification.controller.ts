@@ -70,7 +70,12 @@ export async function submitPhotoVerification(req: Request, res: Response): Prom
   const modResult = await moderateImage(mediaUrl);
   if (modResult === 'reject') throw Errors.badRequest('Selfie rejected: inappropriate content detected');
 
-  const result = await aiVerification.verifyPhoto(mediaUrl, []);
+  const profilePhotos = await prisma.photo.findMany({
+    where: { userId, isPublished: true, isPrivate: false },
+    select: { url: true },
+    orderBy: { order: 'asc' },
+  });
+  const result = await aiVerification.verifyPhoto(mediaUrl, profilePhotos.map((p) => p.url));
 
   const verification = await prisma.verification.create({
     data: {
@@ -100,7 +105,12 @@ export async function submitFaceVerification(req: Request, res: Response): Promi
   const modResult = await moderateImage(mediaUrl);
   if (modResult === 'reject') throw Errors.badRequest('Video selfie rejected: inappropriate content detected');
 
-  const result = await aiVerification.verifyFace(mediaUrl, []);
+  const profilePhotos = await prisma.photo.findMany({
+    where: { userId, isPublished: true, isPrivate: false },
+    select: { url: true },
+    orderBy: { order: 'asc' },
+  });
+  const result = await aiVerification.verifyFace(mediaUrl, profilePhotos.map((p) => p.url));
 
   const verification = await prisma.verification.create({
     data: {

@@ -16,8 +16,9 @@ import { useTheme } from '../../src/theme';
 import { useChatStore } from '../../src/store/chatStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { connectSocket } from '../../src/services/socket';
-import { relativeTime } from '../../src/lib/format';
+import { relativeTime, formatLastMessagePreview } from '../../src/lib/format';
 import { ListSkeleton } from '../../src/components/Skeleton';
+import { OnlineDot } from '../../src/components/badges';
 import type { ConversationSummary } from '../../src/types/api';
 
 export default function Inbox() {
@@ -27,6 +28,13 @@ export default function Inbox() {
   const [seg, setSeg] = useState<'inbox' | 'albums'>('inbox');
   const { conversations, loading, refreshing, error, fetchConversations, applyIncomingMessage } =
     useChatStore();
+
+  // One card per person: collapse any duplicate rows for the same peer, keeping
+  // the most recent (list is already sorted newest-first by the server).
+  const uniqueConversations = conversations.filter((c, i, arr) => {
+    const key = c.peer?.id ?? c.id;
+    return arr.findIndex((x) => (x.peer?.id ?? x.id) === key) === i;
+  });
 
   // Fetch on focus.
   useFocusEffect(
@@ -52,7 +60,7 @@ export default function Inbox() {
   }, [me?.id, applyIncomingMessage]);
 
   const renderRow = ({ item }: { item: ConversationSummary }) => {
-    const online = item.peer.lastActiveAt?.toLowerCase() === 'online';
+    const online = item.peer.activity?.online ?? item.peer.lastActiveAt?.toLowerCase() === 'online';
     return (
       <Pressable
         style={styles.row}
@@ -68,32 +76,24 @@ export default function Inbox() {
               <Ionicons name="person" size={28} color={theme.textTertiary} />
             </View>
           )}
-          {online && <View style={[styles.onlineDot, { backgroundColor: theme.online, borderColor: theme.background }]} />}
+          {online && <View style={styles.onlineDotPos}><OnlineDot online size={12} ring /></View>}
         </View>
         <View style={styles.rowBody}>
           <View style={styles.rowTop}>
-            <View style={styles.nameWrap}>
-              {item.isPinned && <Ionicons name="pin" size={13} color={theme.textTertiary} />}
-              <Text style={[styles.name, { color: theme.textPrimary }]} numberOfLines={1}>
-                {item.peer.firstName ?? 'Someone'}
-              </Text>
-              {item.peer.isVerified && <Ionicons name="checkmark-circle" size={13} color={theme.info} />}
-            </View>
+            <Text style={[styles.name, { color: theme.textPrimary }]} numberOfLines={1}>
+              {item.peer.firstName ?? 'Someone'}
+            </Text>
             <Text style={[styles.time, { color: theme.textTertiary }]}>{relativeTime(item.lastMessageAt)}</Text>
           </View>
           <View style={styles.rowBottom}>
             <Text style={[styles.preview, { color: theme.textSecondary }]} numberOfLines={1}>
-              {item.lastMessage ?? 'Say hello 👋'}
+              {formatLastMessagePreview(item.lastMessage)}
             </Text>
-            <View style={styles.rowIcons}>
-              {item.audioCallEnabled && <Ionicons name="call" size={13} color={theme.callAudio} />}
-              {item.videoCallEnabled && <Ionicons name="videocam" size={13} color={theme.callVideo} />}
-              {!!item.unreadCount && item.unreadCount > 0 && (
-                <View style={[styles.badge, { backgroundColor: theme.brand }]}>
-                  <Text style={[styles.badgeText, { color: theme.textInverse }]}>{item.unreadCount}</Text>
-                </View>
-              )}
-            </View>
+            {!!item.unreadCount && item.unreadCount > 0 && (
+              <View style={[styles.badge, { backgroundColor: theme.brand }]}>
+                <Text style={[styles.badgeText, { color: theme.textInverse }]}>{item.unreadCount}</Text>
+              </View>
+            )}
           </View>
         </View>
       </Pressable>
@@ -120,11 +120,11 @@ export default function Inbox() {
             <Text style={[styles.ctaText, { color: theme.textInverse }]}>Manage albums</Text>
           </Pressable>
         </View>
-      ) : loading && conversations.length === 0 ? (
+      ) : loading && uniqueConversations.length === 0 ? (
         <ListSkeleton />
       ) : (
         <FlatList
-          data={conversations}
+          data={uniqueConversations}
           keyExtractor={(c) => c.id}
           ItemSeparatorComponent={() => <View style={[styles.sep, { backgroundColor: theme.border }]} />}
           renderItem={renderRow}
@@ -140,7 +140,7 @@ export default function Inbox() {
               </Text>
             </View>
           }
-          contentContainerStyle={conversations.length === 0 ? { flex: 1 } : { paddingBottom: 24 }}
+          contentContainerStyle={uniqueConversations.length === 0 ? { flex: 1 } : { paddingBottom: 24 }}
         />
       )}
     </SafeAreaView>
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   sep: { height: 1, marginLeft: 92 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: 16, paddingVertical: 12 },
   thumb: { width: 60, height: 60, borderRadius: 8 },
-  onlineDot: { position: 'absolute', left: 2, bottom: 2, width: 12, height: 12, borderRadius: 6, borderWidth: 2 },
+  onlineDotPos: { position: 'absolute', left: 2, bottom: 2 },
   rowBody: { flex: 1, gap: 6 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   nameWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },

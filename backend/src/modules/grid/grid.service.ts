@@ -48,6 +48,17 @@ function orientationVisible(
   return true;
 }
 
+/** Reusable orientation-visibility check (viewer × candidate), for non-grid feeds. */
+export function isOrientationVisible(
+  viewer: { wantToSee?: string[] | null; gender?: string | null; genderIdentity?: string | null },
+  candidate: { whoCanDiscoverMe?: string[] | null; gender?: string | null; genderIdentity?: string | null },
+): boolean {
+  return orientationVisible(
+    (viewer.wantToSee ?? []) as string[], viewer.gender ?? null, viewer.genderIdentity ?? null,
+    (candidate.whoCanDiscoverMe ?? []) as string[], candidate.gender ?? null, candidate.genderIdentity ?? null,
+  );
+}
+
 export interface GridFilters {
   viewerId: string;
   lat: number;

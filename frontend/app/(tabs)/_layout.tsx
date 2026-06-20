@@ -3,31 +3,22 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
-import { NearMeLogo } from '../../src/components/icons';
 
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+
+// Modern dating-app navigation: solid glyphs when active, outline when inactive.
 const TABS = [
-  { name: 'index', label: 'Browse' },
-  { name: 'right-now', label: 'Right Now' },
-  { name: 'interest', label: 'Interest' },
-  { name: 'inbox', label: 'Inbox' },
-  { name: 'store', label: 'Store' },
-] as const;
+  { name: 'index', label: 'Browse', active: 'grid', inactive: 'grid-outline' },
+  { name: 'right-now', label: 'Right Now', active: 'flash', inactive: 'flash-outline' },
+  { name: 'interest', label: 'Interest', active: 'heart', inactive: 'heart-outline' },
+  { name: 'inbox', label: 'Inbox', active: 'chatbubble-ellipses', inactive: 'chatbubble-ellipses-outline' },
+  { name: 'store', label: 'Store', active: 'diamond', inactive: 'diamond-outline' },
+] as const satisfies ReadonlyArray<{ name: string; label: string; active: IoniconName; inactive: IoniconName }>;
 
-function TabIcon({ name, color }: { name: string; color: string }) {
-  switch (name) {
-    case 'index':
-      return <NearMeLogo size={26} color={color} />;
-    case 'right-now':
-      return <Ionicons name="flash" size={24} color={color} />;
-    case 'interest':
-      return <Ionicons name="heart" size={24} color={color} />;
-    case 'inbox':
-      return <Ionicons name="chatbubble" size={23} color={color} />;
-    case 'store':
-      return <Ionicons name="diamond" size={22} color={color} />;
-    default:
-      return null;
-  }
+function TabIcon({ name, color, active }: { name: string; color: string; active: boolean }) {
+  const meta = TABS.find((t) => t.name === name);
+  if (!meta) return null;
+  return <Ionicons name={active ? meta.active : meta.inactive} size={25} color={color} />;
 }
 
 function CustomTabBar({ state, navigation }: any) {
@@ -52,9 +43,9 @@ function CustomTabBar({ state, navigation }: any) {
               }}
             >
               <View style={s.iconWrap}>
-                <TabIcon name={route.name} color={color} />
+                <TabIcon name={route.name} color={color} active={active} />
               </View>
-              <Text style={[s.label, { color }]}>{meta.label}</Text>
+              <Text style={[s.label, { color, fontWeight: active ? '700' : '600' }]}>{meta.label}</Text>
             </Pressable>
           );
         })}

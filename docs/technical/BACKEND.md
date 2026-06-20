@@ -118,16 +118,20 @@ Key field groups:
 
 ## 5. API surface
 
-Auth is required on everything except OTP request/verify, refresh, and `/health*`/`/metrics`. Phone verification is enforced on most write routes.
+Auth is required on everything except `/auth/firebase`, `/auth/dev-login`, `/auth/refresh`, and `/health*`/`/metrics`.
 
-### Auth — `/api/v1/auth`
+> **Online status:** the grid-card and public-profile serializers compute `activity = { online, label }` from `lastActiveAt` vs the `ONLINE_WINDOW_SECONDS` presence window. `activity.online` is the boolean the client uses for the green dot; the `label` is the human string (`"Active Now"`, `"Active 5 mins ago"`, …). The card's `lastActiveAt` field carries that **label**, which is why the client must not compare it to the literal `"online"`.
+
+### Auth — `/api/v1/auth`  *(Firebase-based — replaced phone OTP)*
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/request-otp` | Send 6-digit OTP (E.164; rate-limited 3 / 10 min) |
-| POST | `/verify-otp` | Verify code → issue access+refresh tokens, `{ user, profileComplete, isNewUser }` |
+| POST | `/firebase` | Verify a Firebase ID token (email/password or Google) → issue access+refresh tokens, `{ accessToken, refreshToken, user, profileComplete, isNewUser }` |
+| POST | `/dev-login` | Email+password dev shortcut (non-prod) → same token payload |
 | POST | `/refresh` | Rotate tokens (family reuse → revoke all) |
 | POST | `/logout` | Revoke refresh-token family |
-| GET | `/me` | Current user + photos + settings |
+| GET | `/me` | Current user + photos + settings; includes `primaryPhotoUrl` and (free tier) `callLimits` |
+
+> The legacy `/request-otp` & `/verify-otp` routes have been removed; sign-in is handled by Firebase on the client, which then exchanges the Firebase ID token here. JWT issuance, refresh-token family reuse detection, and ban checks are unchanged.
 
 ### Profile — `/api/v1`
 `PATCH /me` · `PATCH /me/settings` · `POST /me/location` · `POST /me/photos` · `PUT /me/photos/:id/primary` · `DELETE /me/photos/:id` · prompts CRUD (`/me/prompts`) · PIN lock (`/me/pin`, `/me/pin/verify`) · `GET /catalogs` · `GET /users/:id` (public profile) · `GET /users/:id/albums` · `POST /me/voice-clip` & `/me/video-clip` (Premium+) · `GET /me/upload-url` & `/me/photos/upload-url` (pre-signed GCS).
@@ -142,7 +146,9 @@ Auth is required on everything except OTP request/verify, refresh, and `/health*
 `GET /ice-config` (STUN/TURN) · `GET /` (history) · `POST /` (initiate; requires call gate) · `POST /schedule` · `PATCH /:id` (status + endReason).
 
 ### Discovery actions — `/api/v1/discovery`
-favorites (shortlist) CRUD · taps (likes) · `GET /views` (Gold+) · legacy private albums + grants.
+favorites (shortlist) CRUD · `POST /taps` (like) + `GET /taps` (taps received) · `GET /views` (who-viewed-me, **Gold+ only — 403 for lower plans**) · `GET /right-now` (nearby users with an active Right Now status) · legacy private albums + grants.
+
+**Powers the Interest tab:** the **Views** list comes from `GET /views`; the **Taps** list from `GET /taps`. A `ProfileView` row is upserted whenever a user opens another user's profile via `GET /users/:id` (skipped if the viewer is incognito or viewing themselves) — so opening a profile from the grid is what makes views accrue. `POST /taps` records a tap and emits `tap.received` to the recipient in real time.
 
 ### Explore — `/api/v1/explore` (Premium+)
 `GET /` (worldwide search) · `GET /for-you` (curated 4 by overlap).
@@ -157,7 +163,9 @@ plans/addons catalogs · `GET /subscriptions/current` · `POST /subscriptions` �
 `GET /blocks` · block/unblock · mutes · `POST /users/:id/report` · `POST /panic-hide`.
 
 ### Albums (v3) — `/api/albums`
-list/create/get/update/delete album · add/remove/reorder photos.
+list/create/get/update/delete album · add/remove/reorder photos · `GET /users/:id/albums` (view another user's albums, block-safe — powers the profile **Albums** section).
+
+> **Photo serialization:** album cover and photo objects are returned as `{ id, url, order, createdAt }` (the signed GCS URL field is **`url`**, not `photoUrl`). The client type `AlbumPhoto` was corrected to match. Photo uploads expect an already-uploaded GCS path (the client uses the pre-signed upload-url flow); posting a raw local URI will not produce a viewable signed URL.
 
 ### City profiles (Gold+) — `/api/v1/city-profiles`
 list/create/activate/delete (travel mode).
@@ -192,7 +200,7 @@ list/create/activate/delete (travel mode).
 
 ## 7. Key business logic
 
-**Auth + OTP** (`modules/auth/*`, `utils/otp.ts`): E.164 validation → 6-digit code → HMAC-SHA256(`phone:code`) stored in Redis w/ TTL → returned as `devCode` when `OTP_DEV_RETURN=true`. Verify enforces 5-attempt lockout (30 min). Tokens: 15 min access + 7 day refresh; refresh tokens stored hashed with a **family ID** — replaying a used token revokes the whole family.
+**Auth (Firebase)** (`modules/auth/*`): the client authenticates with Firebase (email/password or Google) and sends the resulting **Firebase ID token** to `POST /auth/firebase`. The server verifies it, finds-or-creates the user, and issues NearMe tokens (15 min access + 7 day refresh). Refresh tokens are stored hashed with a **family ID** — replaying a used token revokes the whole family. `dev-login` provides an email+password shortcut for non-production. (Phone-OTP auth has been retired.)
 
 **Geo-discovery grid** (`modules/grid/*`): `GEOSEARCH geo:users` around the viewer → filter (self, blocked, inactive 14d+, incognito, stealth) → DB attribute filters → in-memory orientation cross-match (`wantToSee` × `whoCanDiscoverMe`) → presence filter → load boosts → **rank: boosted > platinum > gold > premium > free, then distance, completeness, reply rate** → apply plan grid cap (free 100, premium 600, gold/platinum unlimited). Distances **fuzzed ±0.1 km** before leaving the server.
 
@@ -259,7 +267,7 @@ All have **dev stubs** that activate when credentials are absent (mock orders/to
 - **Validation** (`middleware/validate.ts`): Zod on body/query → 400 with details.
 - **Errors** (`middleware/error.ts`): `HttpError` → structured JSON; global 404 handler.
 - **Helmet**: CSP, HSTS (1 yr), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
-- **Rate limits (Redis):** OTP request 3/10min/phone · OTP verify 5/10min (30-min lockout) · refresh 10/min/IP.
+- **Rate limits (Redis):** auth/refresh endpoints rate-limited per IP; other sensitive routes limited per user. (The previous OTP-specific limits were removed with the OTP flow.)
 
 ---
 

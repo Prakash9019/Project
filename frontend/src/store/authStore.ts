@@ -14,6 +14,8 @@ interface AuthState {
   refreshUser: () => Promise<void>;
   /** Update the cached user locally (after PATCH /me etc.). */
   setUser: (user: Self) => void;
+  /** Optimistically update the cached user's primary photo (after upload). */
+  setPrimaryPhoto: (url: string) => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -44,4 +46,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   setUser: (user) => set({ user }),
+
+  setPrimaryPhoto: (url) =>
+    set((state) => ({ user: state.user ? { ...state.user, primaryPhotoUrl: url } : null })),
 }));

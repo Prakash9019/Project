@@ -16,10 +16,11 @@ import * as Location from 'expo-location';
 import { useTheme } from '../../src/theme';
 import { useGridStore } from '../../src/store/gridStore';
 import { useFilterStore } from '../../src/store/filterStore';
+import { useAuthStore } from '../../src/store/authStore';
+import { Avatar } from '../../src/components/Avatar';
 import { UserCardTile } from '../../src/components/UserCardTile';
-import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { GridSkeleton } from '../../src/components/Skeleton';
-import { startConversation, updateLocation, ApiError, GridQuery } from '../../src/services/api';
+import { updateLocation, GridQuery } from '../../src/services/api';
 import type { UserCard } from '../../src/types/api';
 
 const COLS = 3;
@@ -42,16 +43,22 @@ export default function Browse() {
   const rowHeight = tile + GAP;
 
   const { cards, loading, refreshing, loadingMore, error, total, fetchGrid, fetchMore, hydrateCache } = useGridStore();
+  const me = useAuthStore((s) => s.user);
 
   const [coords, setCoords] = useState<Coords | null>(null);
   const [permDenied, setPermDenied] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const [starting, setStarting] = useState(false);
   const lastRefresh = useRef(0);
 
   const filterVersion = useFilterStore((s) => s.version);
   const toQuery = useFilterStore((s) => s.toQuery);
+  const hydrateFilters = useFilterStore((s) => s.hydrate);
+  const activeFilterCount = useFilterStore((s) => s.activeCount());
+
+  // Restore persisted filters once on mount.
+  useEffect(() => {
+    hydrateFilters();
+  }, [hydrateFilters]);
 
   const query = useMemo<Omit<GridQuery, 'lat' | 'lng' | 'limit' | 'offset'>>(() => {
     const quick = QUICK_FILTERS.find((q) => q.key === activeFilter);
@@ -109,23 +116,11 @@ export default function Browse() {
     }, [coords, query, fetchGrid])
   );
 
-  const openChat = useCallback(
-    async (card: UserCard) => {
-      if (starting) return;
-      setStarting(true);
-      try {
-        const conv = await startConversation(card.id);
-        router.push({ pathname: '/chat/[id]', params: { id: conv.id, peerName: card.firstName ?? '' } });
-      } catch (e) {
-        const err = e as ApiError;
-        if (err.status === 403 && err.code === 'interaction_limit_reached') {
-          setUpgradeOpen(true);
-        }
-      } finally {
-        setStarting(false);
-      }
+  const openProfile = useCallback(
+    (card: UserCard) => {
+      router.push({ pathname: '/profile/[id]', params: { id: card.id } });
     },
-    [router, starting]
+    [router]
   );
 
   const rows = useMemo<UserCard[][]>(() => {
@@ -137,10 +132,12 @@ export default function Browse() {
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.push('/settings')} style={styles.avatarBtn}>
-          <View style={[styles.avatar, { backgroundColor: theme.backgroundTertiary }]} />
-          <View style={[styles.avatarDot, { backgroundColor: theme.online, borderColor: theme.background }]} />
-        </Pressable>
+        <Avatar
+          uri={me?.primaryPhotoUrl}
+          size={38}
+          online
+          onPress={() => router.push('/settings')}
+        />
         <Pressable
           style={[styles.search, { backgroundColor: theme.surfaceElevated }]}
           onPress={() => router.push('/explore')}
@@ -150,6 +147,11 @@ export default function Browse() {
         </Pressable>
         <Pressable style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]} onPress={() => router.push('/filters')}>
           <Ionicons name="options-outline" size={18} color={theme.textPrimary} />
+          {activeFilterCount > 0 && (
+            <View style={[styles.filterBadge, { backgroundColor: theme.brand, borderColor: theme.background }]}>
+              <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+            </View>
+          )}
         </Pressable>
       </View>
 
@@ -224,16 +226,13 @@ export default function Browse() {
                   key={card.id}
                   card={card}
                   size={tile}
-                  onPress={() => openChat(card)}
-                  onLongPress={() => router.push({ pathname: '/profile/[id]', params: { id: card.id } })}
+                  onPress={() => openProfile(card)}
                 />
               ))}
             </View>
           )}
         />
       )}
-
-      <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -247,6 +246,8 @@ const styles = StyleSheet.create({
   search: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, height: 40, paddingHorizontal: 16 },
   searchText: { fontSize: 15 },
   iconChip: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  filterBadge: { position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  filterBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
   chip: { borderRadius: 999, paddingHorizontal: 16, height: 34, justifyContent: 'center' },
   chipText: { fontSize: 14, fontWeight: '600' },

@@ -64,6 +64,25 @@ export default function CallScreen() {
     return () => clearInterval(t);
   }, [joined]);
 
+  // Free-tier countdown derived from authStore callLimits (null for paid plans).
+  const callLimits = me?.callLimits ?? null;
+  const remainingMinutes = callLimits
+    ? isVideo
+      ? callLimits.videoMinutesLimit - callLimits.videoMinutesUsed
+      : callLimits.audioMinutesLimit - callLimits.audioMinutesUsed
+    : null;
+  const allowedSec = remainingMinutes != null ? Math.max(0, remainingMinutes) * 60 : null;
+  const remainingSec = allowedSec != null ? Math.max(0, allowedSec - elapsed) : null;
+
+  // When the free-tier countdown hits zero, end the call + show the upgrade modal.
+  useEffect(() => {
+    if (remainingSec === 0 && joined && !limitReached) {
+      setLimitReached(true);
+      finish('normal', false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remainingSec, joined, limitReached]);
+
   // Server-side end (e.g. free-tier time limit reached).
   useEffect(() => {
     let cleanup = () => {};
@@ -146,10 +165,8 @@ export default function CallScreen() {
                 ? (remoteUid != null ? fmt(elapsed) : 'Ringing…')
                 : 'Connecting…'}
         </Text>
-        {me?.plan === 'free' && !limitReached && (
-          <Text style={styles.freeNote}>
-            Free plan · {isVideo ? '2 min video' : '5 min audio'} daily limit
-          </Text>
+        {remainingSec != null && !limitReached && (
+          <Text style={styles.freeNote}>{fmt(remainingSec)} remaining</Text>
         )}
       </View>
 

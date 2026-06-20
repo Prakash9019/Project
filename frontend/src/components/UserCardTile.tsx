@@ -26,7 +26,7 @@ function UserCardTileBase({
 }) {
   const { theme } = useTheme();
   const badge = planBadgeColor(theme, card.planBadge);
-  const online = card.lastActiveAt?.toLowerCase() === 'online';
+  const online = card.activity?.online ?? card.lastActiveAt?.toLowerCase() === 'online';
   const chips = [card.bodyType ? labelize(card.bodyType) : null, ...card.tribes.slice(0, 2)]
     .filter(Boolean)
     .slice(0, 2) as string[];
@@ -55,6 +55,11 @@ function UserCardTileBase({
 
       {/* Top-right indicators */}
       <View style={styles.topRight}>
+        {!!card.rightNowStatus && (
+          <View style={[styles.iconBadge, { backgroundColor: theme.planPremium }]}>
+            <Ionicons name="water" size={11} color="#fff" />
+          </View>
+        )}
         {card.boosted && (
           <View style={[styles.iconBadge, { backgroundColor: theme.online }]}>
             <Ionicons name="flash" size={11} color="#000" />
