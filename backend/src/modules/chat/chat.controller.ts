@@ -57,7 +57,7 @@ export async function listConversations(req: Request, res: Response): Promise<vo
     folder,
     conversations: convos.map((c) => {
       const isA = c.userAId === userId;
-      const peer = isA ? c.userA : c.userB;
+      const peer = isA ? c.userB : c.userA;
       const last = c.messages[0];
       const flags = svc.callFlags(c, userId);
 
@@ -93,7 +93,7 @@ export async function listMessages(req: Request, res: Response): Promise<void> {
   const { conversationId } = req.params;
   const convo = await svc.getVisibleConversation(req.user!.sub, conversationId);
   const { before, limit } = req.query as unknown as z.infer<typeof listMessagesQuerySchema>;
-  const { messages, hasMore, nextCursor } = await svc.listMessages(conversationId, before, limit);
+  const { messages, hasMore, nextCursor } = await svc.listMessages(conversationId, before, limit, req.user!.sub);
   const flags = svc.callFlags(convo, req.user!.sub);
   res.status(200).json({ messages, hasMore, nextCursor, ...flags });
 }
@@ -194,7 +194,12 @@ export async function consumeExpiringPhoto(req: Request, res: Response): Promise
   emitToUser(svc.otherParty(convo, req.user!.sub), 'message.viewed', {
     conversationId, messageId, viewedAt: updated.viewedAt,
   });
-  res.status(200).json({ ok: true });
+  res.status(200).json({
+    ok: true,
+    url: updated.url,
+    viewedAt: updated.viewedAt,
+    expiresInSeconds: updated.expiresInSeconds,
+  });
 }
 
 export async function markRead(req: Request, res: Response): Promise<void> {

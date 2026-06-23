@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,13 +11,15 @@ import {
   Modal,
   TextInput,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '../../src/theme';
+import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import {
@@ -26,20 +28,28 @@ import {
   startConversation,
   sendMessage,
   tapUser,
+  untapUser,
   shortlistUser,
   unshortlistUser,
   blockUser,
   ApiError,
 } from '../../src/services/api';
-import { showSuccess, showError } from '../../src/lib/toast';
+import { useChatStore } from '../../src/store/chatStore';
+import { useGridStore } from '../../src/store/gridStore';
+import { useAuthStore } from '../../src/store/authStore';
+import { showError } from '../../src/lib/toast';
 import { planBadgeColor, labelize } from '../../src/lib/format';
 import type { PublicProfile, AlbumSummary } from '../../src/types/api';
 
 export default function ProfileDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: rawId } = useLocalSearchParams<{ id: string }>();
+  const peerId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
+  const me = useAuthStore((s) => s.user);
+  const patchCard = useGridStore((s) => s.patchCard);
+  const { fetchConversations } = useChatStore();
 
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,33 +62,59 @@ export default function ProfileDetail() {
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [kbInset, setKbInset] = useState(0);
+  const hasLoadedRef = useRef(false);
 
   useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const p = await getPublicProfile(id);
-        if (!active) return;
-        setProfile(p);
-        setLiked(p.isLiked);
-        setShortlisted(p.isShortlisted);
-      } catch (e) {
-        if ((e as ApiError).status === 404) setNotFound(true);
-      } finally {
-        if (active) setLoading(false);
-      }
-      // Albums are optional — never block the profile on them.
-      try {
-        const res = await getUserAlbums(id);
-        if (active) setAlbums(res.albums);
-      } catch {
-        /* no albums / not permitted — ignore */
-      }
-    })();
+    hasLoadedRef.current = false;
+    setLoading(true);
+    setProfile(null);
+    setNotFound(false);
+    setDraft('');
+  }, [peerId]);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvt, (e) => setKbInset(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEvt, () => setKbInset(0));
     return () => {
-      active = false;
+      show.remove();
+      hide.remove();
     };
-  }, [id]);
+  }, []);
+
+  const loadProfile = useCallback(async () => {
+    if (!peerId) {
+      setLoading(false);
+      return;
+    }
+    if (!hasLoadedRef.current) setLoading(true);
+    try {
+      const p = await getPublicProfile(peerId);
+      setProfile(p);
+      setLiked(!!p.isLiked);
+      setShortlisted(!!p.isShortlisted);
+      setNotFound(false);
+      hasLoadedRef.current = true;
+    } catch (e) {
+      if ((e as ApiError).status === 404) setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
+    try {
+      const res = await getUserAlbums(peerId);
+      setAlbums(res.albums);
+    } catch {
+      /* albums optional */
+    }
+  }, [peerId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+    }, [loadProfile])
+  );
 
   const handleCapError = (e: unknown) => {
     const err = e as ApiError;
@@ -87,24 +123,24 @@ export default function ProfileDetail() {
 
   // Open the full chat thread.
   const openChat = async () => {
+    if (!peerId) return;
     try {
-      const conv = await startConversation(id);
+      const conv = await startConversation(peerId);
       router.push({ pathname: '/chat/[id]', params: { id: conv.id, peerName: profile?.firstName ?? '' } });
     } catch (e) {
       handleCapError(e);
     }
   };
 
-  // Send a message inline without leaving the profile.
   const sendInline = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if (!text || sending || !peerId || !me) return;
     setSending(true);
     try {
-      const conv = await startConversation(id);
+      const conv = await startConversation(peerId);
       await sendMessage(conv.id, { type: 'text', content: text });
       setDraft('');
-      showSuccess('Message sent', `Say hi to ${profile?.firstName ?? 'them'} 👋`);
+      await fetchConversations('inbox', true);
     } catch (e) {
       const err = e as ApiError;
       if (err.status === 403 && err.code === 'interaction_limit_reached') setUpgradeOpen(true);
@@ -115,24 +151,31 @@ export default function ProfileDetail() {
   };
 
   const toggleTap = async () => {
+    if (!peerId) return;
     const next = !liked;
     setLiked(next);
+    patchCard(peerId, { isLiked: next });
     try {
-      if (next) await tapUser(id);
+      if (next) await tapUser(peerId);
+      else await untapUser(peerId);
     } catch (e) {
       setLiked(!next);
+      patchCard(peerId, { isLiked: !next });
       handleCapError(e);
     }
   };
 
   const toggleShortlist = async () => {
+    if (!peerId) return;
     const next = !shortlisted;
     setShortlisted(next);
+    patchCard(peerId, { isShortlisted: next });
     try {
-      if (next) await shortlistUser(id);
-      else await unshortlistUser(id);
+      if (next) await shortlistUser(peerId);
+      else await unshortlistUser(peerId);
     } catch (e) {
       setShortlisted(!next);
+      patchCard(peerId, { isShortlisted: !next });
       handleCapError(e);
     }
   };
@@ -146,7 +189,7 @@ export default function ProfileDetail() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await blockUser(id);
+            await blockUser(peerId);
             router.back();
           } catch {
             Alert.alert('Could not block', 'Please try again.');
@@ -199,7 +242,12 @@ export default function ProfileDetail() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 120 }}
+      >
         {/* Hero / gallery */}
         <View style={{ width, height: width }}>
           {gallery.length > 0 ? (
@@ -213,6 +261,18 @@ export default function ProfileDetail() {
               <Ionicons name="person" size={96} color={theme.textTertiary} />
             </View>
           )}
+          {/* Top scrim — keeps the back / star / menu buttons legible over bright photos */}
+          <LinearGradient
+            colors={['rgba(0,0,0,0.45)', 'transparent']}
+            style={styles.heroTopScrim}
+            pointerEvents="none"
+          />
+          {/* Bottom scrim — warm fade into the info section */}
+          <LinearGradient
+            colors={['transparent', theme.background]}
+            style={styles.heroBottomScrim}
+            pointerEvents="none"
+          />
           <SafeAreaView edges={['top']} style={styles.heroBar}>
             <Pressable onPress={() => router.back()} hitSlop={12} style={styles.circleBtn}>
               <Ionicons name="arrow-back" size={22} color="#fff" />
@@ -388,24 +448,31 @@ export default function ProfileDetail() {
         </View>
       </ScrollView>
 
-      {/* Action bar — inline message + Tap/Fire + Chat */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.barWrap}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
-        <SafeAreaView edges={['bottom']} style={{ backgroundColor: theme.background, borderTopWidth: 1, borderTopColor: theme.border }}>
+        <SafeAreaView
+          edges={['bottom']}
+          style={{
+            backgroundColor: theme.background,
+            borderTopWidth: 1,
+            borderTopColor: theme.border,
+            paddingBottom: Platform.OS === 'android' ? Math.max(0, kbInset - 24) : 0,
+          }}
+        >
           <View style={styles.bar}>
             <View style={[styles.inputWrap, { backgroundColor: theme.surfaceElevated }]}>
               <TextInput
                 value={draft}
                 onChangeText={setDraft}
-                placeholder={`Say something to ${profile.firstName ?? 'them'}…`}
+                placeholder="Write a message…"
                 placeholderTextColor={theme.textTertiary}
                 style={[styles.input, { color: theme.textPrimary }]}
                 multiline
                 maxLength={1000}
-                onSubmitEditing={sendInline}
-                returnKeyType="send"
+                blurOnSubmit={false}
               />
               {draft.trim().length > 0 && (
                 <Pressable onPress={sendInline} disabled={sending} hitSlop={8} style={styles.sendBtn}>
@@ -420,8 +487,15 @@ export default function ProfileDetail() {
             <Pressable style={[styles.iconAction, { backgroundColor: theme.surfaceElevated }]} onPress={toggleTap}>
               <Ionicons name="flame" size={24} color={liked ? theme.brand : theme.textSecondary} />
             </Pressable>
-            <Pressable style={[styles.iconAction, { backgroundColor: theme.brand }]} onPress={openChat}>
-              <Ionicons name="chatbubble" size={20} color={theme.textInverse} />
+            <Pressable onPress={openChat}>
+              <LinearGradient
+                colors={theme.gradientWarm}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.iconAction}
+              >
+                <Ionicons name="chatbubble" size={20} color="#fff" />
+              </LinearGradient>
             </Pressable>
           </View>
         </SafeAreaView>
@@ -443,7 +517,7 @@ export default function ProfileDetail() {
         </Pressable>
       </Modal>
 
-      <ReportSheet visible={reportOpen} userId={id} onClose={() => setReportOpen(false)} />
+      <ReportSheet visible={reportOpen} userId={peerId} onClose={() => setReportOpen(false)} />
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
     </View>
   );
@@ -477,52 +551,54 @@ function MediaPill({ theme, icon, label }: { theme: any; icon: any; label: strin
 const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  naTitle: { fontSize: 18, fontWeight: '700' },
+  naTitle: { fontSize: 18, fontFamily: DisplayFont.bold, fontWeight: '700' },
   naBtn: { marginTop: 8, height: 46, borderRadius: 999, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
-  naBtnText: { fontSize: 15, fontWeight: '700' },
+  naBtnText: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700' },
   noPhoto: { alignItems: 'center', justifyContent: 'center' },
+  heroTopScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
+  heroBottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 140 },
   heroBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
   heroRight: { flexDirection: 'row', gap: 10 },
   circleBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   info: { padding: 20, gap: 6 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  name: { fontSize: 26, fontWeight: '800' },
-  age: { fontWeight: '400' },
+  name: { fontSize: 28, fontFamily: DisplayFont.heavy, fontWeight: '800' },
+  age: { fontFamily: DisplayFont.regular, fontWeight: '400' },
   planBadge: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  meta: { fontSize: 14 },
+  meta: { fontSize: 14, fontFamily: FontFamily.medium },
   verifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   vBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  vBadgeText: { fontSize: 12, fontWeight: '600' },
+  vBadgeText: { fontSize: 12, fontFamily: FontFamily.semibold, fontWeight: '600' },
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   statPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
-  statText: { fontSize: 13, fontWeight: '600' },
-  sectionLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5, marginTop: 20 },
-  body: { fontSize: 15, lineHeight: 22, marginTop: 6 },
-  card: { borderRadius: 14, padding: 14, marginTop: 8 },
+  statText: { fontSize: 13, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  sectionLabel: { fontSize: 12, fontFamily: DisplayFont.bold, fontWeight: '700', letterSpacing: 0.8, marginTop: 20 },
+  body: { fontSize: 15, fontFamily: FontFamily.regular, lineHeight: 22, marginTop: 6 },
+  card: { borderRadius: 16, padding: 14, marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   chip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
-  chipText: { fontSize: 14 },
-  promptQ: { fontSize: 13 },
-  promptA: { fontSize: 16, fontWeight: '600', marginTop: 4 },
+  chipText: { fontSize: 14, fontFamily: FontFamily.medium },
+  promptQ: { fontSize: 13, fontFamily: FontFamily.regular },
+  promptA: { fontSize: 16, fontFamily: DisplayFont.semibold, fontWeight: '600', marginTop: 4 },
   mediaPill: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, marginTop: 8 },
-  mediaText: { fontSize: 14, fontWeight: '600' },
+  mediaText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
   barWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   bar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 24, paddingLeft: 16, paddingRight: 6, minHeight: 48 },
-  input: { flex: 1, fontSize: 15, paddingVertical: 12, maxHeight: 110 },
+  input: { flex: 1, fontSize: 15, fontFamily: FontFamily.regular, paddingVertical: 12, maxHeight: 110 },
   sendBtn: { marginLeft: 4, alignItems: 'center', justifyContent: 'center' },
   iconAction: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   albumGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 12, overflow: 'hidden', justifyContent: 'flex-end' },
+  albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 14, overflow: 'hidden', justifyContent: 'flex-end' },
   albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', backgroundColor: 'rgba(0,0,0,0.4)' },
   albumMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 6 },
-  albumName: { color: '#fff', fontSize: 12, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 3 },
+  albumName: { color: '#fff', fontSize: 12, fontFamily: DisplayFont.bold, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 3 },
   albumCount: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },
-  albumCountText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  albumCountText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.bold, fontWeight: '700' },
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   menu: { width: '100%', borderRadius: 16, overflow: 'hidden' },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
-  menuText: { fontSize: 16, fontWeight: '600' },
+  menuText: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600' },
 });

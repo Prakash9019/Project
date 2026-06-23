@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type { Self } from '../types/api';
 import * as authService from '../services/auth';
 import { getMe } from '../services/api';
+import { disconnectSocket } from '../services/socket';
+import { useInterestStore } from './interestStore';
 
 interface AuthState {
   user: Self | null;
@@ -23,11 +25,15 @@ export const useAuthStore = create<AuthState>((set) => ({
   hydrating: true,
 
   login: async (accessToken, refreshToken, user) => {
+    disconnectSocket();
+    useInterestStore.getState().reset();
     await authService.setTokens(accessToken, refreshToken);
     set({ user, hydrating: false });
   },
 
   logout: async () => {
+    disconnectSocket();
+    useInterestStore.getState().reset();
     await authService.clearTokens();
     set({ user: null, hydrating: false });
   },

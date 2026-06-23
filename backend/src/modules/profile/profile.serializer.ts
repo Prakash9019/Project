@@ -62,8 +62,12 @@ export function serializeSelf(user: UserWithRelations) {
   };
 }
 
-/** Public profile view. */
-export function serializePublicProfile(user: UserWithRelations, viewer?: UserWithRelations) {
+/** Public profile view. `viewerState` carries the viewer's like/shortlist of this user. */
+export function serializePublicProfile(
+  user: UserWithRelations,
+  viewer?: UserWithRelations,
+  viewerState?: { isLiked?: boolean; isShortlisted?: boolean },
+) {
   const shared = viewer
     ? {
         interests: intersect(viewer.interests, user.interests),
@@ -81,6 +85,8 @@ export function serializePublicProfile(user: UserWithRelations, viewer?: UserWit
     activity: activityStatus(new Date(user.lastActiveAt)),
     photos: (user.photos ?? []).filter((p: any) => !p.isPrivate).map(serializePhoto),
     prompts: (user.prompts ?? []).map(serializePrompt),
+    isLiked: viewerState?.isLiked ?? false,
+    isShortlisted: viewerState?.isShortlisted ?? false,
     ...(shared ? { sharedHighlights: shared } : {}),
   };
 }

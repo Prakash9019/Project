@@ -293,6 +293,9 @@ export interface ListMessagesResponse {
   audioCallEnabled: boolean;
   videoCallEnabled: boolean;
 }
+export const markConversationRead = (conversationId: string) =>
+  request<void>('POST', `/api/v1/conversations/${conversationId}/read`);
+
 export const listMessages = (conversationId: string, query?: { cursor?: string; limit?: number }) =>
   request<ListMessagesResponse>(
     'GET',
@@ -319,6 +322,40 @@ export const sendMessage = (conversationId: string, body: SendMessageBody) =>
     `/api/v1/conversations/${conversationId}/messages`,
     body
   );
+
+export interface ConsumeExpiringPhotoResponse {
+  ok: boolean;
+  url: string | null;
+  viewedAt: string;
+  expiresInSeconds: number | null;
+}
+export const consumeExpiringPhoto = (conversationId: string, messageId: string) =>
+  request<ConsumeExpiringPhotoResponse>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/view`
+  );
+
+export interface ChatPhotoUploadUrl {
+  uploadUrl: string;
+  gcsPath: string;
+}
+export const getChatPhotoUploadUrl = () =>
+  request<ChatPhotoUploadUrl>('GET', '/api/v1/me/photos/upload-url', undefined, {
+    query: { type: 'chat_photo' },
+  });
+
+/** Upload a local image for chat (photo or view-once). Returns the GCS path for mediaUrls. */
+export async function uploadChatPhoto(localUri: string): Promise<string> {
+  const { uploadUrl, gcsPath } = await getChatPhotoUploadUrl();
+  const blob = await (await fetch(localUri)).blob();
+  const put = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: blob,
+    headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
+  });
+  if (!put.ok) throw new Error(`Photo upload failed (${put.status})`);
+  return gcsPath;
+}
 
 /* ─────────────────────────────── Calls ────────────────────────────── */
 
@@ -355,6 +392,9 @@ export const getCallHistory = () =>
 
 export const tapUser = (userId: string) =>
   request<{ ok: boolean }>('POST', '/api/v1/discovery/taps', { userId });
+
+export const untapUser = (userId: string) =>
+  request<void>('DELETE', `/api/v1/discovery/taps/${userId}`);
 
 // ── Interest: who viewed me / taps received ──
 // Shapes match the backend exactly (see backend-spec.json notes).
@@ -394,7 +434,7 @@ export const shortlistUser = (userId: string) =>
   request<{ ok: boolean }>('POST', '/api/v1/discovery/favorites', { userId });
 
 export const unshortlistUser = (userId: string) =>
-  request<void>('DELETE', '/api/v1/discovery/favorites', { userId });
+  request<void>('DELETE', `/api/v1/discovery/favorites/${userId}`);
 
 /* ────────────────────────────── Safety ────────────────────────────── */
 
@@ -522,14 +562,15 @@ export const getBillingPlans = () =>
 
 export interface CreateSubscriptionResponse {
   orderId: string;
-  amount: number;
+  amount: number; // paise
   currency: 'INR' | 'USD';
+  key?: string;
 }
 export const createSubscription = (body: {
   plan: Exclude<Plan, 'free'>;
   billingCycle: BillingCycle;
   paymentProvider: 'razorpay' | 'stripe';
-}) => request<CreateSubscriptionResponse>('POST', '/api/subscriptions', body);
+}) => request<CreateSubscriptionResponse>('POST', '/api/v1/billing/subscriptions', body);
 
 export const verifySubscription = (body: {
   orderId: string;
@@ -538,26 +579,27 @@ export const verifySubscription = (body: {
 }) =>
   request<{ plan: string; planExpiresAt: string; ok: true }>(
     'POST',
-    '/api/subscriptions/verify',
+    '/api/v1/billing/subscriptions/verify',
     body
   );
 
 export const getCurrentSubscription = () =>
   request<{ plan: string; billingCycle: string; expiresAt: string; autoRenew: boolean }>(
     'GET',
-    '/api/subscriptions/current'
+    '/api/v1/billing/subscriptions/current'
   );
 
-// ── Add-on purchases (brief-specified; not in spec endpoints[]) ──
-// The spec lists add-ons as a root constant + AddOnType enum but no purchase
-// endpoint. These follow the subscription convention per the Phase 11 brief.
-export const createAddOnOrder = (addOnType: AddOnType) =>
-  request<CreateSubscriptionResponse>('POST', '/api/addons', {
-    addOnType,
+export const createAddOnOrder = (addonType: AddOnType) =>
+  request<CreateSubscriptionResponse>('POST', '/api/v1/billing/addons/purchase', {
+    addonType,
     paymentProvider: 'razorpay',
   });
-export const verifyAddOnPurchase = (body: { orderId: string; paymentId: string; signature: string }) =>
-  request<{ ok: true }>('POST', '/api/addons/verify', body);
+export const verifyAddOnPurchase = (body: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+  addonType: AddOnType;
+}) => request<{ ok: true }>('POST', '/api/v1/billing/addons/verify', body);
 
 /* ──────────────────────────────── AI ──────────────────────────────── */
 

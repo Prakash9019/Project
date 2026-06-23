@@ -4,7 +4,7 @@ export { colors };
 export { LightTheme, DarkTheme } from './colors';
 export type { AppTheme } from './colors';
 export { ThemeProvider, useTheme } from './ThemeContext';
-export { FontFamily, FontSize, LineHeight } from './typography';
+export { FontFamily, DisplayFont, FontSize, LineHeight } from './typography';
 
 export const spacing = {
   xs: 4,

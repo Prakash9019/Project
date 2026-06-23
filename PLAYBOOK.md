@@ -66,6 +66,9 @@ npx expo run:android
 cd frontend
 npm install
 npx expo run:android
+
+
+adb -s emulator-5554 install -r android/app/build/outputs/apk/debug/app-debug.apk
 npm start                       # press i (iOS), a (Android), or w (web)
 ```
 

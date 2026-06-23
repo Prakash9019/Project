@@ -9,6 +9,7 @@ import { razorpay } from '../../adapters/razorpay';
 import { stripe } from '../../adapters/stripe';
 import { emitToUser } from '../../realtime/emitter';
 import { coarseGeohash } from '../../utils/geo';
+import { env } from '../../config/env';
 import { ADDON_PRICES } from './billingPlans';
 
 const PENDING_ADDON_TTL = 1800;
@@ -69,11 +70,14 @@ export async function purchaseAddon(req: Request, res: Response): Promise<void> 
   const provider = detectProvider(user?.phone, reqProvider);
 
   let orderId: string;
+  let amountPaise = amount * 100;
   let extra: Record<string, unknown> = {};
 
   if (provider === 'razorpay') {
     const order = await razorpay.createOrder(amount, randomUUID().slice(0, 36));
     orderId = order.id;
+    amountPaise = order.amount;
+    extra = { key: env.payments.razorpayKeyId };
   } else {
     const intent = await stripe.createPaymentIntent(amount);
     orderId = intent.id;
@@ -86,7 +90,13 @@ export async function purchaseAddon(req: Request, res: Response): Promise<void> 
     'EX', PENDING_ADDON_TTL,
   );
 
-  res.status(201).json({ orderId, amount, currency: 'INR', paymentProvider: provider, ...extra });
+  res.status(201).json({
+    orderId,
+    amount: amountPaise,
+    currency: 'INR',
+    paymentProvider: provider,
+    ...extra,
+  });
 }
 
 /** POST /api/addons/verify — confirm payment and activate add-on */

@@ -90,7 +90,13 @@ export async function getAlbum(req: Request, res: Response): Promise<void> {
   const nextCursor = hasMore ? page[page.length - 1].id : null;
 
   const signedPhotos = await Promise.all(
-    page.map(async (p) => ({ id: p.id, url: await signUrl(p.photoUrl), order: p.order, createdAt: p.createdAt }))
+    page.map(async (p) => ({
+      id: p.id,
+      url: await signUrl(p.photoUrl),
+      path: p.photoUrl,
+      order: p.order,
+      createdAt: p.createdAt,
+    }))
   );
   res.status(200).json({
     id: album.id,

@@ -13,7 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
-import { useTheme } from '../../src/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { useGridStore } from '../../src/store/gridStore';
 import { useFilterStore } from '../../src/store/filterStore';
 import { useAuthStore } from '../../src/store/authStore';
@@ -24,7 +25,8 @@ import { updateLocation, GridQuery } from '../../src/services/api';
 import type { UserCard } from '../../src/types/api';
 
 const COLS = 3;
-const GAP = 2;
+const GAP = 6;
+const PAD = 12;
 const REFRESH_MS = 3 * 60 * 1000;
 
 type Coords = { lat: number; lng: number };
@@ -39,7 +41,7 @@ export default function Browse() {
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
-  const tile = (width - GAP * (COLS - 1)) / COLS;
+  const tile = (width - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const rowHeight = tile + GAP;
 
   const { cards, loading, refreshing, loadingMore, error, total, fetchGrid, fetchMore, hydrateCache } = useGridStore();
@@ -143,7 +145,7 @@ export default function Browse() {
           onPress={() => router.push('/explore')}
         >
           <Ionicons name="search" size={18} color={theme.textTertiary} />
-          <Text style={[styles.searchText, { color: theme.textTertiary }]}>Explore people nearby</Text>
+          <Text style={[styles.searchText, { color: theme.textTertiary }]}>Discover people nearby</Text>
         </Pressable>
         <Pressable style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]} onPress={() => router.push('/filters')}>
           <Ionicons name="options-outline" size={18} color={theme.textPrimary} />
@@ -158,16 +160,27 @@ export default function Browse() {
       <View style={styles.chipsRow}>
         {QUICK_FILTERS.map((q) => {
           const on = activeFilter === q.key;
+          if (on) {
+            return (
+              <Pressable key={q.key} onPress={() => setActiveFilter(null)}>
+                <LinearGradient
+                  colors={theme.gradientWarm}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.chip}
+                >
+                  <Text style={[styles.chipText, { color: '#fff' }]}>{q.label}</Text>
+                </LinearGradient>
+              </Pressable>
+            );
+          }
           return (
             <Pressable
               key={q.key}
-              onPress={() => setActiveFilter(on ? null : q.key)}
-              style={[
-                styles.chip,
-                { backgroundColor: on ? theme.brand : theme.backgroundTertiary },
-              ]}
+              onPress={() => setActiveFilter(q.key)}
+              style={[styles.chip, { backgroundColor: theme.backgroundTertiary }]}
             >
-              <Text style={[styles.chipText, { color: on ? theme.textInverse : theme.textPrimary }]}>{q.label}</Text>
+              <Text style={[styles.chipText, { color: theme.textPrimary }]}>{q.label}</Text>
             </Pressable>
           );
         })}
@@ -220,7 +233,7 @@ export default function Browse() {
             loadingMore ? <ActivityIndicator color={theme.brand} style={{ marginVertical: 16 }} /> : null
           }
           renderItem={({ item }) => (
-            <View style={{ flexDirection: 'row', gap: GAP, marginBottom: GAP }}>
+            <View style={{ flexDirection: 'row', gap: GAP, marginBottom: GAP, paddingHorizontal: PAD }}>
               {item.map((card) => (
                 <UserCardTile
                   key={card.id}
@@ -244,16 +257,16 @@ const styles = StyleSheet.create({
   avatar: { width: 38, height: 38, borderRadius: 19 },
   avatarDot: { position: 'absolute', right: 0, bottom: 0, width: 11, height: 11, borderRadius: 6, borderWidth: 2 },
   search: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, height: 40, paddingHorizontal: 16 },
-  searchText: { fontSize: 15 },
+  searchText: { fontSize: 15, fontFamily: FontFamily.regular },
   iconChip: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   filterBadge: { position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  filterBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
-  chip: { borderRadius: 999, paddingHorizontal: 16, height: 34, justifyContent: 'center' },
-  chipText: { fontSize: 14, fontWeight: '600' },
+  filterBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.heavy, fontWeight: '800' },
+  chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  chip: { borderRadius: 999, paddingHorizontal: 18, height: 36, justifyContent: 'center', alignItems: 'center' },
+  chipText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  emptyTitle: { fontSize: 18, fontWeight: '700' },
-  emptyBody: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: 19, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  emptyBody: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 20 },
   retry: { marginTop: 8, height: 46, borderRadius: 999, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
-  retryText: { fontSize: 15, fontWeight: '700' },
+  retryText: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700' },
 });

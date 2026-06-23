@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   FlatList,
   RefreshControl,
   useWindowDimensions,
+  AppState,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,18 +16,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
+import {
+  useInterestStore,
+  viewFromSocket,
+  tapFromSocket,
+} from '../../src/store/interestStore';
+import { connectSocket } from '../../src/services/socket';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { GridSkeleton } from '../../src/components/Skeleton';
 import { showError, showSuccess } from '../../src/lib/toast';
-import { planAtLeast, relativeTime } from '../../src/lib/format';
-import {
-  getViews,
-  getReceivedTaps,
-  tapUser,
-  ApiError,
-  type ProfileViewItem,
-  type TapItem,
-} from '../../src/services/api';
+import { planAtLeast, relativeTime, inboxDateLabel } from '../../src/lib/format';
+import { tapUser, ApiError } from '../../src/services/api';
 import type { UserCard } from '../../src/types/api';
 
 type Tab = 'views' | 'taps';
@@ -35,33 +35,45 @@ export default function Interest() {
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
-  const plan = useAuthStore((s) => s.user?.plan ?? 'free');
+  const me = useAuthStore((s) => s.user);
+  const plan = me?.plan ?? 'free';
+  const userId = me?.id ?? null;
+  const canSeeViews = planAtLeast(plan, 'gold');
 
-  const canSeeViews = planAtLeast(plan, 'gold'); // whoViewedMe is a Gold+ perk
+  const {
+    views,
+    taps,
+    loading,
+    refreshing,
+    error,
+    fetchInterest,
+    bumpView,
+    bumpTap,
+    reset,
+  } = useInterestStore();
 
   const [tab, setTab] = useState<Tab>('views');
-  const [views, setViews] = useState<ProfileViewItem[]>([]);
-  const [taps, setTaps] = useState<TapItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [tappedBack, setTappedBack] = useState<Set<string>>(new Set());
   const [tappingBack, setTappingBack] = useState<string | null>(null);
 
   const load = useCallback(
-    async (isRefresh = false) => {
-      isRefresh ? setRefreshing(true) : setLoading(true);
-      setError(null);
-      const [v, t] = await Promise.allSettled([getViews(), getReceivedTaps()]);
-      if (v.status === 'fulfilled') setViews(v.value.views);
-      else if (canSeeViews) setError((v.reason as ApiError)?.message ?? 'Could not load views');
-      if (t.status === 'fulfilled') setTaps(t.value.taps);
-      setLoading(false);
-      setRefreshing(false);
+    (isRefresh = false) => {
+      if (!userId) return;
+      fetchInterest(canSeeViews, isRefresh);
     },
-    [canSeeViews]
+    [userId, canSeeViews, fetchInterest]
   );
+
+  // Reset + reload when the signed-in user changes.
+  useEffect(() => {
+    setTappedBack(new Set());
+    if (!userId) {
+      reset();
+      return;
+    }
+    load(false);
+  }, [userId, canSeeViews, load, reset]);
 
   useFocusEffect(
     useCallback(() => {
@@ -69,13 +81,49 @@ export default function Interest() {
     }, [load])
   );
 
+  // Refresh when app returns to foreground.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') load(true);
+    });
+    return () => sub.remove();
+  }, [load]);
+
+  // Realtime: bump rows to top when views/taps arrive.
+  useEffect(() => {
+    if (!userId) return;
+    let cleanup = () => {};
+    (async () => {
+      const socket = await connectSocket();
+      if (!socket) return;
+
+      const onTap = (p: { tapId?: string; senderCard?: UserCard; createdAt?: string }) => {
+        const row = tapFromSocket(p);
+        if (row) bumpTap(row);
+      };
+      const onView = (p: { viewId?: string; viewerCard?: UserCard; viewedAt?: string }) => {
+        if (!canSeeViews) return;
+        const row = viewFromSocket(p);
+        if (row) bumpView(row);
+      };
+
+      socket.on('tap.received', onTap);
+      socket.on('profile.viewed', onView);
+      cleanup = () => {
+        socket.off('tap.received', onTap);
+        socket.off('profile.viewed', onView);
+      };
+    })();
+    return () => cleanup();
+  }, [userId, canSeeViews, bumpTap, bumpView]);
+
   const openProfile = (id: string) => router.push({ pathname: '/profile/[id]', params: { id } });
 
   const tapBack = async (sender: UserCard) => {
     if (tappingBack) return;
     setTappingBack(sender.id);
     try {
-      await tapUser(sender.id); // POST /discovery/taps { userId: sender.id }
+      await tapUser(sender.id);
       setTappedBack((prev) => new Set(prev).add(sender.id));
       showSuccess('Tap sent', 'Tapped back');
     } catch (e) {
@@ -86,9 +134,6 @@ export default function Interest() {
       setTappingBack(null);
     }
   };
-
-  const viewsCount = views.length;
-  const tapsCount = taps.length;
 
   const TabButton = ({ value, label, count, dot }: { value: Tab; label: string; count: number; dot?: boolean }) => {
     const active = tab === value;
@@ -109,22 +154,12 @@ export default function Interest() {
     <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={theme.brand} />
   );
 
-  const UnlockBar = ({ label }: { label: string }) => (
-    <View style={styles.unlockBarWrap} pointerEvents="box-none">
-      <Pressable style={[styles.unlockBar, { backgroundColor: theme.planGold }]} onPress={() => router.push('/(tabs)/store')}>
-        <Text style={[styles.unlockBarText, { color: '#000' }]}>{label}</Text>
-      </Pressable>
-    </View>
-  );
-
-  /* ── VIEWS ── */
   const renderViews = () => {
     const GAP = 2;
     const tile = (width - GAP) / 2;
 
-    if (loading) return <GridSkeleton cols={2} />;
+    if (loading && views.length === 0) return <GridSkeleton cols={2} />;
 
-    // Free / Premium → locked, blurred grid + unlock CTA.
     if (!canSeeViews) {
       const cells = Array.from({ length: 6 }, (_, i) => i);
       return (
@@ -142,7 +177,11 @@ export default function Interest() {
               </View>
             )}
           />
-          <UnlockBar label="Unlock All With Unlimited" />
+          <View style={styles.unlockBarWrap} pointerEvents="box-none">
+            <Pressable style={[styles.unlockBar, { backgroundColor: theme.planGold }]} onPress={() => router.push('/(tabs)/store')}>
+              <Text style={[styles.unlockBarText, { color: '#000' }]}>Unlock All With Gold</Text>
+            </Pressable>
+          </View>
         </View>
       );
     }
@@ -150,21 +189,21 @@ export default function Interest() {
     if (views.length === 0) {
       return (
         <EmptyState theme={theme} icon="eye-outline" title="No views yet"
-          body="When someone checks out your profile, they'll show up here." />
+          body={error ?? "When someone checks out your profile, they'll show up here."} />
       );
     }
 
     return (
       <FlatList
         data={pairs(views)}
-        keyExtractor={(_, i) => `vrow-${i}`}
+        keyExtractor={(row) => row.map((v) => v.id).join('-')}
         refreshControl={refresh}
         contentContainerStyle={{ paddingBottom: 24 }}
         renderItem={({ item }) => (
           <View style={{ flexDirection: 'row', gap: GAP, marginBottom: GAP }}>
             {item.map((it) => (
               <Pressable key={it.id} onPress={() => openProfile(it.viewer.id)} style={{ width: tile, height: tile * 1.18 }}>
-                <PersonCard theme={theme} card={it.viewer} timeAgo={relativeTime(it.viewedAt)} />
+                <PersonCard theme={theme} card={it.viewer} timeAgo={inboxDateLabel(it.viewedAt)} />
               </Pressable>
             ))}
           </View>
@@ -173,14 +212,13 @@ export default function Interest() {
     );
   };
 
-  /* ── TAPS (ungated server-side) ── */
   const renderTaps = () => {
-    if (loading) return <GridSkeleton cols={2} />;
+    if (loading && taps.length === 0) return <GridSkeleton cols={2} />;
 
     if (taps.length === 0) {
       return (
         <EmptyState theme={theme} icon="flame-outline" title="No taps yet"
-          body="Taps are a quick way to show interest. You'll see who tapped you here." />
+          body={error ?? "Taps are a quick way to show interest. You'll see who tapped you here."} />
       );
     }
 
@@ -228,8 +266,8 @@ export default function Interest() {
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
       <Text style={[styles.title, { color: theme.textPrimary }]}>Interest</Text>
       <View style={styles.tabs}>
-        <TabButton value="views" label="Views" count={viewsCount} />
-        <TabButton value="taps" label="Taps" count={tapsCount} dot={tapsCount > 0} />
+        <TabButton value="views" label="Views" count={canSeeViews ? views.length : 0} />
+        <TabButton value="taps" label="Taps" count={taps.length} dot={taps.length > 0} />
       </View>
 
       {tab === 'views' ? renderViews() : renderTaps()}
@@ -243,8 +281,6 @@ export default function Interest() {
     </SafeAreaView>
   );
 }
-
-/* ───────────────────────── pieces ───────────────────────── */
 
 function pairs<T>(arr: T[]): T[][] {
   const out: T[][] = [];
@@ -289,13 +325,13 @@ function LockedTile({ theme, size, showUnlock, onPress }: { theme: any; size: nu
         <View style={[styles.unlockChip, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
           <Text style={styles.unlockChipText}>Unlock</Text>
           <View style={[styles.freePill, { backgroundColor: theme.planGold }]}>
-            <Text style={styles.freePillText}>FREE</Text>
+            <Text style={styles.freePillText}>GOLD</Text>
           </View>
         </View>
       )}
       <View style={styles.lockedBottom}>
         <Ionicons name="eye" size={13} color={theme.textSecondary} />
-        <Text style={[styles.lockedTime, { color: theme.textSecondary }]}>Yesterday</Text>
+        <Text style={[styles.lockedTime, { color: theme.textSecondary }]}>—</Text>
       </View>
     </Pressable>
   );
@@ -315,14 +351,12 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 26, fontWeight: '800', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-
   tabs: { flexDirection: 'row', marginBottom: 2 },
   tabBtn: { flex: 1, alignItems: 'center', paddingBottom: 10 },
   tabLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 4 },
   tabDot: { width: 8, height: 8, borderRadius: 4 },
   tabText: { fontSize: 16, fontWeight: '600' },
   tabUnderline: { height: 2, width: '70%', marginTop: 8, borderRadius: 2 },
-
   viewerCard: { flex: 1, overflow: 'hidden' },
   viewerShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%' },
   viewerBottom: { position: 'absolute', left: 10, right: 10, bottom: 10 },
@@ -330,7 +364,6 @@ const styles = StyleSheet.create({
   viewerMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   viewerMeta: { color: '#fff', fontSize: 12 },
   viewerDist: { color: '#E0E0E0', fontSize: 11, marginLeft: 'auto' },
-
   locked: { overflow: 'hidden' },
   unlockChip: { position: 'absolute', top: 12, left: 12, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   unlockChipText: { color: '#fff', fontSize: 18, fontWeight: '700' },
@@ -338,11 +371,9 @@ const styles = StyleSheet.create({
   freePillText: { color: '#000', fontSize: 11, fontWeight: '800' },
   lockedBottom: { position: 'absolute', left: 12, bottom: 12, flexDirection: 'row', alignItems: 'center', gap: 5 },
   lockedTime: { fontSize: 13, fontWeight: '600' },
-
   unlockBarWrap: { position: 'absolute', left: 0, right: 0, bottom: 12, paddingHorizontal: 16 },
   unlockBar: { height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
   unlockBarText: { fontSize: 17, fontWeight: '800' },
-
   tapRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   tapThumb: { width: 88, height: 88, borderRadius: 14 },
   tapMid: { flex: 1, gap: 4 },
@@ -351,7 +382,6 @@ const styles = StyleSheet.create({
   tapMeta: { fontSize: 15 },
   tapRight: { alignItems: 'flex-end', gap: 10 },
   tapTime: { fontSize: 13 },
-
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   emptyTitle: { fontSize: 18, fontWeight: '700' },
   emptyBody: { fontSize: 14, textAlign: 'center', lineHeight: 20 },

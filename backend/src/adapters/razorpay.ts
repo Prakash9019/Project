@@ -1,14 +1,14 @@
 /**
- * Razorpay payment adapter — stub matching real Razorpay API shapes.
- * Production: install 'razorpay' package and replace RazorpayStubClient.
- * HMAC verification is real (uses Node.js built-in crypto).
+ * Razorpay payment adapter. Uses the official SDK when keys are configured;
+ * falls back to a stub for local dev without credentials.
  */
 import { createHmac, randomUUID } from 'crypto';
+import Razorpay from 'razorpay';
 import { env } from '../config/env';
 
 export interface RazorpayOrder {
   id: string;
-  amount: number;      // in paise
+  amount: number; // paise
   currency: string;
   receipt: string;
 }
@@ -18,17 +18,31 @@ export interface RazorpayClient {
   verifySignature(orderId: string, paymentId: string, signature: string): boolean;
 }
 
-class RazorpayStubClient implements RazorpayClient {
+class RazorpayLiveClient implements RazorpayClient {
+  private rzp: Razorpay;
+
+  constructor() {
+    this.rzp = new Razorpay({
+      key_id: env.payments.razorpayKeyId,
+      key_secret: env.payments.razorpayKeySecret,
+    });
+  }
+
   async createOrder(amountInr: number, receipt: string): Promise<RazorpayOrder> {
-    // TODO (production): replace with real Razorpay SDK call:
-    // const Razorpay = require('razorpay');
-    // const rzp = new Razorpay({ key_id: env.payments.razorpayKeyId, key_secret: env.payments.razorpayKeySecret });
-    // return rzp.orders.create({ amount: amountInr * 100, currency: 'INR', receipt });
-    return { id: `order_stub_${randomUUID().slice(0, 8)}`, amount: amountInr * 100, currency: 'INR', receipt };
+    const order = await this.rzp.orders.create({
+      amount: amountInr * 100,
+      currency: 'INR',
+      receipt,
+    });
+    return {
+      id: order.id,
+      amount: Number(order.amount),
+      currency: order.currency,
+      receipt: order.receipt ?? receipt,
+    };
   }
 
   verifySignature(orderId: string, paymentId: string, signature: string): boolean {
-    if (!env.payments.razorpayKeySecret) return true; // dev: skip verification
     const expected = createHmac('sha256', env.payments.razorpayKeySecret)
       .update(`${orderId}|${paymentId}`)
       .digest('hex');
@@ -36,4 +50,18 @@ class RazorpayStubClient implements RazorpayClient {
   }
 }
 
-export const razorpay: RazorpayClient = new RazorpayStubClient();
+class RazorpayStubClient implements RazorpayClient {
+  async createOrder(amountInr: number, receipt: string): Promise<RazorpayOrder> {
+    return { id: `order_stub_${randomUUID().slice(0, 8)}`, amount: amountInr * 100, currency: 'INR', receipt };
+  }
+
+  verifySignature(_orderId: string, _paymentId: string, _signature: string): boolean {
+    return true;
+  }
+}
+
+const hasRazorpayKeys = Boolean(env.payments.razorpayKeyId && env.payments.razorpayKeySecret);
+
+export const razorpay: RazorpayClient = hasRazorpayKeys
+  ? new RazorpayLiveClient()
+  : new RazorpayStubClient();

@@ -11,9 +11,10 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useTheme } from '../../src/theme';
+import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { T } from '../../src/components/ui';
 import { NearMeLogo } from '../../src/components/icons';
 import { firebaseLogin, devLogin, ApiError } from '../../src/services/api';
@@ -350,21 +351,22 @@ const SEED_EMAIL_SUFFIX = '@nearme.dev';
           <Pressable
             disabled={!isReady || loading}
             onPress={handleEmailAuth}
-            style={({ pressed }) => [
-              styles.primaryBtn,
-              {
-                backgroundColor: isReady ? theme.brand : theme.inputBackground,
-                opacity: pressed ? 0.85 : 1,
-              },
-            ]}
+            style={({ pressed }) => [styles.primaryBtnWrap, { opacity: pressed ? 0.9 : 1 }]}
           >
-            {loading ? (
-              <ActivityIndicator color={theme.textInverse} />
-            ) : (
-              <T style={[styles.primaryLabel, { color: isReady ? theme.textInverse : theme.textTertiary }]}>
-                {tab === 'login' ? 'Log In' : 'Create Account'}
-              </T>
-            )}
+            <LinearGradient
+              colors={isReady ? theme.gradientWarm : [theme.inputBackground, theme.inputBackground]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.primaryBtn}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <T style={[styles.primaryLabel, { color: isReady ? '#fff' : theme.textTertiary }]}>
+                  {tab === 'login' ? 'Log In' : 'Create Account'}
+                </T>
+              )}
+            </LinearGradient>
           </Pressable>
 
           {/* Divider */}
@@ -444,8 +446,8 @@ const styles = StyleSheet.create({
   backBtn: { width: 36, alignItems: 'flex-start' },
   logoWrap: { alignItems: 'center' },
 
-  heading: { fontSize: 26, fontWeight: '800', textAlign: 'center' },
-  subheading: { fontSize: 14, textAlign: 'center', marginTop: 6, marginBottom: 28 },
+  heading: { fontSize: 28, fontFamily: DisplayFont.heavy, fontWeight: '800', textAlign: 'center' },
+  subheading: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', marginTop: 6, marginBottom: 28 },
 
   tabBar: {
     flexDirection: 'row',
@@ -466,7 +468,7 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  tabLabel: { fontSize: 15, fontWeight: '600' },
+  tabLabel: { fontSize: 15, fontFamily: DisplayFont.semibold, fontWeight: '600' },
 
   inputWrap: {
     flexDirection: 'row',
@@ -477,7 +479,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   inputIcon: { marginRight: 10 },
-  input: { flex: 1, fontSize: 16 },
+  input: { flex: 1, fontSize: 16, fontFamily: FontFamily.regular },
 
   errorBox: {
     flexDirection: 'row',
@@ -491,16 +493,16 @@ const styles = StyleSheet.create({
   errorText: { flex: 1, fontSize: 13, lineHeight: 18 },
 
   forgotRow: { alignSelf: 'flex-end', marginBottom: 20, marginTop: -4 },
-  forgotText: { fontSize: 14, fontWeight: '600' },
+  forgotText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
 
+  primaryBtnWrap: { marginBottom: 20, borderRadius: 999 },
   primaryBtn: {
     height: 52,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
   },
-  primaryLabel: { fontSize: 16, fontWeight: '700' },
+  primaryLabel: { fontSize: 16, fontFamily: DisplayFont.bold, fontWeight: '700' },
 
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
   dividerLine: { flex: 1, height: 1 },
@@ -525,11 +527,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#4285F4',
   },
   googleIconText: { fontSize: 13, fontWeight: '800', color: '#fff' },
-  googleLabel: { fontSize: 16, fontWeight: '600' },
+  googleLabel: { fontSize: 16, fontFamily: DisplayFont.semibold, fontWeight: '600' },
 
   switchRow: { alignItems: 'center', marginBottom: 20 },
   switchText: { fontSize: 14, textAlign: 'center' },
-  switchLink: { fontWeight: '700' },
+  switchLink: { fontFamily: FontFamily.bold, fontWeight: '700' },
 
   legalText: { fontSize: 12, textAlign: 'center', lineHeight: 18 },
 });

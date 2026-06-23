@@ -3,7 +3,7 @@ import { Pressable, View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '../theme';
+import { useTheme, FontFamily, DisplayFont } from '../theme';
 import { planBadgeColor, labelize } from '../lib/format';
 import type { UserCard } from '../types/api';
 
@@ -51,14 +51,14 @@ function UserCardTileBase({
         </View>
       )}
 
-      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.8)']} style={styles.shade} />
+      <LinearGradient colors={theme.scrim} style={styles.shade} />
 
       {/* Top-right indicators */}
       <View style={styles.topRight}>
         {!!card.rightNowStatus && (
-          <View style={[styles.iconBadge, { backgroundColor: theme.planPremium }]}>
-            <Ionicons name="water" size={11} color="#fff" />
-          </View>
+          <LinearGradient colors={theme.gradientWarm} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.iconBadge}>
+            <Ionicons name="flame" size={11} color="#fff" />
+          </LinearGradient>
         )}
         {card.boosted && (
           <View style={[styles.iconBadge, { backgroundColor: theme.online }]}>
@@ -114,20 +114,20 @@ function UserCardTileBase({
 export const UserCardTile = React.memo(UserCardTileBase);
 
 const styles = StyleSheet.create({
-  tile: { overflow: 'hidden' },
+  tile: { overflow: 'hidden', borderRadius: 16 },
   noPhoto: { alignItems: 'center', justifyContent: 'center' },
-  shade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%' },
-  topRight: { position: 'absolute', top: 6, right: 6, flexDirection: 'row', gap: 4 },
-  topLeft: { position: 'absolute', top: 6, left: 6, flexDirection: 'row', gap: 4 },
+  shade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '70%' },
+  topRight: { position: 'absolute', top: 7, right: 7, flexDirection: 'row', gap: 4 },
+  topLeft: { position: 'absolute', top: 7, left: 7, flexDirection: 'row', gap: 4 },
   iconBadge: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  bottom: { position: 'absolute', left: 6, right: 6, bottom: 6 },
+  bottom: { position: 'absolute', left: 8, right: 8, bottom: 8 },
   nameRow: { flexDirection: 'row', alignItems: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 },
-  name: { color: '#fff', fontSize: 13, fontWeight: '700', flexShrink: 1, textShadowColor: '#000', textShadowRadius: 4 },
+  name: { color: '#fff', fontSize: 14, fontFamily: DisplayFont.bold, fontWeight: '700', flexShrink: 1, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 5 },
   tick: { marginLeft: 3 },
   metaRow: { marginTop: 1 },
-  meta: { color: '#E0E0E0', fontSize: 10, textShadowColor: '#000', textShadowRadius: 3 },
-  chips: { flexDirection: 'row', gap: 3, marginTop: 4 },
-  chip: { backgroundColor: 'rgba(255,255,255,0.22)', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1, maxWidth: '60%' },
-  chipText: { color: '#fff', fontSize: 9, fontWeight: '600' },
+  meta: { color: '#F2E6DC', fontSize: 11, fontFamily: FontFamily.medium, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 3 },
+  chips: { flexDirection: 'row', gap: 3, marginTop: 5 },
+  chip: { backgroundColor: 'rgba(255,255,255,0.22)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, maxWidth: '60%' },
+  chipText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.semibold, fontWeight: '600' },
 });

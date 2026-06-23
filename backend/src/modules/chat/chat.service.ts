@@ -7,6 +7,7 @@ import { todayKey } from '../../utils/crypto';
 import { moderation } from '../../adapters/moderation';
 import { callFlags as computeCallFlags } from '../../utils/callFlags';
 import { emitToConversation } from '../../realtime/emitter';
+import { signUrl, signUrls } from '../../utils/signUrl';
 
 const SECONDS_IN_DAY = 86400;
 const FREE_TIER_INTERACTION_LIMIT = 20;
@@ -61,6 +62,7 @@ export function serializeMessage(msg: any) {
     mediaUrls:  msg.mediaUrls ?? [],
     mediaUrl:   msg.mediaUrl ?? null,
     viewOnce:   msg.viewOnce,
+    viewedAt:   msg.viewedAt ?? null,
     expiresInSeconds: msg.expiresInSeconds,
     expiresAfterView: msg.expiresAfterView ?? (msg.type === 'expiring_photo'),
     isUnsent:   msg.isUnsent ?? false,
@@ -71,6 +73,24 @@ export function serializeMessage(msg: any) {
     readAt:     msg.readAt ?? null,
     createdAt:  msg.createdAt,
   };
+}
+
+function isExpiringViewOnce(msg: { type: string; viewOnce?: boolean }) {
+  return msg.type === 'expiring_photo' || (msg.type === 'photo' && msg.viewOnce);
+}
+
+/** Sign media URLs and redact view-once content for recipients who haven't opened yet. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function serializeMessageForViewer(msg: any, viewerId: string) {
+  const base = serializeMessage(msg);
+  const isRecipient = msg.senderId !== viewerId;
+  const hideMedia = isExpiringViewOnce(msg) && isRecipient && !msg.viewedAt;
+
+  const rawUrls: string[] = hideMedia ? [] : (msg.mediaUrls ?? []);
+  const signed = (await signUrls(rawUrls)).filter((u): u is string => !!u);
+  const mediaUrl = signed[0] ?? (hideMedia ? null : await signUrl(msg.mediaUrl));
+
+  return { ...base, mediaUrls: signed, mediaUrl };
 }
 
 /** Record a unique interaction for the free-tier lifetime cap. No-op for paid users. */
@@ -128,14 +148,31 @@ export async function startOrGetConversation(senderId: string, receiverId: strin
 export { computeCallFlags as callFlags };
 
 export async function listConversations(userId: string, folder: 'inbox' | 'requests') {
+  const visibility = {
+    OR: [
+      { userAId: userId, aIsHidden: false, aDeletedAt: null },
+      { userBId: userId, bIsHidden: false, bDeletedAt: null },
+    ],
+  };
+
   const conversations = await prisma.conversation.findMany({
     where: {
-      OR: [
-        { userAId: userId, aIsHidden: false, aDeletedAt: null },
-        { userBId: userId, bIsHidden: false, bDeletedAt: null },
+      AND: [
+        visibility,
+        folder === 'requests'
+          ? { state: 'pending', initiatorId: { not: userId } }
+          : {
+              OR: [
+                { state: 'active' },
+                // Initiator's outbound threads (e.g. first message from profile view)
+                {
+                  state: 'pending',
+                  initiatorId: userId,
+                  messages: { some: { deletedAt: null } },
+                },
+              ],
+            },
       ],
-      state: folder === 'requests' ? 'pending' : 'active',
-      ...(folder === 'requests' ? { initiatorId: { not: userId } } : {}),
     },
     orderBy: { lastMessageAt: 'desc' },
     include: {
@@ -194,7 +231,7 @@ export async function listConversations(userId: string, folder: 'inbox' | 'reque
   }));
 }
 
-export async function listMessages(conversationId: string, before: Date | undefined, limit: number) {
+export async function listMessages(conversationId: string, before: Date | undefined, limit: number, viewerId: string) {
   const raw = await prisma.message.findMany({
     where: {
       conversationId,
@@ -206,10 +243,11 @@ export async function listMessages(conversationId: string, before: Date | undefi
   });
 
   const hasMore = raw.length > limit;
-  const messages = hasMore ? raw.slice(0, limit) : raw;
-  const nextCursor = hasMore ? messages[messages.length - 1].createdAt.toISOString() : null;
+  const slice = hasMore ? raw.slice(0, limit) : raw;
+  const nextCursor = hasMore ? slice[slice.length - 1].createdAt.toISOString() : null;
+  const messages = await Promise.all(slice.map((m) => serializeMessageForViewer(m, viewerId)));
 
-  return { messages: messages.map(serializeMessage), hasMore, nextCursor };
+  return { messages, hasMore, nextCursor };
 }
 
 export async function sendMessage(
@@ -362,7 +400,7 @@ export async function sendMessage(
   }
 
   return {
-    message: serializeMessage(message),
+    message: await serializeMessageForViewer(message, senderId),
     convo: { ...convo, ...replyUpdate },
     peerId,
     peerPlan: peer?.plan ?? 'free',
@@ -487,10 +525,13 @@ export async function unpinConversation(conversationId: string, userId: string) 
 export async function consumeExpiringPhoto(messageId: string, viewerId: string) {
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
   if (!msg) throw Errors.notFound('Message not found');
-  if (msg.type !== 'expiring_photo') throw Errors.badRequest('Not an expiring photo');
+  if (!isExpiringViewOnce(msg)) throw Errors.badRequest('Not an expiring photo');
   if (msg.senderId === viewerId) throw Errors.forbidden('Sender cannot view their own expiring photo');
   if (msg.viewedAt) throw Errors.conflict('Already viewed');
-  return prisma.message.update({ where: { id: messageId }, data: { viewedAt: new Date() } });
+  const updated = await prisma.message.update({ where: { id: messageId }, data: { viewedAt: new Date() } });
+  const path = (updated.mediaUrls ?? [])[0] ?? updated.mediaUrl;
+  const url = path ? await signUrl(path) : null;
+  return { ...updated, url };
 }
 
 // Saved phrases

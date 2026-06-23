@@ -9,16 +9,19 @@ import {
   StyleSheet,
   ScrollView,
 } from 'react-native';
-import { colors, font, radius, spacing } from '../theme';
+import { colors, font, radius, spacing, FontFamily, DisplayFont } from '../theme';
 
-/** Themed text with sensible defaults (white, system sans). */
+/** Themed text with sensible defaults (warm off-white, Plus Jakarta Sans body). */
 export function T(props: TextProps & { muted?: boolean; dim?: boolean }) {
   const { style, muted, dim, ...rest } = props;
   return (
     <Text
       {...rest}
       style={[
-        { color: muted ? colors.textMuted : dim ? colors.textSecondary : colors.text },
+        {
+          color: muted ? colors.textMuted : dim ? colors.textSecondary : colors.text,
+          fontFamily: FontFamily.regular,
+        },
         style,
       ]}
     />
@@ -107,6 +110,7 @@ export const styles = StyleSheet.create({
   },
   pillText: {
     fontSize: font.size.lg,
+    fontFamily: DisplayFont.bold,
     fontWeight: font.weight.bold as any,
   },
   chipRow: {
@@ -123,7 +127,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipActive: { backgroundColor: colors.chipActive },
-  chipText: { color: colors.text, fontSize: font.size.md, fontWeight: '600' },
+  chipText: { color: colors.text, fontSize: font.size.md, fontFamily: FontFamily.semibold, fontWeight: '600' },
   chipTextActive: { color: colors.black },
 });
 

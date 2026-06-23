@@ -37,6 +37,7 @@
         "android.permission.ACCESS_FINE_LOCATION"
       ],
       "package": "com.nearme.app",
+      "softwareKeyboardLayoutMode": "resize",
       "googleServicesFile": "./google-services.json"
     },
     "web": {

@@ -49,6 +49,47 @@ const ACTIVITY: GatedToggle[] = [
 const AGE_MIN = 18, AGE_MAX = 99;
 const HT_MIN = 140, HT_MAX = 220;
 
+/**
+ * A self-contained slider + live label. It keeps the dragging value in its OWN
+ * local state so a drag only re-renders this row — not the whole Filters screen
+ * (which is what made every slider feel laggy and "refresh" the others). The
+ * parent's heavier state is updated once, on release, via onCommit.
+ */
+function SliderRow({
+  label,
+  min,
+  max,
+  step,
+  initial,
+  formatValue,
+  onCommit,
+  topGap,
+  hint,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step?: number;
+  initial: number[];
+  formatValue: (v: number[]) => string;
+  onCommit: (v: number[]) => void;
+  topGap?: number;
+  hint?: string;
+}) {
+  const { theme } = useTheme();
+  const [vals, setVals] = useState(initial);
+  return (
+    <>
+      <View style={[styles.rowBetween, topGap ? { marginTop: topGap } : null]}>
+        <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>{label}</Text>
+        <Text style={[styles.rowValue, { color: theme.textSecondary }]}>{formatValue(vals)}</Text>
+      </View>
+      <RangeSlider min={min} max={max} step={step} values={vals} onChange={setVals} onSlidingComplete={onCommit} />
+      {hint ? <Text style={[styles.hint, { color: theme.textTertiary }]}>{hint}</Text> : null}
+    </>
+  );
+}
+
 export default function Filters() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -182,20 +223,26 @@ export default function Filters() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
         {/* BASIC */}
         <Section title="BASIC">
-          <View style={styles.rowBetween}>
-            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Distance</Text>
-            <Text style={[styles.rowValue, { color: theme.textSecondary }]}>
-              {radiusKm >= maxRadiusKm ? `${maxRadiusKm}+ km` : `${radiusKm.toFixed(1)} km`}
-            </Text>
-          </View>
-          <RangeSlider min={0.5} max={maxRadiusKm} step={0.5} values={[radiusKm]} onChange={(n) => setRadiusKm(n[0])} />
-          {!isGold && <Text style={[styles.hint, { color: theme.textTertiary }]}>Up to 100 km with Gold+</Text>}
+          <SliderRow
+            label="Distance"
+            min={0.5}
+            max={maxRadiusKm}
+            step={0.5}
+            initial={[radiusKm]}
+            formatValue={(v) => (v[0] >= maxRadiusKm ? `${maxRadiusKm}+ km` : `${v[0].toFixed(1)} km`)}
+            onCommit={(v) => setRadiusKm(v[0])}
+            hint={!isGold ? 'Up to 100 km with Gold+' : undefined}
+          />
 
-          <View style={[styles.rowBetween, { marginTop: 22 }]}>
-            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Age range</Text>
-            <Text style={[styles.rowValue, { color: theme.textSecondary }]}>{age[0]} – {age[1] >= AGE_MAX ? '99+' : age[1]}</Text>
-          </View>
-          <RangeSlider min={AGE_MIN} max={AGE_MAX} values={age} onChange={setAge} />
+          <SliderRow
+            label="Age range"
+            min={AGE_MIN}
+            max={AGE_MAX}
+            initial={age}
+            topGap={22}
+            formatValue={(v) => `${v[0]} – ${v[1] >= AGE_MAX ? '99+' : v[1]}`}
+            onCommit={setAge}
+          />
 
           <Text style={[styles.subLabel, { color: theme.textPrimary, marginTop: 22 }]}>Sort by</Text>
           <View style={styles.chips}>
@@ -212,11 +259,14 @@ export default function Filters() {
 
         {/* BODY */}
         <Section title="BODY">
-          <View style={styles.rowBetween}>
-            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Height</Text>
-            <Text style={[styles.rowValue, { color: theme.textSecondary }]}>{height[0]} – {height[1]} cm</Text>
-          </View>
-          <RangeSlider min={HT_MIN} max={HT_MAX} values={height} onChange={setHeight} />
+          <SliderRow
+            label="Height"
+            min={HT_MIN}
+            max={HT_MAX}
+            initial={height}
+            formatValue={(v) => `${v[0]} – ${v[1]} cm`}
+            onCommit={setHeight}
+          />
           <Text style={[styles.subLabel, { color: theme.textPrimary, marginTop: 22 }]}>Body type</Text>
           <Chips options={BODY_TYPES} selected={bodyType} onToggle={(v) => setBodyType((p) => toggleIn(p, v))} />
         </Section>

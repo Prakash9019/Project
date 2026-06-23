@@ -3,7 +3,7 @@ import { gcs } from '../adapters/gcs';
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000; // 15 min
 
 /**
- * Signs a GCS path for client-safe delivery.
+ * Signs a storage object path for client-safe delivery.
  * Returns null if the path is falsy (no photo uploaded yet).
  */
 export async function signUrl(path: string | null | undefined): Promise<string | null> {
@@ -13,7 +13,7 @@ export async function signUrl(path: string | null | undefined): Promise<string |
   return gcs.getSignedUrl(path, SIGNED_URL_TTL_MS);
 }
 
-/** Sign an array of GCS paths in parallel, preserving order. */
+/** Sign an array of storage paths in parallel, preserving order. */
 export async function signUrls(paths: (string | null | undefined)[]): Promise<(string | null)[]> {
   return Promise.all(paths.map(signUrl));
 }

@@ -108,6 +108,7 @@ export async function uploadVideoClip(req: Request, res: Response): Promise<void
 const UPLOAD_TYPE_CONFIG: Record<string, { folder: string; ext: string; contentType: string }> = {
   photo:       { folder: 'profile-photos', ext: 'jpg',  contentType: 'image/jpeg' },
   album_photo: { folder: 'album-photos',   ext: 'jpg',  contentType: 'image/jpeg' },
+  chat_photo:  { folder: 'chat-photos',    ext: 'jpg',  contentType: 'image/jpeg' },
   voice_clip:  { folder: 'voice-clips',    ext: 'm4a',  contentType: 'audio/mp4' },
   video_clip:  { folder: 'video-clips',    ext: 'mp4',  contentType: 'video/mp4' },
 };

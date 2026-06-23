@@ -642,6 +642,60 @@ async function seedRelationships() {
     ],
     skipDuplicates: true,
   });
+
+  const rnExpires = (hours: number) => new Date(Date.now() + hours * 3600_000);
+  const rnJoined = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000);
+
+  await prisma.user.updateMany({
+    where: { id: { in: [IDS.priya, IDS.rohan, IDS.ananya, IDS.meera, IDS.arjun] } },
+    data: { rightNowStatus: null, rightNowCategory: null, rightNowExpiresAt: null },
+  });
+
+  await prisma.user.update({
+    where: { id: IDS.priya },
+    data: {
+      rightNowStatus: 'Looking for coffee near Bandra ☕',
+      rightNowCategory: 'coffee',
+      rightNowExpiresAt: rnExpires(2),
+      updatedAt: rnJoined(15),
+    },
+  });
+  await prisma.user.update({
+    where: { id: IDS.rohan },
+    data: {
+      rightNowStatus: 'Hosting drinks tonight — rooftop vibes',
+      rightNowCategory: 'drinks',
+      rightNowExpiresAt: rnExpires(4),
+      updatedAt: rnJoined(41),
+    },
+  });
+  await prisma.user.update({
+    where: { id: IDS.ananya },
+    data: {
+      rightNowStatus: 'Hello 👋 free to meet right now',
+      rightNowCategory: 'hangout',
+      rightNowExpiresAt: rnExpires(1),
+      updatedAt: rnJoined(8),
+    },
+  });
+  await prisma.user.update({
+    where: { id: IDS.meera },
+    data: {
+      rightNowStatus: 'Bookstore hop + chai?',
+      rightNowCategory: 'coffee',
+      rightNowExpiresAt: rnExpires(3),
+      updatedAt: rnJoined(22),
+    },
+  });
+  await prisma.user.update({
+    where: { id: IDS.arjun },
+    data: {
+      rightNowStatus: 'Gym session — join for a workout',
+      rightNowCategory: 'workout',
+      rightNowExpiresAt: rnExpires(2),
+      updatedAt: rnJoined(55),
+    },
+  });
 }
 
 async function main() {
@@ -664,7 +718,7 @@ async function main() {
   }
 
   await seedRelationships();
-  console.log('  ✓ conversations, taps, views, favorites, albums');
+  console.log('  ✓ conversations, taps, views, favorites, albums, right-now');
 
   console.log('\n✅ Seed complete!\n');
   console.log('── Log in (app or API) — all @nearme.dev accounts ──');

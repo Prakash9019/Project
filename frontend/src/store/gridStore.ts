@@ -20,6 +20,8 @@ interface GridState {
   fetchMore: (query: Omit<GridQuery, 'limit' | 'offset'>) => Promise<void>;
   /** Hydrate the grid from the last cached page (offline support). */
   hydrateCache: () => Promise<void>;
+  /** Keep grid like/shortlist flags in sync when toggled on a profile. */
+  patchCard: (userId: string, patch: Partial<UserCard>) => void;
 }
 
 const PAGE = 20;
@@ -86,5 +88,11 @@ export const useGridStore = create<GridState>((set, get) => ({
       const cards = JSON.parse(cached) as UserCard[];
       set({ cards, total: cards.length, offset: cards.length });
     }
+  },
+
+  patchCard: (userId, patch) => {
+    set({
+      cards: get().cards.map((c) => (c.id === userId ? { ...c, ...patch } : c)),
+    });
   },
 }));

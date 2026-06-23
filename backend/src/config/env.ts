@@ -68,6 +68,14 @@ export const env = {
 
   mediaBaseUrl: process.env.MEDIA_BASE_URL ?? '',
 
+  r2: {
+    accountId:     process.env.R2_ACCOUNT_ID ?? '',
+    accessKeyId:   process.env.R2_ACCESS_KEY_ID ?? '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? '',
+    bucket:        process.env.R2_BUCKET_NAME ?? '',
+    endpoint:      process.env.R2_ENDPOINT ?? '',
+  },
+
   webrtc: {
     stunUrls: (process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
     turnUrl: process.env.TURN_URL ?? '',
@@ -101,12 +109,6 @@ export const env = {
     region:          process.env.AWS_REGION ?? 'ap-south-1',
     accessKeyId:     process.env.AWS_ACCESS_KEY_ID ?? '',
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
-  },
-
-  gcs: {
-    projectId:      process.env.GCS_PROJECT_ID ?? '',
-    bucket:         process.env.GCS_BUCKET ?? '',
-    keyFilename:    process.env.GCS_KEY_FILENAME ?? '',
   },
 
   anthropic: {
@@ -150,7 +152,7 @@ export const env = {
 const REQUIRED = [
   'DATABASE_URL', 'REDIS_URL', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET',
   'RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'AGORA_APP_ID', 'AGORA_APP_CERTIFICATE',
-  'GCS_BUCKET_NAME', 'GCS_SERVICE_ACCOUNT_KEY',
+  'R2_BUCKET_NAME', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ENDPOINT',
 ];
 // Firebase vars validated lazily by the adapter on first call
 const OPTIONAL_WARN_FIREBASE = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];

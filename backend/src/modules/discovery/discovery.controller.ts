@@ -81,8 +81,21 @@ export async function sendTap(req: Request, res: Response): Promise<void> {
   ]);
 
   const senderCard = sender ? serializeGridCard(sender, 0, false, false) : null;
-  emitToUser(receiverId, 'tap.received', { tapId: tap.id, senderId, senderCard, createdAt: tap.createdAt });
+  emitToUser(receiverId, 'tap.received', {
+    tapId: tap.id,
+    senderId,
+    senderCard,
+    createdAt: tap.createdAt.toISOString(),
+  });
   res.status(201).json({ id: tap.id });
+}
+
+export async function removeTap(req: Request, res: Response): Promise<void> {
+  const senderId = req.user!.sub;
+  const parsedReceiverId = uuidParam.safeParse(req.params.userId);
+  if (!parsedReceiverId.success) { res.status(400).json({ error: 'validation_error', message: 'Invalid ID format' }); return; }
+  await prisma.tap.deleteMany({ where: { senderId, receiverId: parsedReceiverId.data } });
+  res.status(204).send();
 }
 
 export async function receivedTaps(req: Request, res: Response): Promise<void> {
@@ -193,6 +206,8 @@ export async function rightNowFeed(req: Request, res: Response): Promise<void> {
       rightNowStatus: u.rightNowStatus,
       rightNowCategory: u.rightNowCategory,
       rightNowExpiresAt: u.rightNowExpiresAt,
+      rightNowJoinedAt: u.updatedAt,
+      distanceMeters: distanceById.get(u.id) ?? null,
     }));
 
   res.status(200).json({ statuses, total: statuses.length });

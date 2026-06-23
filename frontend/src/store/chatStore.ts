@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ConversationSummary } from '../types/api';
 import { listConversations, ApiError } from '../services/api';
 
-const CACHE_KEY = 'cache_conversations';
+const CACHE_KEY = 'cache_conversations_v2';
 
 interface ChatState {
   conversations: ConversationSummary[];
@@ -13,7 +13,7 @@ interface ChatState {
   fetchConversations: (folder?: 'inbox' | 'requests', refreshing?: boolean) => Promise<void>;
   /** Apply a new/updated last message + bump unread (from socket message.created). */
   applyIncomingMessage: (conversationId: string, lastMessage: string, fromSelf: boolean) => void;
-  /** Reset unread count for a conversation (when opened). */
+  upsertConversation: (convo: ConversationSummary) => void;
   markRead: (conversationId: string) => void;
 }
 
@@ -44,8 +44,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   applyIncomingMessage: (conversationId, lastMessage, fromSelf) => {
+    const list = get().conversations;
+    const idx = list.findIndex((c) => c.id === conversationId);
+    if (idx === -1) {
+      // Unknown thread — pull fresh inbox from server.
+      get().fetchConversations('inbox', true).catch(() => {});
+      return;
+    }
     set({
-      conversations: get().conversations.map((c) =>
+      conversations: list.map((c) =>
         c.id === conversationId
           ? {
               ...c,
@@ -56,6 +63,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : c
       ),
     });
+  },
+
+  upsertConversation: (convo) => {
+    const rest = get().conversations.filter(
+      (c) => c.id !== convo.id && c.peer?.id !== convo.peer?.id
+    );
+    set({ conversations: [convo, ...rest] });
   },
 
   markRead: (conversationId) => {

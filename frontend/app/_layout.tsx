@@ -1,10 +1,27 @@
 import '@react-native-firebase/app';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { View } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import {
+  useFonts,
+  Outfit_400Regular,
+  Outfit_500Medium,
+  Outfit_600SemiBold,
+  Outfit_700Bold,
+  Outfit_800ExtraBold,
+} from '@expo-google-fonts/outfit';
+import {
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+} from '@expo-google-fonts/plus-jakarta-sans';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { setOnAuthFailure } from '../src/services/auth';
 import { useAuthStore } from '../src/store/authStore';
@@ -59,11 +76,36 @@ function RootStack() {
   );
 }
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({
+    Outfit_400Regular,
+    Outfit_500Medium,
+    Outfit_600SemiBold,
+    Outfit_700Bold,
+    Outfit_800ExtraBold,
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+  });
+
+  const onReady = useCallback(() => {
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
+
+  // Gate render on fonts so text never flashes in the system face. Still render
+  // (and hide the splash) if font loading errors, so the app is never stuck.
+  if (!fontsLoaded && !fontError) return null;
+
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <RootStack />
+        <View style={{ flex: 1 }} onLayout={onReady}>
+          <RootStack />
+        </View>
       </ThemeProvider>
     </ErrorBoundary>
   );

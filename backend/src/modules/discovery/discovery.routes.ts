@@ -16,6 +16,7 @@ router.delete('/favorites/:userId', asyncHandler(c.removeFavorite));
 // Taps
 router.post('/taps', validate(c.tapSchema), asyncHandler(c.sendTap));
 router.get('/taps', asyncHandler(c.receivedTaps));
+router.delete('/taps/:userId', asyncHandler(c.removeTap));
 
 // Viewed me (premium)
 router.get('/views', premiumFeature('viewed_me'), asyncHandler(c.viewedMe));

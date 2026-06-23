@@ -269,6 +269,10 @@ export interface RightNowCard extends UserCard {
   rightNowStatus: string | null;
   rightNowCategory: RightNowCategory | null;
   rightNowExpiresAt: string | null;
+  /** When they posted their current status (server: user.updatedAt). */
+  rightNowJoinedAt?: string | null;
+  /** Raw distance in metres for client-side sorting. */
+  distanceMeters?: number | null;
 }
 
 /** A profile prompt (Q&A card). */
@@ -436,6 +440,8 @@ export interface AlbumPhoto {
   id: string;
   /** Signed GCS URL (15 min expiry). Backend serializes this field as `url`. */
   url: string;
+  /** Raw GCS path — present on own-album detail responses for sharing in chat. */
+  path?: string;
   order: number;
   createdAt: string;
 }

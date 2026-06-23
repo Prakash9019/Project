@@ -54,8 +54,11 @@ export async function createSubscription(req: Request, res: Response): Promise<v
       'EX', PENDING_ORDER_TTL,
     );
     res.status(201).json({
-      orderId: order.id, amount, currency: 'INR',
-      paymentProvider: 'razorpay', key: env.payments.razorpayKeyId,
+      orderId: order.id,
+      amount: order.amount,
+      currency: 'INR',
+      paymentProvider: 'razorpay',
+      key: env.payments.razorpayKeyId,
     });
   } else {
     const intent = await stripe.createPaymentIntent(amount);

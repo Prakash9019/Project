@@ -75,7 +75,7 @@ export function createApp(): Application {
   });
 
   app.get('/health/ready', async (_req, res) => {
-    const checks = { db: false, redis: false, gcs: false };
+    const checks = { db: false, redis: false, storage: false };
 
     await Promise.allSettled([
       Promise.race([
@@ -87,8 +87,11 @@ export function createApp(): Application {
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000)),
       ]).catch(() => {}),
       Promise.race([
-        // Lightweight GCS check — just verify the Storage client can be constructed
-        Promise.resolve().then(() => { checks.gcs = true; }),
+        // R2/S3 credentials present — full connectivity verified on first upload
+        Promise.resolve().then(() => {
+          const { r2Configured } = require('./adapters/r2') as typeof import('./adapters/r2');
+          checks.storage = r2Configured;
+        }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
       ]).catch(() => {}),
     ]);

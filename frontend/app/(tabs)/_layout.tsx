@@ -2,14 +2,14 @@ import { Tabs } from 'expo-router';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from '../../src/theme';
+import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 // Modern dating-app navigation: solid glyphs when active, outline when inactive.
 const TABS = [
   { name: 'index', label: 'Browse', active: 'grid', inactive: 'grid-outline' },
-  { name: 'right-now', label: 'Right Now', active: 'flash', inactive: 'flash-outline' },
+  { name: 'right-now', label: 'Right Now', active: 'water', inactive: 'water-outline' },
   { name: 'interest', label: 'Interest', active: 'heart', inactive: 'heart-outline' },
   { name: 'inbox', label: 'Inbox', active: 'chatbubble-ellipses', inactive: 'chatbubble-ellipses-outline' },
   { name: 'store', label: 'Store', active: 'diamond', inactive: 'diamond-outline' },
@@ -45,7 +45,14 @@ function CustomTabBar({ state, navigation }: any) {
               <View style={s.iconWrap}>
                 <TabIcon name={route.name} color={color} active={active} />
               </View>
-              <Text style={[s.label, { color, fontWeight: active ? '700' : '600' }]}>{meta.label}</Text>
+              <Text
+                style={[
+                  s.label,
+                  { color, fontFamily: active ? DisplayFont.bold : FontFamily.semibold },
+                ]}
+              >
+                {meta.label}
+              </Text>
             </Pressable>
           );
         })}
@@ -73,5 +80,5 @@ const s = StyleSheet.create({
   bar: { flexDirection: 'row', borderTopWidth: 1, paddingTop: 8 },
   tab: { flex: 1, alignItems: 'center', gap: 3 },
   iconWrap: { height: 28, justifyContent: 'center' },
-  label: { fontSize: 11, fontWeight: '600' },
+  label: { fontSize: 11 },
 });

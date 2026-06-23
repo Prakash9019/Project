@@ -1,14 +1,30 @@
 /**
- * NearMe centralized typography. Swap the FontFamily strings only when a custom
- * font is added via expo-font — nothing else changes.
+ * NearMe centralized typography — "Golden Hour".
+ *
+ * Display:  Outfit            (rounded, warm geometric — headings, names, CTAs)
+ * Body:     Plus Jakarta Sans (clean, friendly — paragraphs, labels, inputs)
+ *
+ * Font keys below MUST match the names registered via expo-font in
+ * app/_layout.tsx. Use `FontFamily.*` for body text and `DisplayFont.*` for
+ * headings/titles/CTAs. Never hardcode a font string in a component.
  */
 
+// Body — Plus Jakarta Sans
 export const FontFamily = {
-  regular: 'System',
-  medium: 'System',
-  semibold: 'System',
-  bold: 'System',
-  heavy: 'System',
+  regular: 'PlusJakartaSans_400Regular',
+  medium: 'PlusJakartaSans_500Medium',
+  semibold: 'PlusJakartaSans_600SemiBold',
+  bold: 'PlusJakartaSans_700Bold',
+  heavy: 'PlusJakartaSans_800ExtraBold',
+};
+
+// Display — Outfit
+export const DisplayFont = {
+  regular: 'Outfit_400Regular',
+  medium: 'Outfit_500Medium',
+  semibold: 'Outfit_600SemiBold',
+  bold: 'Outfit_700Bold',
+  heavy: 'Outfit_800ExtraBold',
 };
 
 export const FontSize = {

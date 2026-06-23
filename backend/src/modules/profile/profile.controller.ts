@@ -7,7 +7,7 @@ import { Errors } from '../../utils/httpError';
 import { uuidParam } from '../../utils/validators';
 import { isValidLat, isValidLng, fuzzyCoordinates } from '../../utils/geo';
 import { hashPin, verifyPin } from '../../utils/crypto';
-import { serializeSelf, serializePublicProfile, serializeSettings } from './profile.serializer';
+import { serializeSelf, serializePublicProfile, serializeSettings, serializeGridCard } from './profile.serializer';
 import {
   MAX_TRIBES, MAX_TAGS, MAX_DATING_INTENTIONS,
   TOP_PROMPTS, TRIBES, BODY_TYPES, DATING_INTENTIONS,
@@ -16,8 +16,7 @@ import {
 } from './catalogs';
 import { recomputeCompletenessScore } from '../../utils/profileScore';
 import { moderateImage } from '../../services/imageModeration';
-
-// ── Schemas ──────────────────────────────────────────────
+import { emitToUser } from '../../realtime/emitter';
 
 export const updateProfileSchema = z.object({
   name:               z.string().min(1).max(60).optional(),
@@ -253,19 +252,62 @@ export async function getPublicProfile(req: Request, res: Response): Promise<voi
       where: { id: userId },
       include: { photos: { orderBy: { order: 'asc' } }, prompts: { orderBy: { order: 'asc' } } },
     }),
-    prisma.user.findUnique({ where: { id: viewerId }, select: { interests: true, topArtists: true, tribes: true, settings: true } }),
+    prisma.user.findUnique({
+      where: { id: viewerId },
+      select: {
+        incognitoMode: true,
+        interests: true,
+        topArtists: true,
+        tribes: true,
+        settings: true,
+      },
+    }),
   ]);
   if (!user) throw Errors.notFound('Profile not found');
 
-  if (!viewer?.settings?.incognito && viewerId !== userId) {
-    await prisma.profileView.upsert({
+  const viewerIncognito = viewer?.incognitoMode || viewer?.settings?.incognito;
+  if (!viewerIncognito && viewerId !== userId) {
+    const now = new Date();
+    const view = await prisma.profileView.upsert({
       where: { viewerId_viewedId: { viewerId, viewedId: userId } },
-      update: { createdAt: new Date() },
-      create: { viewerId, viewedId: userId },
+      update: { createdAt: now },
+      create: { viewerId, viewedId: userId, createdAt: now },
     });
+
+    const viewerCardUser = await prisma.user.findUnique({
+      where: { id: viewerId },
+      include: {
+        photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },
+        settings: true,
+        cityProfiles: { where: { isActive: true }, take: 1 },
+      },
+    });
+    if (viewerCardUser) {
+      emitToUser(userId, 'profile.viewed', {
+        viewId: view.id,
+        viewerId,
+        viewerCard: serializeGridCard(viewerCardUser, 0, false, false),
+        viewedAt: view.createdAt.toISOString(),
+      });
+    }
   }
 
-  res.status(200).json(serializePublicProfile(user, viewer));
+  // Surface the viewer's own like (tap) / shortlist (favorite) state so the
+  // profile screen can render Fire/Star as active and stay in sync with the grid.
+  const [tap, favorite] = await Promise.all([
+    prisma.tap.findUnique({
+      where: { senderId_receiverId: { senderId: viewerId, receiverId: userId } },
+      select: { id: true },
+    }),
+    prisma.favorite.findUnique({
+      where: { userId_favoriteId: { userId: viewerId, favoriteId: userId } },
+      select: { id: true },
+    }),
+  ]);
+
+  res.status(200).json(
+    serializePublicProfile(user, viewer, { isLiked: !!tap, isShortlisted: !!favorite }),
+  );
 }
 
 // ── Prompts ──────────────────────────────────────────────

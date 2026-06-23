@@ -13,6 +13,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:Prakash%40_2003Nearme@db.xgehqnqorlaxgigdxycr.supabase.co:5432/postgres
+      # Overrides REDIS_URL from backend/.env — must use the compose service name inside Docker
       REDIS_URL: redis://redis:6379
       NODE_ENV: development
     restart: unless-stopped
