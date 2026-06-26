@@ -79,6 +79,12 @@ export const env = {
   webrtc: {
     stunUrls: (process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
     turnUrl: process.env.TURN_URL ?? '',
+    // Coturn `use-auth-secret` (TURN REST API): credentials are derived per-client
+    // from this shared secret via HMAC-SHA1. Preferred for production.
+    turnSecret: process.env.TURN_SECRET ?? '',
+    turnRealm: process.env.TURN_REALM ?? '',
+    turnTtlSeconds: num('TURN_TTL', 86400),
+    // Legacy static long-term credentials — only used if TURN_SECRET is unset.
     turnUsername: process.env.TURN_USERNAME ?? '',
     turnCredential: process.env.TURN_CREDENTIAL ?? '',
   },

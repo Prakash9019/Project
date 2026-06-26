@@ -1,7 +1,24 @@
 import { activityStatus, distanceLabel } from '../../utils/geo';
+import { signUrl } from '../../utils/signUrl';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type UserWithRelations = any;
+
+/**
+ * Signs all photo URLs in a user object in-place (returns a shallow clone).
+ * Must be called before any serializer so the returned URLs are client-safe
+ * signed R2 URLs rather than raw storage keys.
+ */
+export async function signUserPhotos<T extends { photos?: any[] }>(user: T): Promise<T> {
+  if (!user.photos?.length) return user;
+  const signed = await Promise.all(
+    user.photos.map(async (p: any) => ({
+      ...p,
+      url: (await signUrl(p.url)) ?? p.url,
+    }))
+  );
+  return { ...user, photos: signed };
+}
 
 function profileFields(user: UserWithRelations) {
   return {
@@ -45,6 +62,15 @@ export function serializeSelf(user: UserWithRelations) {
     phone: user.phone,
     phoneVerified: user.phoneVerified,
     ...profileFields(user),
+    // Identity / discovery answers from onboarding. These are kept out of the
+    // shared profileFields() so the public profile can gate orientation behind
+    // showOrientationPublicly — but the owner always sees their own answers,
+    // so edit-profile can pre-fill them after an app restart / re-login.
+    genderIdentity: user.genderIdentity ?? null,
+    genderIdentityOther: user.genderIdentityOther ?? null,
+    sexualOrientation: user.sexualOrientation ?? null,
+    wantToSee: user.wantToSee ?? [],
+    relationshipIntent: user.relationshipIntent ?? null,
     profilePhoto: primary?.url ?? null,
     primaryPhotoUrl: primaryPublished?.url ?? null,
     rightNowStatus: user.rightNowStatus ?? null,

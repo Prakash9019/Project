@@ -5,7 +5,7 @@ import { requireAuth, requireVerifiedPhone } from '../../middleware/auth';
 import { requirePlan } from '../../middleware/subscription';
 import * as c from './profile.controller';
 import * as media from './media.controller';
-import { viewUserAlbums } from '../albums/albums.controller';
+import { viewUserAlbums, viewUserAlbumDetail } from '../albums/albums.controller';
 
 const router = Router();
 router.use(requireAuth, requireVerifiedPhone);
@@ -39,6 +39,7 @@ router.get('/users/:userId', asyncHandler(c.getPublicProfile));
 
 // ── User albums (Change 7: view another user's public albums) ──
 router.get('/users/:userId/albums', asyncHandler(viewUserAlbums));
+router.get('/users/:userId/albums/:albumId', asyncHandler(viewUserAlbumDetail));
 
 // ── Media clips (Premium+) ───────────────────────────────
 router.post(

@@ -55,11 +55,17 @@ function refreshLastActive(userId: string): void {
   }).catch(() => {});
 }
 
-/** Requires the authenticated user to be verified (email via Firebase, or phone via legacy OTP). */
-export function requireVerifiedPhone(req: Request, _res: Response, next: NextFunction): void {
-  const verified = req.user?.emailVerified || req.user?.phoneVerified;
-  if (!verified) {
-    return next(Errors.forbidden('Account verification required'));
-  }
+/**
+ * Verification gate — DISABLED.
+ *
+ * Photo/face/email verification is no longer required to use the app. Firebase
+ * Auth already establishes a verified identity at sign-in, so this guard is now
+ * a pass-through: a valid Bearer token (enforced by `requireAuth`) is sufficient
+ * to access discovery, messaging, calls, Right Now, the store, etc.
+ *
+ * Kept as a named export (rather than removed from every route) so route
+ * registration stays unchanged and the gate can be re-enabled in one place.
+ */
+export function requireVerifiedPhone(_req: Request, _res: Response, next: NextFunction): void {
   next();
 }

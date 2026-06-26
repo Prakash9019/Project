@@ -224,6 +224,54 @@ export async function reorderPhotos(req: Request, res: Response): Promise<void> 
   res.status(200).json({ ok: true });
 }
 
+/** GET /api/v1/users/:userId/albums/:albumId — view a single album owned by another user. */
+export async function viewUserAlbumDetail(req: Request, res: Response): Promise<void> {
+  const viewerId = req.user!.sub;
+  const { userId, albumId } = req.params;
+  const cursor = req.query.cursor as string | undefined;
+  const limit = Math.min(Number(req.query.limit ?? 20), 100);
+
+  if (await isBlocked(viewerId, userId)) {
+    throw Errors.notFound('User not found');
+  }
+
+  const album = await prisma.album.findFirst({
+    where: { id: albumId, userId, deletedAt: null },
+    include: { coverPhoto: { select: { id: true, photoUrl: true } } },
+  });
+  if (!album) throw Errors.notFound('Album not found');
+
+  const photos = await prisma.albumPhoto.findMany({
+    where: { albumId, ...(cursor ? { id: { gt: cursor } } : {}) },
+    orderBy: [{ order: 'asc' }, { id: 'asc' }],
+    take: limit + 1,
+  });
+
+  const hasMore = photos.length > limit;
+  const page = hasMore ? photos.slice(0, limit) : photos;
+  const nextCursor = hasMore ? page[page.length - 1].id : null;
+
+  const signedPhotos = await Promise.all(
+    page.map(async (p) => ({
+      id: p.id,
+      url: await signUrl(p.photoUrl),
+      order: p.order,
+      createdAt: p.createdAt,
+    }))
+  );
+
+  res.status(200).json({
+    id: album.id,
+    title: album.title,
+    coverPhoto: album.coverPhoto
+      ? { id: album.coverPhoto.id, url: await signUrl(album.coverPhoto.photoUrl) }
+      : null,
+    photos: signedPhotos,
+    nextCursor,
+    hasMore,
+  });
+}
+
 /** GET /api/users/:userId/albums — view another user's albums (block-safe). */
 export async function viewUserAlbums(req: Request, res: Response): Promise<void> {
   const viewerId = req.user!.sub;

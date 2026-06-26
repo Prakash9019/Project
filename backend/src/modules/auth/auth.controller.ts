@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { Errors } from '../../utils/httpError';
-import { serializeSelf } from '../profile/profile.serializer';
+import { serializeSelf, signUserPhotos } from '../profile/profile.serializer';
 import { getCallLimits } from '../../utils/callLimits';
 import * as authService from './auth.service';
 import { logEvent } from '../../middleware/logger';
@@ -43,14 +43,14 @@ export async function firebaseLogin(req: Request, res: Response): Promise<void> 
 
   const { user, tokens, profileComplete, isNewUser } = await authService.loginWithFirebase(idToken);
   logEvent({ event: 'firebase_login_success', userId: user.id, plan: user.plan });
-  res.status(200).json({ ...tokens, profileComplete, isNewUser, user: serializeSelf(user) });
+  res.status(200).json({ ...tokens, profileComplete, isNewUser, user: serializeSelf(await signUserPhotos(user)) });
 }
 
 export async function devLogin(req: Request, res: Response): Promise<void> {
   const { email, password } = req.body as z.infer<typeof devLoginSchema>;
   const { user, tokens, profileComplete, isNewUser } = await authService.devLogin(email, password);
   logEvent({ event: 'dev_login_success', userId: user.id, plan: user.plan });
-  res.status(200).json({ ...tokens, profileComplete, isNewUser, user: serializeSelf(user) });
+  res.status(200).json({ ...tokens, profileComplete, isNewUser, user: serializeSelf(await signUserPhotos(user)) });
 }
 
 export async function refresh(req: Request, res: Response): Promise<void> {
@@ -84,5 +84,5 @@ export async function me(req: Request, res: Response): Promise<void> {
   if (!user) throw Errors.notFound('User not found');
   // callLimits: free-tier live call countdown (null for paid plans).
   const callLimits = await getCallLimits(user.id, user.plan);
-  res.status(200).json({ ...serializeSelf(user), callLimits });
+  res.status(200).json({ ...serializeSelf(await signUserPhotos(user)), callLimits });
 }

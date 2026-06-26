@@ -7,7 +7,8 @@ import { Errors } from '../../utils/httpError';
 import { uuidParam } from '../../utils/validators';
 import { isValidLat, isValidLng, fuzzyCoordinates } from '../../utils/geo';
 import { hashPin, verifyPin } from '../../utils/crypto';
-import { serializeSelf, serializePublicProfile, serializeSettings, serializeGridCard } from './profile.serializer';
+import { serializeSelf, serializePublicProfile, serializeSettings, serializeGridCard, signUserPhotos } from './profile.serializer';
+import { signUrl } from '../../utils/signUrl';
 import {
   MAX_TRIBES, MAX_TAGS, MAX_DATING_INTENTIONS,
   TOP_PROMPTS, TRIBES, BODY_TYPES, DATING_INTENTIONS,
@@ -58,9 +59,9 @@ export const updateProfileSchema = z.object({
   rightNowExpiresAt:  z.string().datetime().nullable().optional(),
 });
 
-// Change 3.2: profile photo is a single optional upload — no minimum requirement
+// Accepts either a full https:// URL or a raw R2 storage key (gcsPath).
 export const addPhotoSchema = z.object({
-  url:       z.string().url(),
+  url:       z.string().min(1),
   isPrimary: z.boolean().optional(),
   isPrivate: z.boolean().optional().default(false),
   albumId:   z.string().uuid().optional(),
@@ -143,7 +144,7 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
   });
   // Fire-and-forget: recompute completeness score after profile fields change
   recomputeCompletenessScore(userId).catch(() => {});
-  res.status(200).json(serializeSelf(updated));
+  res.status(200).json(serializeSelf(await signUserPhotos(updated)));
 }
 
 // Change 3.2: profile picture is a single optional upload — no min photo requirement
@@ -169,7 +170,8 @@ export async function addPhoto(req: Request, res: Response): Promise<void> {
     });
   });
   recomputeCompletenessScore(userId).catch(() => {});
-  res.status(201).json({ ...photo, pendingReview: !isPublished });
+  const signedPhotoUrl = await signUrl(photo.url) ?? photo.url;
+  res.status(201).json({ ...photo, url: signedPhotoUrl, pendingReview: !isPublished });
 }
 
 export async function setPrimaryPhoto(req: Request, res: Response): Promise<void> {
@@ -286,7 +288,7 @@ export async function getPublicProfile(req: Request, res: Response): Promise<voi
       emitToUser(userId, 'profile.viewed', {
         viewId: view.id,
         viewerId,
-        viewerCard: serializeGridCard(viewerCardUser, 0, false, false),
+        viewerCard: serializeGridCard(await signUserPhotos(viewerCardUser), 0, false, false),
         viewedAt: view.createdAt.toISOString(),
       });
     }
@@ -306,7 +308,7 @@ export async function getPublicProfile(req: Request, res: Response): Promise<voi
   ]);
 
   res.status(200).json(
-    serializePublicProfile(user, viewer, { isLiked: !!tap, isShortlisted: !!favorite }),
+    serializePublicProfile(await signUserPhotos(user), viewer, { isLiked: !!tap, isShortlisted: !!favorite }),
   );
 }
 

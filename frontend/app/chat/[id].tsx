@@ -65,9 +65,10 @@ function isViewOnce(msg: Message) {
 }
 
 export default function Chat() {
-  const params = useLocalSearchParams<{ id: string; peerName?: string }>();
+  const params = useLocalSearchParams<{ id: string; peerName?: string; peerPhoto?: string }>();
   const conversationId = Array.isArray(params.id) ? params.id[0] : params.id ?? '';
   const peerName = Array.isArray(params.peerName) ? params.peerName[0] : params.peerName;
+  const peerPhoto = Array.isArray(params.peerPhoto) ? params.peerPhoto[0] : params.peerPhoto;
   const router = useRouter();
   const { theme } = useTheme();
   const me = useAuthStore((s) => s.user);
@@ -245,13 +246,60 @@ export default function Chat() {
     if (!perm.granted) return;
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
     if (res.canceled || !res.assets[0]) return;
+
+    const localUri = res.assets[0].uri;
+    const tempId = `tmp-${Date.now()}`;
+    // Show the local image immediately so the user sees it right away.
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        conversationId,
+        senderId: me?.id ?? '',
+        type: viewOnce ? 'expiring_photo' : 'photo',
+        ciphertext: null,
+        content: null,
+        mediaUrls: [localUri],
+        mediaUrl: localUri,
+        viewOnce,
+        expiresInSeconds: null,
+        viewedAt: null,
+        expiresAfterView: false,
+        isUnsent: false,
+        unsentAt: null,
+        isEdited: false,
+        editedAt: null,
+        translatedContent: null,
+        flaggedOffensive: false,
+        moderationFlagged: false,
+        readAt: null,
+        deletedAt: null,
+        createdAt: new Date().toISOString(),
+      } as Message,
+    ]);
+
     setSending(true);
+    setBanner(null);
     try {
-      const gcsPath = await uploadChatPhoto(res.assets[0].uri);
-      await postMessage({
+      const gcsPath = await uploadChatPhoto(localUri);
+      const apiRes = await sendMessage(conversationId, {
         type: viewOnce ? 'expiring_photo' : 'photo',
         mediaUrls: [gcsPath],
       });
+      const { audioCallEnabled, videoCallEnabled, ...msg } = apiRes;
+      // Replace the optimistic entry with the real server message (has signed URLs).
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? (msg as Message) : m))
+      );
+      setAudioEnabled(audioCallEnabled);
+      setVideoEnabled(videoCallEnabled);
+      fetchConversations('inbox', true).catch(() => {});
+    } catch (e) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      const err = e as ApiError;
+      if (err.status === 403 && err.code === 'interaction_limit_reached') setUpgradeOpen(true);
+      else if (err.status === 403 && err.code === 'plan_required') setUpgradeOpen(true);
+      else setBanner(err.message ?? 'Could not send photo');
     } finally {
       setSending(false);
     }
@@ -361,7 +409,7 @@ export default function Chat() {
         <Pressable onPress={() => openViewOnce(item)} disabled={opened && !mine}>
           <View style={[styles.snapTile, opened && !mine && styles.snapOpened]}>
             {thumb && mine ? (
-              <Image source={{ uri: thumb }} style={styles.snapImage} contentFit="cover" />
+              <Image source={{ uri: thumb }} style={styles.snapImage} contentFit="cover" transition={120} cachePolicy="memory-disk" />
             ) : (
               <View style={[styles.snapPlaceholder, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
                 <Ionicons name="eye-off-outline" size={28} color={mine ? '#fff' : theme.brand} />
@@ -383,7 +431,7 @@ export default function Chat() {
       return (
         <Pressable onPress={() => setPhotoViewUrl(item.mediaUrls[0] ?? item.mediaUrl)}>
           <View style={styles.photoStack}>
-            <Image source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" />
+            <Image source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} cachePolicy="memory-disk" />
             {item.mediaUrls.length > 1 && (
               <View style={styles.multiBadge}>
                 <Text style={styles.multiBadgeText}>+{item.mediaUrls.length - 1}</Text>
@@ -489,6 +537,13 @@ export default function Chat() {
         <Pressable onPress={() => router.back()} hitSlop={12}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </Pressable>
+        {peerPhoto ? (
+          <Image source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+        ) : (
+          <View style={[styles.headAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="person" size={20} color={theme.textTertiary} />
+          </View>
+        )}
         <View style={styles.headProfile}>
           <Text style={[styles.headName, { color: theme.textPrimary }]} numberOfLines={1}>
             {peerName || 'Chat'}
@@ -619,6 +674,7 @@ export default function Chat() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
+  headAvatar: { width: 36, height: 36, borderRadius: 18 },
   headProfile: { flex: 1 },
   headName: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '700' },
   headStatus: { fontSize: 12, fontFamily: FontFamily.medium },

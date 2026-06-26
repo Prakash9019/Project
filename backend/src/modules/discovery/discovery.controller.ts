@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { Errors } from '../../utils/httpError';
-import { serializeGridCard } from '../profile/profile.serializer';
+import { serializeGridCard, signUserPhotos } from '../profile/profile.serializer';
 import { isOrientationVisible } from '../grid/grid.service';
 import { getBlockedIds } from '../../utils/blocks';
 import { emitToUser } from '../../realtime/emitter';
@@ -22,7 +22,7 @@ export async function listFavorites(req: Request, res: Response): Promise<void> 
     orderBy: { createdAt: 'desc' },
   });
   const favIds = new Set(favorites.map((f) => f.favoriteId));
-  res.status(200).json({ favorites: favorites.map((f) => serializeGridCard(f.favorite, 0, false, false, favIds)) });
+  res.status(200).json({ favorites: await Promise.all(favorites.map(async (f) => serializeGridCard(await signUserPhotos(f.favorite), 0, false, false, favIds))) });
 }
 
 export async function addFavorite(req: Request, res: Response): Promise<void> {
@@ -80,7 +80,7 @@ export async function sendTap(req: Request, res: Response): Promise<void> {
     }),
   ]);
 
-  const senderCard = sender ? serializeGridCard(sender, 0, false, false) : null;
+  const senderCard = sender ? serializeGridCard(await signUserPhotos(sender), 0, false, false) : null;
   emitToUser(receiverId, 'tap.received', {
     tapId: tap.id,
     senderId,
@@ -106,7 +106,7 @@ export async function receivedTaps(req: Request, res: Response): Promise<void> {
     orderBy: { createdAt: 'desc' },
     take: 50,
   });
-  res.status(200).json({ taps: taps.map((t) => ({ id: t.id, sender: serializeGridCard(t.sender, 0, false, false), createdAt: t.createdAt })) });
+  res.status(200).json({ taps: await Promise.all(taps.map(async (t) => ({ id: t.id, sender: serializeGridCard(await signUserPhotos(t.sender), 0, false, false), createdAt: t.createdAt }))) });
 }
 
 // ── Viewed Me (Gold+) ────────────────────────────────────
@@ -130,11 +130,11 @@ export async function viewedMe(req: Request, res: Response): Promise<void> {
     take: 100,
   });
   res.status(200).json({
-    views: views.map((v) => ({
+    views: await Promise.all(views.map(async (v) => ({
       id: v.id,
-      viewer: serializeGridCard(v.viewer, 0, false, false),
+      viewer: serializeGridCard(await signUserPhotos(v.viewer), 0, false, false),
       viewedAt: v.createdAt,
-    })),
+    }))),
   });
 }
 
@@ -194,21 +194,20 @@ export async function rightNowFeed(req: Request, res: Response): Promise<void> {
     take: 100,
   });
 
-  const statuses = users
-    .filter((u) =>
-      isOrientationVisible(
-        { wantToSee: viewer?.wantToSee as string[], gender: viewer?.gender, genderIdentity: viewer?.genderIdentity },
-        { whoCanDiscoverMe: u.whoCanDiscoverMe as string[], gender: u.gender, genderIdentity: u.genderIdentity },
-      ),
-    )
-    .map((u) => ({
-      ...serializeGridCard(u, distanceById.get(u.id) ?? 0, false, true),
-      rightNowStatus: u.rightNowStatus,
-      rightNowCategory: u.rightNowCategory,
-      rightNowExpiresAt: u.rightNowExpiresAt,
-      rightNowJoinedAt: u.updatedAt,
-      distanceMeters: distanceById.get(u.id) ?? null,
-    }));
+  const filtered = users.filter((u) =>
+    isOrientationVisible(
+      { wantToSee: viewer?.wantToSee as string[], gender: viewer?.gender, genderIdentity: viewer?.genderIdentity },
+      { whoCanDiscoverMe: u.whoCanDiscoverMe as string[], gender: u.gender, genderIdentity: u.genderIdentity },
+    ),
+  );
+  const statuses = await Promise.all(filtered.map(async (u) => ({
+    ...serializeGridCard(await signUserPhotos(u), distanceById.get(u.id) ?? 0, false, true),
+    rightNowStatus: u.rightNowStatus,
+    rightNowCategory: u.rightNowCategory,
+    rightNowExpiresAt: u.rightNowExpiresAt,
+    rightNowJoinedAt: u.updatedAt,
+    distanceMeters: distanceById.get(u.id) ?? null,
+  })));
 
   res.status(200).json({ statuses, total: statuses.length });
 }
@@ -262,5 +261,5 @@ export async function sharedWithMe(req: Request, res: Response): Promise<void> {
     where: { granteeId: req.user!.sub },
     include: { album: { include: { photos: true, owner: { include: { photos: { where: { isPrimary: true }, take: 1 } } } } } },
   });
-  res.status(200).json({ albums: grants.map((g) => ({ ...g.album, owner: serializeGridCard(g.album.owner, 0, false, false) })) });
+  res.status(200).json({ albums: await Promise.all(grants.map(async (g) => ({ ...g.album, owner: serializeGridCard(await signUserPhotos(g.album.owner), 0, false, false) }))) });
 }

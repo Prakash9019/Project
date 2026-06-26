@@ -165,6 +165,7 @@ export async function currentSubscription(req: Request, res: Response): Promise<
     plan: sub.plan,
     billingCycle: sub.billingCycle,
     priceInr: sub.priceInr,
+    startedAt: sub.startedAt,
     expiresAt: sub.expiresAt,
     autoRenew: sub.cancelledAt === null,
   });

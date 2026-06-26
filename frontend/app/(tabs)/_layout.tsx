@@ -3,21 +3,28 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { RightNowIcon } from '../../src/components/icons';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
-// Modern dating-app navigation: solid glyphs when active, outline when inactive.
-const TABS = [
-  { name: 'index', label: 'Browse', active: 'grid', inactive: 'grid-outline' },
-  { name: 'right-now', label: 'Right Now', active: 'water', inactive: 'water-outline' },
-  { name: 'interest', label: 'Interest', active: 'heart', inactive: 'heart-outline' },
-  { name: 'inbox', label: 'Inbox', active: 'chatbubble-ellipses', inactive: 'chatbubble-ellipses-outline' },
-  { name: 'store', label: 'Store', active: 'diamond', inactive: 'diamond-outline' },
-] as const satisfies ReadonlyArray<{ name: string; label: string; active: IoniconName; inactive: IoniconName }>;
+type TabDef =
+  | { name: string; label: string; active: IoniconName; inactive: IoniconName; svgIcon?: undefined }
+  | { name: string; label: string; svgIcon: true; active?: undefined; inactive?: undefined };
+
+const TABS: TabDef[] = [
+  { name: 'index',     label: 'Browse',    active: 'grid',                inactive: 'grid-outline' },
+  { name: 'right-now', label: 'Right Now', svgIcon: true },
+  { name: 'interest',  label: 'Interest',  active: 'heart',               inactive: 'heart-outline' },
+  { name: 'inbox',     label: 'Inbox',     active: 'chatbubble-ellipses', inactive: 'chatbubble-ellipses-outline' },
+  { name: 'store',     label: 'Store',     active: 'diamond',             inactive: 'diamond-outline' },
+];
 
 function TabIcon({ name, color, active }: { name: string; color: string; active: boolean }) {
   const meta = TABS.find((t) => t.name === name);
   if (!meta) return null;
+  if (meta.svgIcon) {
+    return <RightNowIcon size={25} color={color} solid={active} />;
+  }
   return <Ionicons name={active ? meta.active : meta.inactive} size={25} color={color} />;
 }
 

@@ -1,9 +1,25 @@
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Self } from '../types/api';
 import * as authService from '../services/auth';
 import { getMe } from '../services/api';
 import { disconnectSocket } from '../services/socket';
 import { useInterestStore } from './interestStore';
+import { useChatStore } from './chatStore';
+import { useGridStore } from './gridStore';
+
+/**
+ * Wipe all per-user cached data so one account never sees another account's
+ * content. These caches are device-global (not keyed by user id) and are
+ * surfaced as a fallback whenever an API call fails, so they must be cleared
+ * on every session boundary (login + logout).
+ */
+async function clearUserScopedData(): Promise<void> {
+  useInterestStore.getState().reset();
+  useChatStore.setState({ conversations: [], error: null });
+  useGridStore.setState({ cards: [], total: 0, offset: 0, error: null });
+  await AsyncStorage.multiRemove(['cache_conversations_v2', 'cache_grid_cards']).catch(() => {});
+}
 
 interface AuthState {
   user: Self | null;
@@ -26,14 +42,14 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   login: async (accessToken, refreshToken, user) => {
     disconnectSocket();
-    useInterestStore.getState().reset();
+    await clearUserScopedData();
     await authService.setTokens(accessToken, refreshToken);
     set({ user, hydrating: false });
   },
 
   logout: async () => {
     disconnectSocket();
-    useInterestStore.getState().reset();
+    await clearUserScopedData();
     await authService.clearTokens();
     set({ user: null, hydrating: false });
   },

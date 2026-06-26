@@ -15,7 +15,7 @@ export function PhotoViewer({ visible, url, onClose }: Props) {
         <Pressable style={styles.close} onPress={onClose} hitSlop={16}>
           <Ionicons name="close" size={28} color="#fff" />
         </Pressable>
-        {url ? <Image source={{ uri: url }} style={styles.image} contentFit="contain" /> : null}
+        {url ? <Image source={{ uri: url }} style={styles.image} contentFit="contain" cachePolicy="memory-disk" /> : null}
       </View>
     </Modal>
   );

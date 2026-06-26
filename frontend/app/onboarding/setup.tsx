@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -6,15 +6,16 @@ import {
   Pressable,
   ScrollView,
   ActivityIndicator,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { T } from '../../src/components/ui';
-import { updateProfile, addPhoto, ApiError } from '../../src/services/api';
+import { updateProfile, uploadProfilePhoto, ApiError } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 import type {
   Gender,
@@ -54,10 +55,30 @@ const INTENTS: RelationshipIntent[] = ['dating', 'friendship', 'networking', 'op
 
 const labelize = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
+/**
+ * Locally-persisted onboarding draft. Saved after every change so progress
+ * survives an app close/reopen, and the user resumes from the last step with
+ * their previously-entered values pre-filled. Cleared once the profile is saved.
+ */
+const DRAFT_KEY = 'onboarding_draft_v1';
+
+type Draft = {
+  step: number;
+  firstName: string;
+  age: string;
+  gender: Gender | null;
+  genderIdentity: GenderIdentity | null;
+  orientation: SexualOrientation | null;
+  wantToSee: WantToSee[];
+  intent: RelationshipIntent | null;
+  photoUri: string | null;
+};
+
 export default function SetupScreen() {
   const router = useRouter();
   const { theme } = useTheme();
   const setUser = useAuthStore((s) => s.setUser);
+  const setPrimaryPhoto = useAuthStore((s) => s.setPrimaryPhoto);
 
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -71,8 +92,57 @@ export default function SetupScreen() {
   const [wantToSee, setWantToSee] = useState<WantToSee[]>([]);
   const [intent, setIntent] = useState<RelationshipIntent | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  // Block draft-saving until the saved draft (if any) has been loaded, so we
+  // never overwrite stored progress with the initial empty state on mount.
+  const [hydrated, setHydrated] = useState(false);
 
   const TOTAL = 4;
+
+  // Resume: load any saved draft once on mount and pre-fill every field + step.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(DRAFT_KEY);
+        if (!cancelled && raw) {
+          const d = JSON.parse(raw) as Partial<Draft>;
+          if (typeof d.step === 'number') setStep(Math.min(Math.max(d.step, 0), TOTAL - 1));
+          if (d.firstName) setFirstName(d.firstName);
+          if (d.age) setAge(d.age);
+          if (d.gender) setGender(d.gender);
+          if (d.genderIdentity) setGenderIdentity(d.genderIdentity);
+          if (d.orientation) setOrientation(d.orientation);
+          if (Array.isArray(d.wantToSee)) setWantToSee(d.wantToSee);
+          if (d.intent) setIntent(d.intent);
+          if (d.photoUri) setPhotoUri(d.photoUri);
+        }
+      } catch {
+        /* corrupt/missing draft — start fresh */
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist the draft after every change (best-effort; offline-safe — purely local).
+  useEffect(() => {
+    if (!hydrated) return;
+    const draft: Draft = {
+      step,
+      firstName,
+      age,
+      gender,
+      genderIdentity,
+      orientation,
+      wantToSee,
+      intent,
+      photoUri,
+    };
+    AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draft)).catch(() => {});
+  }, [hydrated, step, firstName, age, gender, genderIdentity, orientation, wantToSee, intent, photoUri]);
 
   const canNext = (() => {
     if (step === 0) return firstName.trim().length > 0 && Number(age) >= 18 && !!gender;
@@ -111,13 +181,18 @@ export default function SetupScreen() {
       });
       setUser(updated);
       if (photoUri) {
-        // Best effort — real GCS upload handled in Edit Profile. Skip silently on failure.
+        // Real upload: GET signed upload-url → PUT bytes to GCS → POST /me/photos.
+        // This persists the photo server-side so it survives restart/relogin
+        // (a raw file:// URI would not). Best-effort: don't block finishing.
         try {
-          await addPhoto(photoUri, true);
+          const photo = await uploadProfilePhoto(photoUri);
+          if (photo?.url) setPrimaryPhoto(photo.url);
         } catch {
-          /* ignore */
+          /* ignore — user can add a photo later from Edit Profile */
         }
       }
+      // Onboarding complete — discard the saved draft so it doesn't resurface.
+      AsyncStorage.removeItem(DRAFT_KEY).catch(() => {});
       router.replace('/(tabs)');
     } catch (e) {
       const err = e as ApiError;
@@ -245,7 +320,7 @@ export default function SetupScreen() {
               onPress={pickPhoto}
             >
               {photoUri ? (
-                <Image source={{ uri: photoUri }} style={styles.photo} />
+                <Image source={{ uri: photoUri }} style={styles.photo} contentFit="cover" />
               ) : (
                 <>
                   <Ionicons name="camera" size={32} color={theme.textSecondary} />

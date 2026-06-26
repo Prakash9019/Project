@@ -25,14 +25,17 @@ export async function loginWithFirebase(idToken: string) {
     update: {
       email,
       emailVerified,
-      phoneVerified: emailVerified,  // keeps existing DB filters (grid/explore) working
+      // Verification no longer gates the app. A Firebase identity counts as
+      // verified so the user is immediately discoverable (grid/explore filter
+      // on phoneVerified: true) and never blocked by requireVerifiedPhone.
+      phoneVerified: true,
       lastActiveAt: new Date(),
     },
     create: {
       firebaseUid,
       email,
       emailVerified,
-      phoneVerified: emailVerified,  // grid/explore filter on phoneVerified: true
+      phoneVerified: true,  // verified-by-Firebase; discoverable + never gated
       settings: { create: {} },
       wallet: { create: {} },
     },

@@ -8,12 +8,23 @@ export const AGORA_APP_ID = process.env.EXPO_PUBLIC_AGORA_APP_ID ?? '';
 
 /**
  * react-native-agora is a native module with no web support. We load it via a
- * guarded require so that web bundling (and `expo export --platform web`) does
- * not try to resolve native-only code. Types come from `import type` above,
- * which is fully erased at runtime.
+ * guarded require so that:
+ *  - web bundling (`expo export --platform web`) never resolves native-only code
+ *  - a missing native build (Expo Go / unlinked module) surfaces as a warning
+ *    instead of crashing the call screen
+ *
+ * Types come from `import type` above, which is fully erased at runtime.
  */
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const rtc: any = Platform.OS === 'web' ? null : require('react-native-agora');
+let rtc: any = null;
+if (Platform.OS !== 'web') {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    rtc = require('react-native-agora');
+  } catch (e) {
+    console.warn('[Agora] Native module not available — rebuild the app with `npx expo run:android` or `npx expo run:ios`:', e);
+  }
+}
 
 export const isAgoraAvailable = rtc != null && !!AGORA_APP_ID;
 

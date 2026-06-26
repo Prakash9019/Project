@@ -21,6 +21,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { ListSkeleton } from '../../src/components/Skeleton';
+import { RightNowIcon } from '../../src/components/icons';
 import { showError, showSuccess, toastApiError } from '../../src/lib/toast';
 import { minutesAgoLabel, expiresInLabel } from '../../src/lib/format';
 import { getRightNow, updateProfile, startConversation, ApiError } from '../../src/services/api';
@@ -210,7 +211,7 @@ export default function RightNow() {
       >
         <View style={styles.avatarWrap}>
           {item.profilePhoto ? (
-            <Image source={{ uri: item.profilePhoto }} style={styles.avatar} contentFit="cover" />
+            <Image source={{ uri: item.profilePhoto }} style={styles.avatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
           ) : (
             <View style={[styles.avatar, styles.center, { backgroundColor: RNUI.chip }]}>
               <Ionicons name="person" size={22} color={RNUI.meta} />
@@ -266,7 +267,8 @@ export default function RightNow() {
     <SafeAreaView style={styles.root} edges={['top']}>
       <Text style={styles.title}>Right Now</Text>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+
+      <View style={styles.chipsRow}>
         <Pressable
           onPress={() => toggleFilter('distance')}
           style={[styles.chip, { backgroundColor: filters.distance ? RNUI.chipActive : RNUI.chip }]}
@@ -286,31 +288,48 @@ export default function RightNow() {
         >
           <Text style={styles.chipText}>Position</Text>
         </Pressable>
-      </ScrollView>
+      </View>
 
-      {loading && displayed.length === 0 ? (
-        <ListSkeleton />
-      ) : (
+      <View style={styles.listWrap}>
         <FlatList
           data={displayed}
           keyExtractor={(it) => it.id}
           renderItem={renderRow}
           style={styles.list}
-          contentContainerStyle={[styles.listContent, displayed.length === 0 && styles.listEmpty]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={RNUI.purple} />}
+          contentContainerStyle={{
+            paddingTop: 4,
+            paddingBottom: 130,
+            flexGrow: displayed.length === 0 ? 1 : 0,
+          }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => load(true)}
+              tintColor={RNUI.purple}
+            />
+          }
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={[styles.emptyIcon, { backgroundColor: RNUI.purple }]}>
-                <Ionicons name="water" size={26} color="#fff" />
+            loading ? null : (
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  paddingHorizontal: 32,
+                }}
+              >
+                <View style={[styles.emptyIcon, { backgroundColor: RNUI.purple }]}>
+                  <RightNowIcon size={26} color="#fff" solid />
+                </View>
+                <Text style={styles.emptyTitle}>Nothing happening yet</Text>
+                <Text style={styles.emptyBody}>
+                  {error ?? "Be the first to post what you're up to right now."}
+                </Text>
               </View>
-              <Text style={styles.emptyTitle}>Nothing happening yet</Text>
-              <Text style={styles.emptyBody}>
-                {error ?? "Be the first to post what you're up to right now."}
-              </Text>
-            </View>
+            )
           }
         />
-      )}
+      </View>
 
       <View style={styles.fabRow} pointerEvents="box-none">
         <Pressable style={styles.joinPill} onPress={() => setSheetOpen(true)}>
@@ -413,7 +432,7 @@ function CreateSheet({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={[styles.sheetOverlay, { backgroundColor: theme.overlay }]} onPress={onClose}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Pressable style={[styles.sheet, { backgroundColor: '#141414' }]} onPress={() => {}}>
+          <Pressable style={[styles.sheet, { backgroundColor: '#141414' }]} onPress={() => { }}>
             <View style={styles.sheetHandle} />
 
             <View style={styles.sheetHead}>
@@ -434,7 +453,7 @@ function CreateSheet({
             <View style={styles.inputCard}>
               <View>
                 {user?.primaryPhotoUrl ? (
-                  <Image source={{ uri: user.primaryPhotoUrl }} style={styles.sheetAvatar} contentFit="cover" />
+                  <Image source={{ uri: user.primaryPhotoUrl }} style={styles.sheetAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
                 ) : (
                   <View style={[styles.sheetAvatar, styles.center, { backgroundColor: RNUI.chip }]}>
                     <Ionicons name="person" size={22} color={RNUI.meta} />
@@ -525,7 +544,12 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     letterSpacing: -0.3,
   },
-  chipsRow: { gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  chipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -544,7 +568,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   avatarWrap: { position: 'relative' },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: RNUI.chip },
+  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: RNUI.chip, overflow: 'hidden' },
   onlineDot: {
     position: 'absolute',
     right: -1,
@@ -581,9 +605,8 @@ const styles = StyleSheet.create({
   },
   msgBtn: { paddingLeft: 6, paddingVertical: 6 },
 
+  listWrap: { flex: 1 },
   list: { flex: 1 },
-  listContent: { flexGrow: 1, paddingTop: 4, paddingBottom: 130 },
-  listEmpty: { justifyContent: 'center' },
   empty: { alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
   emptyIcon: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { fontSize: 16, fontFamily: DisplayFont.bold, fontWeight: '700', color: '#FFFFFF' },

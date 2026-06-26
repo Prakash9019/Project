@@ -97,7 +97,7 @@ export default function Albums() {
               onPress={() => router.push({ pathname: '/albums/[id]', params: { id: item.id, title: item.title } })}
             >
               {item.coverPhoto ? (
-                <Image source={{ uri: item.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                <Image source={{ uri: item.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
               ) : (
                 <View style={[StyleSheet.absoluteFill, styles.center]}>
                   <Ionicons name="images" size={32} color={theme.textTertiary} />

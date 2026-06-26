@@ -4,7 +4,7 @@ import { prisma } from '../../config/prisma';
 import { emitToUser } from '../../realtime/emitter';
 import { translation } from '../../adapters/translation';
 import { Errors, HttpError } from '../../utils/httpError';
-import { serializeGridCard } from '../profile/profile.serializer';
+import { serializeGridCard, signUserPhotos } from '../profile/profile.serializer';
 import { sendPush, isMuted } from '../../services/push';
 import { updateReplyRate } from '../../utils/replyRate';
 import * as svc from './chat.service';
@@ -15,7 +15,7 @@ export const sendMessageSchema = z.object({
   type:             z.enum(['text', 'photo', 'video', 'voice', 'expiring_photo', 'voice_note']).default('text'),
   ciphertext:       z.string().max(8192).optional(),
   content:          z.string().max(4096).optional(),
-  mediaUrls:        z.array(z.string().url()).max(10).optional(),
+  mediaUrls:        z.array(z.string().min(1)).max(10).optional(),
   viewOnce:         z.boolean().optional(),
   expiresInSeconds: z.number().int().min(1).max(60).optional(),
 });
@@ -53,38 +53,36 @@ export async function listConversations(req: Request, res: Response): Promise<vo
   const userId = req.user!.sub;
   const convos = await svc.listConversations(userId, folder);
 
-  res.status(200).json({
-    folder,
-    conversations: convos.map((c) => {
-      const isA = c.userAId === userId;
-      const peer = isA ? c.userB : c.userA;
-      const last = c.messages[0];
-      const flags = svc.callFlags(c, userId);
+  const conversations = await Promise.all(convos.map(async (c) => {
+    const isA = c.userAId === userId;
+    const peer = isA ? c.userB : c.userA;
+    const last = c.messages[0];
+    const flags = svc.callFlags(c, userId);
 
-      const lastMessage = last
-        ? {
-            id: last.id,
-            type: last.type,
-            content: last.isUnsent ? null : (last.content ? last.content.slice(0, 80) : null),
-            senderId: last.senderId,
-            createdAt: last.createdAt,
-            isUnsent: last.isUnsent ?? false,
-          }
-        : null;
+    const lastMessage = last
+      ? {
+          id: last.id,
+          type: last.type,
+          content: last.isUnsent ? null : (last.content ? last.content.slice(0, 80) : null),
+          senderId: last.senderId,
+          createdAt: last.createdAt,
+          isUnsent: last.isUnsent ?? false,
+        }
+      : null;
 
-      return {
-        id: c.id,
-        state: c.state,
-        isInitiator: c.initiatorId === userId,
-        isPinned: isA ? c.aPinned : c.bPinned,
-        unreadCount: c.unreadCount,
-        lastMessageAt: c.lastMessageAt,
-        lastMessage,
-        peer: serializeGridCard(peer, 0, false, false),
-        ...flags,
-      };
-    }),
-  });
+    return {
+      id: c.id,
+      state: c.state,
+      isInitiator: c.initiatorId === userId,
+      isPinned: isA ? c.aPinned : c.bPinned,
+      unreadCount: c.unreadCount,
+      lastMessageAt: c.lastMessageAt,
+      lastMessage,
+      peer: serializeGridCard(await signUserPhotos(peer), 0, false, false),
+      ...flags,
+    };
+  }));
+  res.status(200).json({ folder, conversations });
 }
 
 // ── Messages ──────────────────────────────────────────────

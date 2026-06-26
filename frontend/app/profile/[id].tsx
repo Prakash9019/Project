@@ -253,7 +253,7 @@ export default function ProfileDetail() {
           {gallery.length > 0 ? (
             <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
               {gallery.map((uri, i) => (
-                <Image key={i} source={{ uri }} style={{ width, height: width }} contentFit="cover" />
+                <Image key={i} source={{ uri }} style={{ width, height: width }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
               ))}
             </ScrollView>
           ) : (
@@ -423,10 +423,10 @@ export default function ProfileDetail() {
                   <Pressable
                     key={a.id}
                     style={[styles.albumTile, { backgroundColor: theme.backgroundTertiary }]}
-                    onPress={() => router.push({ pathname: '/albums/[id]', params: { id: a.id, title: a.title } })}
+                    onPress={() => router.push({ pathname: '/albums/[id]', params: { id: a.id, title: a.title, ownerId: peerId } })}
                   >
                     {a.coverPhoto ? (
-                      <Image source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                      <Image source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
                     ) : (
                       <View style={[StyleSheet.absoluteFill, styles.noPhoto]}>
                         <Ionicons name="images" size={28} color={theme.textTertiary} />

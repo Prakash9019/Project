@@ -171,25 +171,47 @@ export const getPhotoUploadUrl = () =>
   request<PhotoUploadUrl>('GET', '/api/v1/me/photos/upload-url');
 
 /**
+ * Read a local file URI as a Blob using XMLHttpRequest responseType='blob'.
+ *
+ * React Native's fetch().blob() internally creates a Blob from an ArrayBuffer,
+ * which RN's Blob polyfill does not support and throws:
+ *   "Creating blobs from ArrayBuffer and ArrayBufferView are not supported."
+ *
+ * XHR with responseType='blob' uses the native RCTNetworking blob bridge instead,
+ * which correctly handles file:// and content:// URIs on both iOS and Android.
+ */
+function readFileAsBlob(uri: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.responseType = 'blob';
+    xhr.onload = () => {
+      if (xhr.status === 0 || (xhr.status >= 200 && xhr.status < 300)) {
+        resolve(xhr.response as Blob);
+      } else {
+        reject(new Error(`Failed to read file (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Failed to read file'));
+    xhr.open('GET', uri);
+    xhr.send();
+  });
+}
+
+/**
  * Upload a picked image as the primary profile photo.
- * Preferred path: GET upload-url → PUT bytes to GCS → POST /me/photos { gcsPath }.
- * Falls back to POST /me/photos with the local URI if upload-url isn't live yet.
+ * GET upload-url → PUT bytes to R2 → POST /me/photos { gcsPath }.
  * Returns the created Photo (its `url` is the signed URL to display).
  */
 export async function uploadProfilePhoto(localUri: string): Promise<Photo> {
-  try {
-    const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
-    const blob = await (await fetch(localUri)).blob();
-    const put = await fetch(uploadUrl, {
-      method: 'PUT',
-      body: blob,
-      headers: { 'Content-Type': (blob as any).type || 'image/jpeg' },
-    });
-    if (!put.ok) throw new Error('GCS upload failed');
-    return await addPhoto(gcsPath, true);
-  } catch {
-    return await addPhoto(localUri, true);
-  }
+  const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
+  const blob = await readFileAsBlob(localUri);
+  const put = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: blob,
+    headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
+  });
+  if (!put.ok) throw new Error(`R2 upload failed (${put.status})`);
+  return await addPhoto(gcsPath, true);
 }
 
 export const setPrimaryPhoto = (photoId: string) =>
@@ -347,7 +369,7 @@ export const getChatPhotoUploadUrl = () =>
 /** Upload a local image for chat (photo or view-once). Returns the GCS path for mediaUrls. */
 export async function uploadChatPhoto(localUri: string): Promise<string> {
   const { uploadUrl, gcsPath } = await getChatPhotoUploadUrl();
-  const blob = await (await fetch(localUri)).blob();
+  const blob = await readFileAsBlob(localUri);
   const put = await fetch(uploadUrl, {
     method: 'PUT',
     body: blob,
@@ -507,24 +529,19 @@ export const addAlbumPhoto = (albumId: string, url: string) =>
   request<AlbumPhoto>('POST', `/api/albums/${albumId}/photos`, { url });
 
 /**
- * Upload a picked image into an album. Mirrors uploadProfilePhoto:
- * GET upload-url → PUT bytes to GCS → POST the gcsPath. Falls back to posting
- * the local URI directly if the upload-url endpoint isn't available.
+ * Upload a picked image into an album.
+ * GET upload-url → PUT bytes to R2 → POST the gcsPath.
  */
 export async function uploadAlbumPhoto(albumId: string, localUri: string): Promise<AlbumPhoto> {
-  try {
-    const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
-    const blob = await (await fetch(localUri)).blob();
-    const put = await fetch(uploadUrl, {
-      method: 'PUT',
-      body: blob,
-      headers: { 'Content-Type': (blob as any).type || 'image/jpeg' },
-    });
-    if (!put.ok) throw new Error('GCS upload failed');
-    return await addAlbumPhoto(albumId, gcsPath);
-  } catch {
-    return await addAlbumPhoto(albumId, localUri);
-  }
+  const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
+  const blob = await readFileAsBlob(localUri);
+  const put = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: blob,
+    headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
+  });
+  if (!put.ok) throw new Error(`R2 upload failed (${put.status})`);
+  return await addAlbumPhoto(albumId, gcsPath);
 }
 
 export const removeAlbumPhoto = (albumId: string, photoId: string) =>
@@ -537,6 +554,11 @@ export const reorderAlbumPhotos = (
 
 export const getUserAlbums = (userId: string) =>
   request<{ albums: AlbumSummary[] }>('GET', `/api/v1/users/${userId}/albums`);
+
+export const getUserAlbum = (userId: string, albumId: string, query?: { cursor?: string; limit?: number }) =>
+  request<AlbumDetailResponse>('GET', `/api/v1/users/${userId}/albums/${albumId}`, undefined, {
+    query: query as Record<string, string | number | boolean | undefined>,
+  });
 
 // ── Travel / city profiles (brief-specified; not in spec endpoints[]) ──
 // Gold+ travel mode. Spec lists travel_pass add-ons + travelMode plan perk but
@@ -583,11 +605,16 @@ export const verifySubscription = (body: {
     body
   );
 
+export interface CurrentSubscription {
+  plan: Plan;
+  billingCycle: BillingCycle | null;
+  priceInr: number | null;
+  startedAt: string | null;
+  expiresAt: string | null;
+  autoRenew: boolean;
+}
 export const getCurrentSubscription = () =>
-  request<{ plan: string; billingCycle: string; expiresAt: string; autoRenew: boolean }>(
-    'GET',
-    '/api/v1/billing/subscriptions/current'
-  );
+  request<CurrentSubscription>('GET', '/api/v1/billing/subscriptions/current');
 
 export const createAddOnOrder = (addonType: AddOnType) =>
   request<CreateSubscriptionResponse>('POST', '/api/v1/billing/addons/purchase', {

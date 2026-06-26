@@ -282,7 +282,7 @@ export default function EditProfile() {
         <FormSection title="PHOTO">
           <Pressable style={[styles.photoBox, { backgroundColor: theme.inputBackground, borderColor: theme.border }]} onPress={pickPrimary} disabled={uploadingPhoto}>
             {primaryPhoto ? (
-              <Image source={{ uri: primaryPhoto }} style={styles.photo} contentFit="cover" />
+              <Image source={{ uri: primaryPhoto }} style={styles.photo} contentFit="cover" transition={120} cachePolicy="memory-disk" />
             ) : (
               <>
                 <Ionicons name="person-circle" size={64} color={theme.textTertiary} />

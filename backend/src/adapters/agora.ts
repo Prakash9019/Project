@@ -13,27 +13,34 @@ try {
   // package not installed or cert missing — dev fallback
 }
 
-const AGORA_APP_ID = process.env.AGORA_APP_ID ?? '';
-const AGORA_APP_CERTIFICATE = process.env.AGORA_APP_CERTIFICATE ?? '';
-const TOKEN_EXPIRY_SECONDS = 3600;
-
 /**
  * Generate an Agora RTC token server-side.
  * AGORA_APP_CERTIFICATE must NEVER be exposed to the client.
- * Falls back to a dev placeholder if certificate is not configured.
+ *
+ * In production a missing certificate or token-builder package is a hard error —
+ * we never silently issue an invalid token that would fail at join time. In dev
+ * we fall back to a placeholder so the app boots without Agora credentials.
  */
 export function generateAgoraToken(channelName: string, uid = 0): string {
-  if (!AGORA_APP_CERTIFICATE || !RtcTokenBuilder || !RtcRole) {
-    // Dev/test fallback — not valid for real Agora calls
+  const { appId, appCertificate, tokenExpirySec } = env.agora;
+
+  if (!appCertificate || !RtcTokenBuilder || !RtcRole) {
+    if (env.isProd) {
+      throw new Error(
+        'Agora token generation unavailable: AGORA_APP_CERTIFICATE missing or agora-access-token not installed',
+      );
+    }
+    // Dev/test fallback — NOT valid for real Agora calls.
     return `dev_token_${channelName}_${Date.now()}`;
   }
+
   return RtcTokenBuilder.buildTokenWithUid(
-    AGORA_APP_ID,
-    AGORA_APP_CERTIFICATE,
+    appId,
+    appCertificate,
     channelName,
     uid,
     RtcRole.PUBLISHER,
-    Math.floor(Date.now() / 1000) + TOKEN_EXPIRY_SECONDS,
+    Math.floor(Date.now() / 1000) + tokenExpirySec,
   );
 }
 

@@ -138,7 +138,7 @@ export default function CallScreen() {
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.center]}>
           {params.peerPhoto ? (
-            <Image source={{ uri: params.peerPhoto }} style={styles.avatar} contentFit="cover" />
+            <Image source={{ uri: params.peerPhoto }} style={styles.avatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
           ) : (
             <View style={[styles.avatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
               <Ionicons name="person" size={64} color={theme.textTertiary} />

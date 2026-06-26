@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { PLANS, BILLING_CYCLES, ADD_ONS } from '../../src/lib/plans';
@@ -12,7 +13,9 @@ import {
   verifySubscription,
   createAddOnOrder,
   verifyAddOnPurchase,
+  getCurrentSubscription,
   ApiError,
+  type CurrentSubscription,
 } from '../../src/services/api';
 import {
   openRazorpayCheckout,
@@ -20,6 +23,20 @@ import {
   RAZORPAY_KEY_ID,
 } from '../../src/services/payments';
 import type { BillingCycle, Plan, AddOnType } from '../../src/types/api';
+
+const fmtDate = (iso: string | null): string =>
+  iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+/** Human "time left" until an expiry date (e.g. "12 days left", "Expires today"). */
+const remainingLabel = (iso: string | null): string => {
+  if (!iso) return '';
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return 'Expired';
+  const days = Math.ceil(ms / 86400_000);
+  if (days >= 1) return `${days} day${days === 1 ? '' : 's'} left`;
+  const hours = Math.ceil(ms / 3600_000);
+  return hours <= 1 ? 'Expires soon' : `${hours} hours left`;
+};
 
 export default function Store() {
   const { theme } = useTheme();
@@ -30,6 +47,24 @@ export default function Store() {
 
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [busy, setBusy] = useState<string | null>(null);
+  const [sub, setSub] = useState<CurrentSubscription | null>(null);
+
+  // Pull the authoritative active subscription (purchase + expiry dates) whenever
+  // the Store comes into focus, so it reflects the latest plan after any purchase.
+  const loadSub = useCallback(async () => {
+    try {
+      const s = await getCurrentSubscription();
+      setSub(s.plan && s.plan !== 'free' ? s : null);
+    } catch {
+      setSub(null);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSub();
+    }, [loadSub])
+  );
 
   const ensurePayments = (): boolean => {
     if (!isPaymentsAvailable) {
@@ -58,8 +93,11 @@ export default function Store() {
         paymentId: pay.razorpay_payment_id,
         signature: pay.razorpay_signature,
       });
+      // Optimistic local update, then reconcile with the server (source of truth)
+      // so the active-plan card and entitlements reflect the real persisted state.
       if (user) setUser({ ...user, plan: res.plan as Plan, planExpiresAt: res.planExpiresAt });
-      else refreshUser();
+      await refreshUser();
+      await loadSub();
       Alert.alert('Welcome to ' + plan, 'Your plan is now active.');
     } catch (e) {
       const err = e as ApiError;
@@ -107,6 +145,43 @@ export default function Store() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 14 }}>
+        {/* Active subscription summary — shown once a paid plan is live. */}
+        {currentPlan !== 'free' && (
+          <View style={[styles.activeCard, { backgroundColor: theme.surface, borderColor: theme.brand }]}>
+            <View style={styles.activeHead}>
+              <View style={styles.planTitleRow}>
+                {planBadgeColor(theme, currentPlan) && (
+                  <View style={[styles.dot, { backgroundColor: planBadgeColor(theme, currentPlan)! }]} />
+                )}
+                <Text style={[styles.planName, { color: theme.textPrimary }]}>
+                  {PLANS.find((p) => p.plan === currentPlan)?.name ?? currentPlan}
+                </Text>
+              </View>
+              <View style={[styles.activeBadge, { backgroundColor: theme.success }]}>
+                <Ionicons name="checkmark-circle" size={14} color="#fff" />
+                <Text style={styles.activeBadgeText}>Active</Text>
+              </View>
+            </View>
+            <View style={styles.activeRows}>
+              <View style={styles.activeRow}>
+                <Text style={[styles.activeLabel, { color: theme.textTertiary }]}>Purchased</Text>
+                <Text style={[styles.activeValue, { color: theme.textPrimary }]}>
+                  {fmtDate(sub?.startedAt ?? null)}
+                </Text>
+              </View>
+              <View style={styles.activeRow}>
+                <Text style={[styles.activeLabel, { color: theme.textTertiary }]}>Expires</Text>
+                <Text style={[styles.activeValue, { color: theme.textPrimary }]}>
+                  {fmtDate(sub?.expiresAt ?? user?.planExpiresAt ?? null)}
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.activeRemaining, { color: theme.brand }]}>
+              {remainingLabel(sub?.expiresAt ?? user?.planExpiresAt ?? null)}
+            </Text>
+          </View>
+        )}
+
         {/* Billing cycle tabs */}
         <View style={[styles.cycleTabs, { backgroundColor: theme.surfaceElevated }]}>
           {BILLING_CYCLES.map((c) => {
@@ -221,6 +296,15 @@ const styles = StyleSheet.create({
   head: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
   brand: { fontSize: 28, fontFamily: DisplayFont.heavy, fontWeight: '800' },
   headSub: { fontSize: 14, fontFamily: FontFamily.regular, marginTop: 2 },
+  activeCard: { borderRadius: 18, padding: 16, borderWidth: 2 },
+  activeHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  activeBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  activeBadgeText: { fontSize: 12, color: '#fff', fontFamily: FontFamily.bold, fontWeight: '700' },
+  activeRows: { flexDirection: 'row', gap: 24 },
+  activeRow: { gap: 2 },
+  activeLabel: { fontSize: 12, fontFamily: FontFamily.regular },
+  activeValue: { fontSize: 15, fontFamily: DisplayFont.semibold, fontWeight: '700' },
+  activeRemaining: { fontSize: 13, fontFamily: DisplayFont.bold, fontWeight: '700', marginTop: 12 },
   cycleTabs: { flexDirection: 'row', borderRadius: 12, padding: 4 },
   cycleTab: { flex: 1, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   cycleFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },

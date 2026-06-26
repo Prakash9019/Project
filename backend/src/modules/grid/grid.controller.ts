@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { env } from '../../config/env';
 import { isValidLat, isValidLng } from '../../utils/geo';
-import { serializeGridCard } from '../profile/profile.serializer';
+import { serializeGridCard, signUserPhotos } from '../profile/profile.serializer';
 import { getGrid } from './grid.service';
 
 export const gridQuerySchema = z.object({
@@ -76,9 +76,10 @@ export async function grid(req: Request, res: Response): Promise<void> {
     limit: q.limit,
     offset: q.offset,
     planLimit,
-    cards: page.map((p) => serializeGridCard(p.user, p.distanceMeters, p.boosted, showDistance,
+    cards: await Promise.all(page.map(async (p) => serializeGridCard(
+      await signUserPhotos(p.user), p.distanceMeters, p.boosted, showDistance,
       new Set(page.filter((x) => x.isShortlisted).map((x) => x.user.id)),
       new Set(page.filter((x) => x.isLiked).map((x) => x.user.id)),
-    )),
+    ))),
   });
 }

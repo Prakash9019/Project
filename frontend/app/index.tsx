@@ -32,7 +32,12 @@ export default function Splash() {
       const authed = await isAuthenticated();
       if (authed) {
         await refreshUser();
-        router.replace('/(tabs)');
+        // Resume onboarding if the user signed in but never finished their
+        // profile (e.g. closed the app mid-setup). The setup screen rehydrates
+        // their saved draft and drops them back on the last step they reached.
+        const user = useAuthStore.getState().user;
+        const profileComplete = Boolean(user?.firstName || user?.name);
+        router.replace(profileComplete ? '/(tabs)' : '/onboarding/setup');
       } else {
         router.replace('/onboarding');
       }

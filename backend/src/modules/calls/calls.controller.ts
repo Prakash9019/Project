@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
@@ -331,15 +332,42 @@ export async function callHistory(req: Request, res: Response): Promise<void> {
   });
 }
 
+/**
+ * Coturn `use-auth-secret` (TURN REST API) ephemeral credential.
+ * username = "<unix-expiry>:<userId>", credential = base64(HMAC-SHA1(secret, username)).
+ */
+function makeTurnCredential(userId: string): { username: string; credential: string } {
+  const expiry = Math.floor(Date.now() / 1000) + env.webrtc.turnTtlSeconds;
+  const username = `${expiry}:${userId}`;
+  const credential = crypto
+    .createHmac('sha1', env.webrtc.turnSecret)
+    .update(username)
+    .digest('base64');
+  return { username, credential };
+}
+
 /** GET /api/v1/calls/ice-config — STUN/TURN config (legacy WebRTC). */
-export async function iceConfig(_req: Request, res: Response): Promise<void> {
+export async function iceConfig(req: Request, res: Response): Promise<void> {
+  const userId = req.user!.sub;
+
+  let turnServer: { urls: string; username: string; credential: string } | null = null;
+  if (env.webrtc.turnUrl) {
+    if (env.webrtc.turnSecret) {
+      // Production: derive short-lived credentials per client from the shared secret.
+      turnServer = { urls: env.webrtc.turnUrl, ...makeTurnCredential(userId) };
+    } else if (env.webrtc.turnUsername && env.webrtc.turnCredential) {
+      // Legacy fallback: static long-term credentials.
+      turnServer = {
+        urls: env.webrtc.turnUrl,
+        username: env.webrtc.turnUsername,
+        credential: env.webrtc.turnCredential,
+      };
+    }
+  }
+
   const iceServers = [
     { urls: env.webrtc.stunUrls },
-    ...(env.webrtc.turnUrl ? [{
-      urls: env.webrtc.turnUrl,
-      username: env.webrtc.turnUsername,
-      credential: env.webrtc.turnCredential,
-    }] : []),
+    ...(turnServer ? [turnServer] : []),
   ];
   res.status(200).json({ iceServers });
 }

@@ -48,6 +48,12 @@ npm run dev                     # API with hot reload → http://localhost:4000
 
 ## Frontend (Expo)
 
+cd frontend
+npx expo run:android   # first time: builds + installs
+# subsequent runs:
+npx expo start         # metro bundler only, uses the installed native shell
+
+
 export ANDROID_HOME=$HOME/Library/Android/sdk
 export ANDROID_SDK_ROOT=$ANDROID_HOME
 export PATH=$PATH:$ANDROID_HOME/platform-tools

@@ -11,6 +11,8 @@ interface Invite {
   callId: string;
   callerId: string;
   type: 'audio' | 'video';
+  channel: string;
+  token: string;
   callerName?: string;
   callerPhoto?: string;
 }
@@ -30,7 +32,13 @@ export function IncomingCallSheet() {
       const socket = await connectSocket();
       if (!socket) return;
       const onInvite = async (p: any) => {
-        const base: Invite = { callId: p.callId, callerId: p.callerId, type: p.type };
+        const base: Invite = {
+          callId: p.callId,
+          callerId: p.callerId,
+          type: p.type,
+          channel: p.agoraChannelName,
+          token: p.agoraToken,
+        };
         setInvite(base);
         // Enrich with caller name/photo (best effort).
         try {
@@ -63,6 +71,8 @@ export function IncomingCallSheet() {
       pathname: '/call/[id]',
       params: {
         id: inv.callId,
+        channel: inv.channel,
+        token: inv.token,
         type: inv.type,
         peerName: inv.callerName ?? '',
         peerPhoto: inv.callerPhoto ?? '',
@@ -88,7 +98,7 @@ export function IncomingCallSheet() {
       <View style={[styles.overlay, { backgroundColor: theme.overlay }]}>
         <View style={[styles.sheet, { backgroundColor: theme.surface }]}>
           {invite.callerPhoto ? (
-            <Image source={{ uri: invite.callerPhoto }} style={styles.avatar} contentFit="cover" />
+            <Image source={{ uri: invite.callerPhoto }} style={styles.avatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
           ) : (
             <View style={[styles.avatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
               <Ionicons name="person" size={48} color={theme.textTertiary} />

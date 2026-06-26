@@ -234,7 +234,7 @@ export default function Interest() {
           return (
             <Pressable style={styles.tapRow} onPress={() => openProfile(s.id)}>
               {s.profilePhoto ? (
-                <Image source={{ uri: s.profilePhoto }} style={[styles.tapThumb, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" />
+                <Image source={{ uri: s.profilePhoto }} style={[styles.tapThumb, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} cachePolicy="memory-disk" />
               ) : (
                 <View style={[styles.tapThumb, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
                   <Ionicons name="person" size={32} color={theme.textTertiary} />
@@ -292,7 +292,7 @@ function PersonCard({ theme, card, timeAgo }: { theme: any; card: UserCard; time
   return (
     <View style={[styles.viewerCard, { backgroundColor: theme.backgroundTertiary }]}>
       {card.profilePhoto ? (
-        <Image source={{ uri: card.profilePhoto }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
+        <Image source={{ uri: card.profilePhoto }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.center]}>
           <Ionicons name="person" size={56} color={theme.textTertiary} />

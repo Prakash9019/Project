@@ -15,15 +15,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
-import { getAlbum, uploadAlbumPhoto, removeAlbumPhoto, ApiError } from '../../src/services/api';
+import { getAlbum, getUserAlbum, uploadAlbumPhoto, removeAlbumPhoto, ApiError } from '../../src/services/api';
+import { useAuthStore } from '../../src/store/authStore';
 import type { AlbumPhoto } from '../../src/types/api';
 
 export default function AlbumDetail() {
-  const { id, title } = useLocalSearchParams<{ id: string; title?: string }>();
+  const { id, title, ownerId } = useLocalSearchParams<{ id: string; title?: string; ownerId?: string }>();
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
   const tile = (width - 6) / 3;
+  const me = useAuthStore((s) => s.user);
+
+  // If ownerId is set and differs from the logged-in user, we're viewing someone else's album.
+  const isOwnAlbum = !ownerId || ownerId === me?.id;
 
   const [photos, setPhotos] = useState<AlbumPhoto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,14 +36,14 @@ export default function AlbumDetail() {
 
   const load = useCallback(async () => {
     try {
-      const res = await getAlbum(id);
+      const res = isOwnAlbum ? await getAlbum(id) : await getUserAlbum(ownerId!, id);
       setPhotos(res.photos);
     } catch {
       /* surfaced via empty state */
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, ownerId, isOwnAlbum]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -81,9 +86,13 @@ export default function AlbumDetail() {
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </Pressable>
         <Text style={[styles.title, { color: theme.textPrimary }]} numberOfLines={1}>{title ?? 'Album'}</Text>
-        <Pressable onPress={add} hitSlop={12} disabled={uploading}>
-          {uploading ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="add" size={26} color={theme.brand} />}
-        </Pressable>
+        {isOwnAlbum ? (
+          <Pressable onPress={add} hitSlop={12} disabled={uploading}>
+            {uploading ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="add" size={26} color={theme.brand} />}
+          </Pressable>
+        ) : (
+          <View style={{ width: 26 }} />
+        )}
       </View>
 
       {loading ? (
@@ -102,8 +111,8 @@ export default function AlbumDetail() {
             </View>
           }
           renderItem={({ item }) => (
-            <Pressable style={{ width: tile, height: tile }} onLongPress={() => remove(item.id)}>
-              <Image source={{ uri: item.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            <Pressable style={{ width: tile, height: tile }} onLongPress={isOwnAlbum ? () => remove(item.id) : undefined}>
+              <Image source={{ uri: item.url ?? undefined }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
             </Pressable>
           )}
         />

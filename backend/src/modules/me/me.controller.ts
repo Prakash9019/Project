@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { Errors } from '../../utils/httpError';
-import { serializeSelf } from '../profile/profile.serializer';
+import { serializeSelf, signUserPhotos } from '../profile/profile.serializer';
 
 // ── Schemas ───────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ export async function exportData(req: Request, res: Response): Promise<void> {
 
   const payload = {
     exportedAt: new Date().toISOString(),
-    user: serializeSelf(user),
+    user: serializeSelf(await signUserPhotos(user)),
     photos: user.photos.map((p) => ({ id: p.id, url: p.url, isPrimary: p.isPrimary, createdAt: p.createdAt })),
     conversations: conversations.map((c) => ({
       id: c.id,

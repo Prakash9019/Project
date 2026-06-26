@@ -59,10 +59,11 @@ class R2StorageAdapter implements MediaStorageAdapter {
     return presign(this.client, command, { expiresIn: Math.max(1, Math.floor(expiresMs / 1000)) });
   }
 
-  async getSignedUploadUrl(destPath: string, _contentType: string, expiryMinutes: number): Promise<string> {
+  async getSignedUploadUrl(destPath: string, contentType: string, expiryMinutes: number): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: env.r2.bucket,
       Key: destPath,
+      ContentType: contentType,
     });
     return presign(this.client, command, { expiresIn: expiryMinutes * 60 });
   }

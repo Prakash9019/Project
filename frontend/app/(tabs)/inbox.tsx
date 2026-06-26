@@ -104,12 +104,12 @@ export default function Inbox() {
       <Pressable
         style={styles.row}
         onPress={() =>
-          router.push({ pathname: '/chat/[id]', params: { id: item.id, peerName: item.peer.firstName ?? '' } })
+          router.push({ pathname: '/chat/[id]', params: { id: item.id, peerName: item.peer.firstName ?? '', peerPhoto: item.peer.profilePhoto ?? '' } })
         }
       >
         <View>
           {item.peer.profilePhoto ? (
-            <Image source={{ uri: item.peer.profilePhoto }} style={[styles.thumb, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" />
+            <Image source={{ uri: item.peer.profilePhoto }} style={[styles.thumb, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} cachePolicy="memory-disk" />
           ) : (
             <View style={[styles.thumb, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
               <Ionicons name="person" size={28} color={theme.textTertiary} />
@@ -147,7 +147,7 @@ export default function Inbox() {
       onPress={() => router.push({ pathname: '/albums/[id]', params: { id: item.id, title: item.title } })}
     >
       {item.coverPhoto ? (
-        <Image source={{ uri: item.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
+        <Image source={{ uri: item.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.center]}>
           <Ionicons name="images" size={32} color={theme.textTertiary} />

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { Errors } from '../../utils/httpError';
-import { serializeGridCard } from '../profile/profile.serializer';
+import { serializeGridCard, signUserPhotos } from '../profile/profile.serializer';
 
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -71,7 +71,7 @@ export async function explore(req: Request, res: Response): Promise<void> {
     take: q.limit,
   });
 
-  res.status(200).json({ total: users.length, users: users.map((u) => serializeGridCard(u, 0, false, false)) });
+  res.status(200).json({ total: users.length, users: await Promise.all(users.map(async (u) => serializeGridCard(await signUserPhotos(u), 0, false, false))) });
 }
 
 /** For You — 4 curated profiles based on shared tribes, interests, and past interactions. */
@@ -108,7 +108,7 @@ export async function forYou(req: Request, res: Response): Promise<void> {
     take: 20,
   });
 
-  const scored = candidates
+  const ranked = candidates
     .filter((u) => u.photos.length > 0)
     .map((u) => {
       const tribeScore    = (viewer?.tribes ?? []).filter((t) => u.tribes.includes(t)).length;
@@ -116,8 +116,9 @@ export async function forYou(req: Request, res: Response): Promise<void> {
       return { u, score: tribeScore * 2 + interestScore };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 4)
-    .map((x) => serializeGridCard(x.u, 0, false, false));
+    .slice(0, 4);
+
+  const scored = await Promise.all(ranked.map(async (x) => serializeGridCard(await signUserPhotos(x.u), 0, false, false)));
 
   res.status(200).json({ profiles: scored });
 }

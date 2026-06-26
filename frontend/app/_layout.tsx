@@ -1,4 +1,12 @@
-import '@react-native-firebase/app';
+// @react-native-firebase/app requires a native build (not Expo Go).
+// Guard with try-catch so a missing native module surfaces as a warning
+// instead of crashing the entire root layout.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('@react-native-firebase/app');
+} catch (e) {
+  console.warn('[Firebase] Native module not available — rebuild the app with `npx expo run:android` or `npx expo run:ios`:', e);
+}
 import { useCallback, useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
