@@ -60,10 +60,18 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.1078544839352-3u84umnjqu36lcld7ki7g4dembeum15t"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "97057865-f232-4e91-9b60-046bca52f602"
+      }
+    },
+    "owner": "pentakotacharan"
   }
 }
