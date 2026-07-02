@@ -37,6 +37,10 @@ export const LightTheme = {
   planGold: '#E89A2E', // amber
   planPlatinum: '#B79B72', // warm platinum
 
+  // Right Now identity — purple (matches reference "Right Now" feed accent)
+  rightNow: '#7C3AED',
+  rightNowSoft: '#EDE3FE',
+
   // Functional
   online: '#22C55E',
   error: '#E5484D',
@@ -88,6 +92,10 @@ export const DarkTheme: typeof LightTheme = {
   planPremium: '#FF7A59', // coral
   planGold: '#FFB14E', // amber
   planPlatinum: '#E0C9A6', // warm platinum
+
+  // Right Now identity — purple (matches reference "Right Now" feed accent)
+  rightNow: '#9B4DEE',
+  rightNowSoft: '#3A2A55',
 
   // Functional
   online: '#4ADE80',

@@ -14,7 +14,7 @@ type TabDef =
 const TABS: TabDef[] = [
   { name: 'index',     label: 'Browse',    active: 'grid',                inactive: 'grid-outline' },
   { name: 'right-now', label: 'Right Now', svgIcon: true },
-  { name: 'interest',  label: 'Interest',  active: 'heart',               inactive: 'heart-outline' },
+  { name: 'groups',    label: 'Groups',    active: 'people',              inactive: 'people-outline' },
   { name: 'inbox',     label: 'Inbox',     active: 'chatbubble-ellipses', inactive: 'chatbubble-ellipses-outline' },
   { name: 'store',     label: 'Store',     active: 'diamond',             inactive: 'diamond-outline' },
 ];
@@ -76,7 +76,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" />
       <Tabs.Screen name="right-now" />
-      <Tabs.Screen name="interest" />
+      <Tabs.Screen name="groups" />
       <Tabs.Screen name="inbox" />
       <Tabs.Screen name="store" />
     </Tabs>

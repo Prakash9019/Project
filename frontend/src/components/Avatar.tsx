@@ -27,11 +27,15 @@ export function Avatar({
   const r = size / 2;
   const dot = Math.max(10, Math.round(size * 0.28));
 
+  // Treat null / undefined / empty / whitespace-only as "no photo" so we never
+  // hand expo-image an unloadable source (which would render a blank box).
+  const photo = typeof uri === 'string' ? uri.trim() : uri;
+
   const inner = (
     <View style={{ width: size, height: size }}>
-      {uri ? (
+      {photo ? (
         <Image
-          source={{ uri }}
+          source={{ uri: photo }}
           style={{ width: size, height: size, borderRadius: r, backgroundColor: theme.backgroundTertiary }}
           contentFit="cover"
           transition={120}
@@ -39,7 +43,7 @@ export function Avatar({
         />
       ) : (
         <View style={[styles.center, { width: size, height: size, borderRadius: r, backgroundColor: theme.backgroundTertiary }]}>
-          <Ionicons name="person-circle" size={size} color={theme.textTertiary} />
+          <Ionicons name="person" size={Math.round(size * 0.58)} color={theme.textTertiary} />
         </View>
       )}
 

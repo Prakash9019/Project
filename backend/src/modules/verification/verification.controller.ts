@@ -40,21 +40,21 @@ export async function getVerificationStatus(req: Request, res: Response): Promis
   const [user, verifications] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
-      select: { phoneVerified: true, emailVerified: true, photoVerified: true, faceVerified: true, isVerified: true, isCollegeVerified: true },
+      select: { phoneVerified: true, emailVerified: true, isVerified: true, isCollegeVerified: true },
     }),
     prisma.verification.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 10 }),
   ]);
   if (!user) throw Errors.notFound();
 
-  const computedIsVerified = (user.phoneVerified || user.emailVerified) && user.faceVerified;
+  // isVerified = phoneVerified OR emailVerified (face verification removed).
+  const computedIsVerified = user.phoneVerified || user.emailVerified;
   if (computedIsVerified !== user.isVerified) {
     await prisma.user.update({ where: { id: userId }, data: { isVerified: computedIsVerified } });
   }
 
   res.status(200).json({
     phoneVerified: user.phoneVerified,
-    photoVerified: user.photoVerified,
-    faceVerified: user.faceVerified,
+    emailVerified: user.emailVerified,
     isVerified: computedIsVerified,
     isCollegeVerified: user.isCollegeVerified,
     history: verifications.map((v) => ({ id: v.id, type: v.type, status: v.status, createdAt: v.createdAt })),
@@ -96,48 +96,7 @@ export async function submitPhotoVerification(req: Request, res: Response): Prom
   res.status(201).json({ id: verification.id, status: verification.status, score: result.score });
 }
 
-// ── Face verification ─────────────────────────────────────
-
-export async function submitFaceVerification(req: Request, res: Response): Promise<void> {
-  const { mediaUrl } = req.body as z.infer<typeof submitSchema>;
-  const userId = req.user!.sub;
-
-  const modResult = await moderateImage(mediaUrl);
-  if (modResult === 'reject') throw Errors.badRequest('Video selfie rejected: inappropriate content detected');
-
-  const profilePhotos = await prisma.photo.findMany({
-    where: { userId, isPublished: true, isPrivate: false },
-    select: { url: true },
-    orderBy: { order: 'asc' },
-  });
-  const result = await aiVerification.verifyFace(mediaUrl, profilePhotos.map((p) => p.url));
-
-  const verification = await prisma.verification.create({
-    data: {
-      userId,
-      type: 'face',
-      status: result.approved ? 'approved' : 'rejected',
-      mediaUrl,
-      score: result.score,
-      reason: result.reason,
-      reviewedAt: new Date(),
-    },
-  });
-
-  if (result.approved) {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { phoneVerified: true, emailVerified: true } });
-    const isVerified = !!((user?.phoneVerified || user?.emailVerified) && result.approved);
-    await prisma.user.update({ where: { id: userId }, data: { faceVerified: true, isVerified } });
-
-    if (isVerified) {
-      // Emit socket event — verification.complete
-      const { emitToUser } = await import('../../realtime/emitter');
-      emitToUser(userId, 'verification.complete', { isVerified: true });
-    }
-  }
-
-  res.status(201).json({ id: verification.id, status: verification.status, score: result.score });
-}
+// Face verification removed (20260618). isVerified = phoneVerified OR emailVerified.
 
 // ── Identity verification ─────────────────────────────────
 

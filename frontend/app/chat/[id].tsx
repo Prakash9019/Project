@@ -240,15 +240,11 @@ export default function Chat() {
     setDraft('');
   };
 
-  const pickAndSendPhoto = async (viewOnce: boolean) => {
-    setAttachOpen(false);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
-    if (res.canceled || !res.assets[0]) return;
-
-    const localUri = res.assets[0].uri;
-    const tempId = `tmp-${Date.now()}`;
+  // Upload + send a single photo as its own message. Adds an optimistic bubble
+  // immediately, replaces it with the server message, and re-throws on failure
+  // so the caller can stop a batch and surface the error.
+  const uploadAndSendPhoto = async (localUri: string, viewOnce: boolean) => {
+    const tempId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     // Show the local image immediately so the user sees it right away.
     setMessages((prev) => [
       ...prev,
@@ -278,8 +274,6 @@ export default function Chat() {
       } as Message,
     ]);
 
-    setSending(true);
-    setBanner(null);
     try {
       const gcsPath = await uploadChatPhoto(localUri);
       const apiRes = await sendMessage(conversationId, {
@@ -293,9 +287,33 @@ export default function Chat() {
       );
       setAudioEnabled(audioCallEnabled);
       setVideoEnabled(videoCallEnabled);
-      fetchConversations('inbox', true).catch(() => {});
     } catch (e) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      throw e;
+    }
+  };
+
+  const pickAndSendPhoto = async (viewOnce: boolean) => {
+    setAttachOpen(false);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+      allowsMultipleSelection: true,
+      orderedSelection: true,
+    });
+    if (res.canceled || res.assets.length === 0) return;
+
+    setSending(true);
+    setBanner(null);
+    try {
+      // Send each selected photo as its own message, in selection order.
+      for (const asset of res.assets) {
+        await uploadAndSendPhoto(asset.uri, viewOnce);
+      }
+      fetchConversations('inbox', true).catch(() => {});
+    } catch (e) {
       const err = e as ApiError;
       if (err.status === 403 && err.code === 'interaction_limit_reached') setUpgradeOpen(true);
       else if (err.status === 403 && err.code === 'plan_required') setUpgradeOpen(true);

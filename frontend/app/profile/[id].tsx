@@ -310,10 +310,9 @@ export default function ProfileDetail() {
           </View>
 
           {/* Verification badges */}
-          {(profile.photoVerified || profile.faceVerified || profile.isCollegeVerified) && (
+          {(profile.photoVerified || profile.isCollegeVerified) && (
             <View style={styles.verifyRow}>
               {profile.photoVerified && <Badge theme={theme} icon="image" label="Photo verified" />}
-              {profile.faceVerified && <Badge theme={theme} icon="happy" label="Face verified" />}
               {profile.isCollegeVerified && <Badge theme={theme} icon="school" label="College" />}
             </View>
           )}

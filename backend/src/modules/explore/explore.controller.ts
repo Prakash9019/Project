@@ -39,7 +39,8 @@ export async function explore(req: Request, res: Response): Promise<void> {
   const users = await prisma.user.findMany({
     where: {
       id: { not: viewerId, notIn: [...blockedIds] },
-      phoneVerified: true,
+      // Verified-identity gate: phone OTP OR email OTP (face verification removed).
+      AND: [{ OR: [{ phoneVerified: true }, { emailVerified: true }] }],
       isOnGrid: true,
       incognitoMode: false,
       lastActiveAt: { gte: activeThreshold },
@@ -92,7 +93,8 @@ export async function forYou(req: Request, res: Response): Promise<void> {
   const candidates = await prisma.user.findMany({
     where: {
       id: { not: viewerId, notIn: [...blockedIds] },
-      phoneVerified: true,
+      // Verified-identity gate: phone OTP OR email OTP (face verification removed).
+      AND: [{ OR: [{ phoneVerified: true }, { emailVerified: true }] }],
       isOnGrid: true,
       incognitoMode: false,
       lastActiveAt: { gte: activeThreshold },

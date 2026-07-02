@@ -143,6 +143,18 @@ export const env = {
 
   collegeOtpTtlSeconds: num('COLLEGE_OTP_TTL_SECONDS', 600),
 
+  resend: {
+    apiKey: process.env.RESEND_API_KEY ?? '',
+    // e.g. "NearMe <noreply@yourdomain.com>" — must match a verified Resend domain.
+    fromEmail: process.env.RESEND_FROM_EMAIL ?? '',
+  },
+  emailOtp: {
+    ttlSeconds: num('EMAIL_OTP_TTL_SECONDS', 600),     // 10 min
+    maxAttempts: num('EMAIL_OTP_MAX_ATTEMPTS', 5),
+    rateMax: num('EMAIL_OTP_RATE_MAX', 3),             // sends per window
+    rateWindowSeconds: num('EMAIL_OTP_RATE_WINDOW', 600),
+  },
+
   googleMaps: {
     serverApiKey: process.env.GOOGLE_MAPS_SERVER_KEY ?? '',
   },
@@ -165,6 +177,10 @@ const OPTIONAL_WARN_FIREBASE = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 
 const OPTIONAL_WARN = [
   'ANTHROPIC_API_KEY', 'AWS_REKOGNITION_ACCESS_KEY', 'STRIPE_SECRET_KEY',
   'DIGILOCKER_CLIENT_ID', 'ENCRYPTION_KEY',
+  // Email-OTP login (Resend). Validated as optional-warn (like Firebase) rather
+  // than hard-required so the server still boots while these are being set up;
+  // the Resend adapter throws lazily on first send if RESEND_API_KEY is unset.
+  'RESEND_API_KEY', 'RESEND_FROM_EMAIL',
   ...OPTIONAL_WARN_FIREBASE,
 ];
 

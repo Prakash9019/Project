@@ -10,9 +10,8 @@ router.use(requireAuth, requireVerifiedPhone);
 // Verification status
 router.get('/status', asyncHandler(c.getVerificationStatus));
 
-// Photo & face verification
+// Photo verification (face verification removed 20260618)
 router.post('/photo', validate(c.submitSchema), asyncHandler(c.submitPhotoVerification));
-router.post('/face', validate(c.submitSchema), asyncHandler(c.submitFaceVerification));
 
 // Identity verification (DigiLocker / Stripe Identity)
 router.post('/identity', validate(c.identitySchema), asyncHandler(c.verifyIdentity));

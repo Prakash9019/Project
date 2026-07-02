@@ -8,7 +8,7 @@
     "framework": "Express (v1) \u2192 NestJS (v2 migration)",
     "database": "PostgreSQL",
     "orm": "Prisma",
-    "auth": "Firebase Auth (email/password + Google Sign-In) \u2192 custom JWT",
+    "auth": "Passwordless: Firebase Phone OTP (SMS) + Firebase Google Sign-In + custom Email OTP (6-digit via Resend) \u2192 custom JWT",
     "realtime": "Socket.IO",
     "cache": "Redis (geo-spatial index, rate limits, presence)",
     "calling": "Agora SDK or 100ms",
@@ -277,20 +277,28 @@
     "tokenExpiry": "15m",
     "refreshToken": true,
     "refreshExpiry": "7d",
-    "passwordless": false,
-    "identityProvider": "Firebase Auth (email/password + Google Sign-In)",
-    "flow": "Client authenticates with Firebase SDK \u2192 gets Firebase ID token \u2192 POST /api/v1/auth/firebase \u2192 backend verifies with firebase-admin \u2192 upserts user \u2192 issues own JWT pair (accessToken + refreshToken).",
+    "passwordless": true,
+    "methods": ["firebase_phone_otp", "firebase_google", "custom_email_otp"],
+    "flow": {
+      "phone": "Firebase Phone Auth SMS \u2192 Firebase ID token (carries phone_number) \u2192 POST /api/v1/auth/firebase \u2192 NearMe JWT. Sets phoneVerified=true.",
+      "google": "Firebase Google Sign-In \u2192 Firebase ID token (carries email) \u2192 POST /api/v1/auth/firebase \u2192 NearMe JWT. Sets emailVerified per token.",
+      "email": "POST /api/v1/auth/email/send-otp \u2192 POST /api/v1/auth/email/verify-otp \u2192 NearMe JWT directly (no Firebase involved). Sets emailVerified=true."
+    },
     "endpoints": {
       "firebaseLogin": "POST /api/v1/auth/firebase",
+      "emailSendOtp": "POST /api/v1/auth/email/send-otp",
+      "emailVerifyOtp": "POST /api/v1/auth/email/verify-otp",
       "refresh": "POST /api/v1/auth/refresh",
       "logout": "POST /api/v1/auth/logout",
       "me": "GET /api/v1/auth/me"
     },
     "removed": [
       "POST /api/v1/auth/request-otp \u2014 removed, replaced by Firebase",
-      "POST /api/v1/auth/verify-otp \u2014 removed, replaced by Firebase"
+      "POST /api/v1/auth/verify-otp \u2014 removed, replaced by Firebase",
+      "POST /api/v1/verification/face \u2014 removed, face verification dropped"
     ],
-    "verifiedGate": "bearer+verified = valid accessToken AND (emailVerified=true OR phoneVerified=true)"
+    "verifiedGate": "bearer+verified = valid accessToken AND (phoneVerified=true OR emailVerified=true)",
+    "notes": "isVerified = phoneVerified OR emailVerified (changed from AND with faceVerified, which is removed). Discovery (grid/explore) shows users with phoneVerified OR emailVerified."
   },
   "endpoints": [
     {
@@ -331,6 +339,47 @@
             "error": "rate_limited"
           }
         }
+      }
+    },
+    {
+      "id": "email-send-otp",
+      "method": "POST",
+      "path": "/api/v1/auth/email/send-otp",
+      "auth": "none",
+      "summary": "Send a 6-digit email login code via Resend. Rate limited 3 per email per 10 min.",
+      "requestBody": {
+        "required": ["email"],
+        "fields": [{ "name": "email", "type": "string" }]
+      },
+      "responses": {
+        "200": { "schema": { "message": "string", "expiresInSeconds": "number" } },
+        "429": { "schema": { "error": "rate_limit_exceeded", "retryAfterSeconds": "number" } }
+      }
+    },
+    {
+      "id": "email-verify-otp",
+      "method": "POST",
+      "path": "/api/v1/auth/email/verify-otp",
+      "auth": "none",
+      "summary": "Verify a 6-digit email code → issues NearMe JWT pair directly (no Firebase). Upserts user by email, sets emailVerified=true. Max 5 attempts per code.",
+      "requestBody": {
+        "required": ["email", "code"],
+        "fields": [
+          { "name": "email", "type": "string" },
+          { "name": "code", "type": "string", "notes": "6-digit numeric code" }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "accessToken": "string",
+            "refreshToken": "string",
+            "isNewUser": "boolean",
+            "profileComplete": "boolean",
+            "user": "Self"
+          }
+        },
+        "400": { "schema": { "error": "code_expired_or_invalid | invalid_code" } }
       }
     },
     {
@@ -981,14 +1030,14 @@
       "method": "GET",
       "path": "/api/v1/verification/status",
       "auth": "bearer+verified",
-      "summary": "Change 3.1: isVerified = phoneVerified AND faceVerified. Returns computed value.",
+      "summary": "isVerified = phoneVerified OR emailVerified (face verification removed). Returns computed value.",
       "responses": {
         "200": {
           "schema": {
             "phoneVerified": "boolean",
-            "photoVerified": "boolean",
-            "faceVerified": "boolean",
+            "emailVerified": "boolean",
             "isVerified": "boolean",
+            "isCollegeVerified": "boolean",
             "history": "array"
           }
         }
@@ -1000,27 +1049,6 @@
       "path": "/api/v1/verification/photo",
       "auth": "bearer+verified",
       "summary": "Submit selfie for photo verification. No profile photos required.",
-      "requestBody": {
-        "required": [
-          "mediaUrl"
-        ]
-      },
-      "responses": {
-        "201": {
-          "schema": {
-            "id": "uuid",
-            "status": "string",
-            "score": "number"
-          }
-        }
-      }
-    },
-    {
-      "id": "verify-face",
-      "method": "POST",
-      "path": "/api/v1/verification/face",
-      "auth": "bearer+verified",
-      "summary": "Change 3.1: Submit face verification. Sets isVerified=true if phoneVerified is also true.",
       "requestBody": {
         "required": [
           "mediaUrl"
@@ -1336,7 +1364,7 @@
     {
       "name": "User",
       "table": "users",
-      "notes": "v3: added extended profile fields (Change 5), removed dailyNewChatCount/dailyNewChatResetDate (Change 6), isVerified now computed = phoneVerified && faceVerified (Change 3.1).",
+      "notes": "v3: added extended profile fields (Change 5), removed dailyNewChatCount/dailyNewChatResetDate (Change 6), isVerified now computed = phoneVerified OR emailVerified (face verification removed 20260618).",
       "fields": [
         {
           "name": "id",
@@ -1353,7 +1381,7 @@
         {
           "name": "phoneVerified",
           "type": "boolean",
-          "notes": "Legacy OTP verification flag. For Firebase users, mirrors emailVerified."
+          "notes": "true after Firebase Phone Auth (SMS OTP). Part of isVerified (phoneVerified OR emailVerified)."
         },
         {
           "name": "name",
@@ -1507,7 +1535,7 @@
         {
           "name": "isVerified",
           "type": "boolean",
-          "notes": "Change 3.1: computed = phoneVerified && faceVerified. Updated whenever either changes."
+          "notes": "computed = phoneVerified OR emailVerified (face verification removed 20260618). Updated whenever either changes."
         },
         {
           "name": "verifiedBadge",
@@ -1524,7 +1552,9 @@
         },
         {
           "name": "faceVerified",
-          "type": "boolean"
+          "type": "boolean",
+          "deprecated": true,
+          "notes": "DEPRECATED (20260618): face verification removed. Column retained but never read/written. Not returned in API responses."
         },
         {
           "name": "profileCompletenessScore",
@@ -2141,7 +2171,7 @@
     {
       "name": "Verification",
       "table": "verifications",
-      "notes": "v3: added none/verified to VerificationStatus. isVerified on User now computed = phoneVerified && faceVerified.",
+      "notes": "v3: added none/verified to VerificationStatus. isVerified on User now computed = phoneVerified OR emailVerified (face verification removed).",
       "fields": [
         {
           "name": "id",
@@ -2781,6 +2811,16 @@
       "key": "DIGILOCKER_CLIENT_SECRET"
     },
     {
+      "key": "RESEND_API_KEY",
+      "description": "Resend API key for sending 6-digit email OTP login codes",
+      "required": true
+    },
+    {
+      "key": "RESEND_FROM_EMAIL",
+      "description": "Verified Resend sender, e.g. 'NearMe <noreply@yourdomain.com>'",
+      "required": true
+    },
+    {
       "key": "NEXT_PUBLIC_API_URL",
       "required": true
     },
@@ -2845,7 +2885,7 @@
     "CRITICAL \u2014 Blocking (Change 1): bidirectional \u2014 if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
     "CRITICAL \u2014 Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
     "CRITICAL \u2014 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
-    "CRITICAL \u2014 isVerified (Change 3.1): computed = phoneVerified AND faceVerified. Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
+    "CRITICAL \u2014 isVerified: computed = phoneVerified OR emailVerified (face verification removed 20260618). Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
     "CRITICAL \u2014 Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
     "UserCard response fields (Change 5): profilePhoto, firstName, age, distance, lastActiveAt (human-readable), isVerified, height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked.",
     "Albums (Change 7): /api/albums endpoints. Plan limits: free=1/10, premium=3/30, gold=5/50, platinum=unlimited/100. Photos: JPEG/PNG/WebP, max 10MB, AWS Rekognition moderated. Served as signed GCS URLs (15 min expiry). Block check on /api/v1/users/:userId/albums.",

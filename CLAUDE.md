@@ -30,9 +30,19 @@ npx expo run:ios   # or: npx expo run:android
 
 ## Auth
 
-Firebase Auth (email/password + Google Sign-In).
-Client gets a Firebase ID token → `POST /api/v1/auth/firebase` → NearMe JWT
-(`{ accessToken, refreshToken, profileComplete, isNewUser, user }`).
+Passwordless. The user picks one of three methods on `app/onboarding/auth.tsx`:
+
+1. **Phone OTP** — Firebase Phone Auth SMS. `signInWithPhoneNumber` →
+   `confirmation.confirm(code)` → Firebase ID token → `POST /api/v1/auth/firebase`
+   → NearMe JWT. Screens: `phone-login.tsx` → `phone-code.tsx`.
+2. **Email OTP** — custom 6-digit code (NOT a link), sent via **Resend**.
+   `POST /api/v1/auth/email/send-otp` → `POST /api/v1/auth/email/verify-otp`
+   (issues the NearMe JWT directly — no Firebase). Screens: `email-login.tsx` →
+   `email-code.tsx`. Seed `@nearme.dev` personas still log in via password (`/auth/dev-login`).
+3. **Google** — Firebase Google Sign-In → Firebase ID token → `POST /api/v1/auth/firebase`.
+
+All three converge on `{ accessToken, refreshToken, profileComplete, isNewUser, user }`.
+Both OTP code screens reuse `src/components/OtpCodeInput.tsx`.
 Tokens are stored in **SecureStore**. Session is rehydrated via `GET /api/v1/auth/me`.
 On 401 the API client refreshes once via `POST /api/v1/auth/refresh`.
 
@@ -45,7 +55,8 @@ On 401 the API client refreshes once via `POST /api/v1/auth/refresh`.
 4. Free tier = **20 unique people lifetime** cap (not daily). 403
    `interaction_limit_reached` → show `UpgradeModal`, never a raw error.
 5. **14-day inactivity filter** on all discovery — enforced server-side.
-6. `isVerified` = `phoneVerified && faceVerified` (computed server-side).
+6. `isVerified` = `phoneVerified || emailVerified` (computed server-side). Face
+   verification was **removed** — verifying via either phone OTP or email OTP is enough.
 7. Never expose raw GCS paths — all media arrives as signed URLs from the backend.
 8. **Zero TypeScript errors at all times** — `cd frontend && npx tsc --noEmit`.
 

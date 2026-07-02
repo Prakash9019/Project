@@ -47,7 +47,6 @@ function profileFields(user: UserWithRelations) {
     virtualDatingBadge: user.virtualDatingBadge ?? false,
     isVerified: user.isVerified,
     photoVerified: user.photoVerified,
-    faceVerified: user.faceVerified,
   };
 }
 

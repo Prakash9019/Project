@@ -33,6 +33,10 @@ export const RedisKeys = {
   presence: (userId: string) => `presence:${userId}`,
   banned: (userId: string) => `banned:${userId}`,
   collegeOtp: (userId: string) => `college-otp:${userId}`,
+  // Email OTP (6-digit login code via Resend)
+  emailOtp:         (email: string) => `email-otp:${email}`,
+  emailOtpAttempts: (email: string) => `email-otp-attempts:${email}`,
+  emailOtpRate:     (email: string) => `email-otp-rate:${email}`,
   lastActive: (userId: string) => `lastActive:${userId}`,
   aiTop10: (userId: string) => `ai:top10:${userId}`,
 

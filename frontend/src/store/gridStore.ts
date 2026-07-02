@@ -5,6 +5,12 @@ import { getGrid, GridQuery, ApiError } from '../services/api';
 
 const CACHE_KEY = 'cache_grid_cards';
 
+export interface ExploreLocation {
+  lat: number;
+  lng: number;
+  label: string;
+}
+
 interface GridState {
   cards: UserCard[];
   total: number;
@@ -14,6 +20,10 @@ interface GridState {
   loadingMore: boolean;
   refreshing: boolean;
   error: string | null;
+  /** When set, Browse discovers around this explored location instead of GPS. */
+  exploreLocation: ExploreLocation | null;
+  setExploreLocation: (loc: ExploreLocation) => void;
+  clearExploreLocation: () => void;
   /** Fetch the first page (resets the list). */
   fetchGrid: (query: Omit<GridQuery, 'limit' | 'offset'>, refreshing?: boolean) => Promise<void>;
   /** Append the next page (pagination on scroll end). */
@@ -35,6 +45,10 @@ export const useGridStore = create<GridState>((set, get) => ({
   loadingMore: false,
   refreshing: false,
   error: null,
+  exploreLocation: null,
+
+  setExploreLocation: (loc) => set({ exploreLocation: loc }),
+  clearExploreLocation: () => set({ exploreLocation: null }),
 
   fetchGrid: async (query, refreshing = false) => {
     set(refreshing ? { refreshing: true, error: null } : { loading: true, error: null });

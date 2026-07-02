@@ -179,11 +179,10 @@ export interface User {
   virtualDatingBadge: boolean;
   voiceClipUrl: string | null;
   videoClipUrl: string | null;
-  isVerified: boolean; // computed = phoneVerified && faceVerified
+  isVerified: boolean; // computed = phoneVerified OR emailVerified (face verification removed)
   verifiedBadge: boolean;
   isCollegeVerified: boolean;
   photoVerified: boolean;
-  faceVerified: boolean;
   profileCompletenessScore: number;
   plan: Plan;
   planExpiresAt: string | null;
@@ -295,7 +294,6 @@ export interface PublicProfile extends UserCard {
   datingIntentions?: DatingIntention[];
   tags: string[];
   photoVerified?: boolean;
-  faceVerified?: boolean;
   isCollegeVerified?: boolean;
 }
 

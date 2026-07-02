@@ -70,10 +70,13 @@ function RootStack() {
           <Stack.Screen name="call/[id]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
           <Stack.Screen name="filters" options={{ presentation: 'modal' }} />
           <Stack.Screen name="explore" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="map-explore" options={{ presentation: 'modal' }} />
           <Stack.Screen name="settings/index" options={{ presentation: 'modal' }} />
           <Stack.Screen name="settings/edit-profile" />
-          <Stack.Screen name="albums/index" />
+          <Stack.Screen name="albums/index" options={{ presentation: 'modal' }} />
           <Stack.Screen name="albums/[id]" />
+          <Stack.Screen name="albums/create" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="albums/edit" options={{ presentation: 'modal' }} />
           <Stack.Screen name="verification" />
         </Stack>
         <IncomingCallSheet />

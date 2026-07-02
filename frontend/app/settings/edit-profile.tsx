@@ -106,7 +106,7 @@ export default function EditProfile() {
       refreshUser();
       return;
     }
-    setPrimaryPhoto(user.primaryPhotoUrl ?? null);
+    setPrimaryPhoto(user.primaryPhotoUrl?.trim() || null);
     setFirstName(user.firstName ?? '');
     setAge(user.age ? String(user.age) : '');
     setBio(user.bio ?? '');
@@ -285,7 +285,7 @@ export default function EditProfile() {
               <Image source={{ uri: primaryPhoto }} style={styles.photo} contentFit="cover" transition={120} cachePolicy="memory-disk" />
             ) : (
               <>
-                <Ionicons name="person-circle" size={64} color={theme.textTertiary} />
+                <Ionicons name="person" size={64} color={theme.textTertiary} />
                 <Text style={{ color: theme.textSecondary, marginTop: 8 }}>Set profile photo</Text>
               </>
             )}

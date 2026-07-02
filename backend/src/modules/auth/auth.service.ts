@@ -13,6 +13,10 @@ export async function loginWithFirebase(idToken: string) {
   const firebaseUid = decoded.uid;
   const email = decoded.email ?? null;
   const emailVerified = decoded.email_verified ?? false;
+  // Firebase Phone Auth tokens carry phone_number (E.164); Google/email tokens
+  // do not. A present phone_number means the SMS OTP was verified by Firebase.
+  const phone = decoded.phone_number ?? null;
+  const phoneVerified = !!phone;
 
   const existing = await prisma.user.findFirst({
     where: { OR: [{ firebaseUid }, ...(email ? [{ email }] : [])] },
@@ -23,27 +27,33 @@ export async function loginWithFirebase(idToken: string) {
   const user = await prisma.user.upsert({
     where: { firebaseUid },
     update: {
-      email,
-      emailVerified,
-      // Verification no longer gates the app. A Firebase identity counts as
-      // verified so the user is immediately discoverable (grid/explore filter
-      // on phoneVerified: true) and never blocked by requireVerifiedPhone.
-      phoneVerified: true,
+      // Only set fields the token actually carries — never downgrade a prior
+      // verification (e.g. a later Google sign-in must not unset phoneVerified).
+      ...(email ? { email, emailVerified } : {}),
+      ...(phone ? { phone, phoneVerified: true } : {}),
       lastActiveAt: new Date(),
     },
     create: {
       firebaseUid,
       email,
       emailVerified,
-      phoneVerified: true,  // verified-by-Firebase; discoverable + never gated
+      phone,
+      phoneVerified,
       settings: { create: {} },
       wallet: { create: {} },
     },
     include: { photos: true, settings: true },
   });
 
+  // isVerified = phoneVerified OR emailVerified (face verification removed).
+  const isVerified = user.phoneVerified || user.emailVerified;
+  if (isVerified !== user.isVerified) {
+    await prisma.user.update({ where: { id: user.id }, data: { isVerified } });
+    user.isVerified = isVerified;
+  }
+
   const profileComplete = Boolean(user.name || user.firstName);
-  const tokens = await issueTokenPair(user.id, user.emailVerified, user.tier, user.plan, user.planExpiresAt);
+  const tokens = await issueTokenPair(user.id, user.phoneVerified, user.emailVerified, user.tier, user.plan, user.planExpiresAt);
   return { user, tokens, profileComplete, isNewUser };
 }
 
@@ -70,7 +80,7 @@ export async function refreshTokens(refreshToken: string) {
   const user = await prisma.user.findUnique({ where: { id: claims.sub } });
   if (!user) throw Errors.unauthorized('User no longer exists');
 
-  return issueTokenPair(user.id, user.emailVerified, user.tier, user.plan, user.planExpiresAt, stored.family);
+  return issueTokenPair(user.id, user.phoneVerified, user.emailVerified, user.tier, user.plan, user.planExpiresAt, stored.family);
 }
 
 export async function logoutSession(refreshToken: string): Promise<void> {
@@ -111,7 +121,7 @@ export async function devLogin(email: string, password: string) {
   if (!user) throw Errors.notFound(`No seed user with email ${email}. Run: npm run db:seed`);
 
   const profileComplete = Boolean(user.name || user.firstName);
-  const tokens = await issueTokenPair(user.id, user.emailVerified, user.tier, user.plan, user.planExpiresAt);
+  const tokens = await issueTokenPair(user.id, user.phoneVerified, user.emailVerified, user.tier, user.plan, user.planExpiresAt);
   return { user, tokens, profileComplete, isNewUser: false };
 }
 
@@ -121,8 +131,9 @@ function effectivePlan(plan: string, planExpiresAt: Date | null): string {
   return planExpiresAt > new Date() ? plan : 'free';
 }
 
-async function issueTokenPair(
+export async function issueTokenPair(
   userId: string,
+  phoneVerified: boolean,
   emailVerified: boolean,
   tier: string,
   plan: string,
@@ -132,7 +143,7 @@ async function issueTokenPair(
   const effectPlan = effectivePlan(plan, planExpiresAt);
   const accessToken = signAccessToken({
     sub: userId,
-    phoneVerified: false,  // OTP auth removed; always false for Firebase users
+    phoneVerified,
     emailVerified,
     tier,
     plan: effectPlan,

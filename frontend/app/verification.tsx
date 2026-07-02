@@ -1,73 +1,25 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../src/theme';
-import {
-  getVerificationStatus,
-  verifyPhoto,
-  verifyFace,
-  VerificationStatusResponse,
-  ApiError,
-} from '../src/services/api';
-import { useAuthStore } from '../src/store/authStore';
+import { getVerificationStatus, VerificationStatusResponse } from '../src/services/api';
 
 export default function Verification() {
   const router = useRouter();
   const { theme } = useTheme();
-  const refreshUser = useAuthStore((s) => s.refreshUser);
   const [status, setStatus] = useState<VerificationStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'photo' | 'face' | null>(null);
 
-  const load = async () => {
-    try {
-      setStatus(await getVerificationStatus());
-    } catch {
-      /* shown as default */
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    getVerificationStatus()
+      .then(setStatus)
+      .catch(() => { /* shown as default */ })
+      .finally(() => setLoading(false));
+  }, []);
 
-  const submit = async (kind: 'photo' | 'face') => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Camera needed', 'Allow camera access to verify.');
-      return;
-    }
-    const res = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, quality: 0.8 });
-    if (res.canceled || !res.assets[0]) return;
-    setBusy(kind);
-    try {
-      if (kind === 'photo') await verifyPhoto(res.assets[0].uri);
-      else await verifyFace(res.assets[0].uri);
-      await load();
-      await refreshUser();
-      Alert.alert('Submitted', 'Your verification is being reviewed.');
-    } catch (e) {
-      Alert.alert('Failed', (e as ApiError).message ?? 'Try again.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const Row = ({
-    icon,
-    label,
-    done,
-    onPress,
-    loadingKey,
-  }: {
-    icon: any;
-    label: string;
-    done: boolean;
-    onPress: () => void;
-    loadingKey?: 'photo' | 'face';
-  }) => (
+  const Row = ({ icon, label, done }: { icon: any; label: string; done: boolean }) => (
     <View style={[styles.row, { backgroundColor: theme.surface }]}>
       <Ionicons name={icon} size={22} color={done ? theme.success : theme.textSecondary} />
       <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>{label}</Text>
@@ -77,9 +29,7 @@ export default function Verification() {
           <Text style={[styles.doneText, { color: theme.success }]}>Verified</Text>
         </View>
       ) : (
-        <Pressable style={[styles.verifyBtn, { backgroundColor: theme.brand }]} onPress={onPress} disabled={busy != null}>
-          {busy === loadingKey ? <ActivityIndicator size="small" color={theme.textInverse} /> : <Text style={[styles.verifyText, { color: theme.textInverse }]}>Verify</Text>}
-        </Pressable>
+        <Ionicons name="close-circle-outline" size={20} color={theme.textTertiary} />
       )}
     </View>
   );
@@ -108,13 +58,13 @@ export default function Verification() {
               {status?.isVerified ? "You're verified" : 'Get the blue tick'}
             </Text>
             <Text style={[styles.bannerSub, { color: theme.textSecondary }]}>
-              Verified status requires both phone and face verification.
+              You're verified once your phone or email is confirmed.
             </Text>
           </View>
 
-          <Row icon="call" label="Phone verified" done={!!status?.phoneVerified} onPress={() => {}} />
-          <Row icon="image" label="Photo verification" done={!!status?.photoVerified} onPress={() => submit('photo')} loadingKey="photo" />
-          <Row icon="happy" label="Face verification" done={!!status?.faceVerified} onPress={() => submit('face')} loadingKey="face" />
+          <Row icon="call" label="Phone verified" done={!!status?.phoneVerified} />
+          <Row icon="mail" label="Email verified" done={!!status?.emailVerified} />
+          <Row icon="school" label="College verified" done={!!status?.isCollegeVerified} />
         </View>
       )}
     </SafeAreaView>
@@ -134,6 +84,4 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 15, fontWeight: '600', flex: 1 },
   doneTag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   doneText: { fontSize: 13, fontWeight: '700' },
-  verifyBtn: { borderRadius: 999, paddingHorizontal: 18, height: 36, alignItems: 'center', justifyContent: 'center', minWidth: 72 },
-  verifyText: { fontSize: 14, fontWeight: '700' },
 });

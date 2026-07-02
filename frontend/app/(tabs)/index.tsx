@@ -18,9 +18,16 @@ import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { useGridStore } from '../../src/store/gridStore';
 import { useFilterStore } from '../../src/store/filterStore';
 import { useAuthStore } from '../../src/store/authStore';
+import { useInterestStore } from '../../src/store/interestStore';
 import { Avatar } from '../../src/components/Avatar';
+import { ProfileSidebar } from '../../src/components/ProfileSidebar';
 import { UserCardTile } from '../../src/components/UserCardTile';
 import { GridSkeleton } from '../../src/components/Skeleton';
+import { UpgradeModal } from '../../src/components/UpgradeModal';
+import { ViewsList } from '../../src/components/interest/ViewsList';
+import { TapsList } from '../../src/components/interest/TapsList';
+import { planAtLeast } from '../../src/lib/format';
+import { markInterestSeen, hasUnreadInterest } from '../../src/utils/interestUnread';
 import { updateLocation, GridQuery } from '../../src/services/api';
 import type { UserCard } from '../../src/types/api';
 
@@ -45,11 +52,28 @@ export default function Browse() {
   const rowHeight = tile + GAP;
 
   const { cards, loading, refreshing, loadingMore, error, total, fetchGrid, fetchMore, hydrateCache } = useGridStore();
+  const exploreLocation = useGridStore((s) => s.exploreLocation);
+  const clearExploreLocation = useGridStore((s) => s.clearExploreLocation);
   const me = useAuthStore((s) => s.user);
+  const plan = me?.plan ?? 'free';
+  const canSeeViews = planAtLeast(plan, 'gold');
+
+  const {
+    views,
+    taps,
+    loading: interestLoading,
+    refreshing: interestRefreshing,
+    error: interestError,
+    fetchInterest,
+  } = useInterestStore();
 
   const [coords, setCoords] = useState<Coords | null>(null);
   const [permDenied, setPermDenied] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [interestTab, setInterestTab] = useState<'views' | 'taps'>('views');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasUnread, setHasUnread] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const lastRefresh = useRef(0);
 
   const filterVersion = useFilterStore((s) => s.version);
@@ -71,6 +95,16 @@ export default function Browse() {
 
   const acquireAndLoad = useCallback(
     async (refreshingFlag = false) => {
+      // Exploring a different location: read-only — use its coords, don't update
+      // the user's stored location.
+      if (exploreLocation) {
+        const c = { lat: exploreLocation.lat, lng: exploreLocation.lng };
+        setPermDenied(false);
+        setCoords(c);
+        await fetchGrid({ ...c, ...query }, refreshingFlag);
+        lastRefresh.current = Date.now();
+        return;
+      }
       try {
         const perm = await Location.requestForegroundPermissionsAsync();
         if (!perm.granted) {
@@ -88,7 +122,7 @@ export default function Browse() {
         setPermDenied(true);
       }
     },
-    [fetchGrid, query]
+    [fetchGrid, query, exploreLocation]
   );
 
   // Hydrate cached grid immediately for instant content / offline support.
@@ -96,10 +130,11 @@ export default function Browse() {
     hydrateCache();
   }, [hydrateCache]);
 
-  // Initial load + reload when the quick filter or applied filters change.
+  // Initial load + reload when the quick filter, applied filters, or the
+  // explored location change.
   useEffect(() => {
     acquireAndLoad(false);
-  }, [activeFilter, filterVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeFilter, filterVersion, exploreLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh every 3 minutes while focused.
   useFocusEffect(
@@ -117,6 +152,35 @@ export default function Browse() {
       return () => clearInterval(id);
     }, [coords, query, fetchGrid])
   );
+
+  // Keep interest data fresh so the unread indicator is accurate — on mount,
+  // when the plan changes, and whenever the Browse screen regains focus.
+  useEffect(() => {
+    if (me?.id) fetchInterest(canSeeViews, false);
+  }, [me?.id, canSeeViews, fetchInterest]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (me?.id) fetchInterest(canSeeViews, false);
+    }, [me?.id, canSeeViews, fetchInterest])
+  );
+
+  // Recompute the unread dot whenever views/taps change.
+  useEffect(() => {
+    let cancelled = false;
+    hasUnreadInterest(views, taps).then((v) => {
+      if (!cancelled) setHasUnread(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [views, taps]);
+
+  const openInterest = useCallback(() => {
+    markInterestSeen();
+    setHasUnread(false); // optimistic clear
+    setActiveFilter('interest');
+  }, []);
 
   const openProfile = useCallback(
     (card: UserCard) => {
@@ -138,14 +202,14 @@ export default function Browse() {
           uri={me?.primaryPhotoUrl}
           size={38}
           online
-          onPress={() => router.push('/settings')}
+          onPress={() => setSidebarOpen(true)}
         />
         <Pressable
           style={[styles.search, { backgroundColor: theme.surfaceElevated }]}
-          onPress={() => router.push('/explore')}
+          onPress={() => router.push('/map-explore')}
         >
           <Ionicons name="search" size={18} color={theme.textTertiary} />
-          <Text style={[styles.searchText, { color: theme.textTertiary }]}>Discover people nearby</Text>
+          <Text style={[styles.searchText, { color: theme.textTertiary }]}>Explore more profiles</Text>
         </Pressable>
         <Pressable style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]} onPress={() => router.push('/filters')}>
           <Ionicons name="options-outline" size={18} color={theme.textPrimary} />
@@ -156,6 +220,18 @@ export default function Browse() {
           )}
         </Pressable>
       </View>
+
+      {exploreLocation && (
+        <View style={[styles.exploreBanner, { backgroundColor: theme.surfaceElevated }]}>
+          <Ionicons name="location" size={16} color={theme.brand} />
+          <Text style={[styles.exploreText, { color: theme.textPrimary }]} numberOfLines={1}>
+            Showing profiles near {exploreLocation.label}
+          </Text>
+          <Pressable onPress={clearExploreLocation} hitSlop={10}>
+            <Ionicons name="close-circle" size={20} color={theme.textTertiary} />
+          </Pressable>
+        </View>
+      )}
 
       <View style={styles.chipsRow}>
         {QUICK_FILTERS.map((q) => {
@@ -184,9 +260,68 @@ export default function Browse() {
             </Pressable>
           );
         })}
+
+        {/* Interest filter — swaps the grid for the Views/Taps content inline. */}
+        <View style={styles.chipWrap}>
+          {activeFilter === 'interest' ? (
+            <Pressable onPress={() => setActiveFilter(null)}>
+              <LinearGradient
+                colors={theme.gradientWarm}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.chip}
+              >
+                <Text style={[styles.chipText, { color: '#fff' }]}>Interest</Text>
+              </LinearGradient>
+            </Pressable>
+          ) : (
+            <Pressable onPress={openInterest} style={[styles.chip, { backgroundColor: theme.backgroundTertiary }]}>
+              <Text style={[styles.chipText, { color: theme.textPrimary }]}>Interest</Text>
+            </Pressable>
+          )}
+          {hasUnread && <View style={[styles.interestDot, { backgroundColor: theme.brand }]} pointerEvents="none" />}
+        </View>
       </View>
 
-      {permDenied ? (
+      {activeFilter === 'interest' ? (
+        <View style={{ flex: 1 }}>
+          <View style={styles.interestTabs}>
+            {(['views', 'taps'] as const).map((t) => {
+              const active = interestTab === t;
+              const label = t === 'views' ? 'Views' : 'Taps';
+              const count = t === 'views' ? (canSeeViews ? views.length : 0) : taps.length;
+              return (
+                <Pressable key={t} style={styles.interestTabBtn} onPress={() => setInterestTab(t)}>
+                  <Text style={[styles.interestTabText, { color: active ? theme.textPrimary : theme.textTertiary }]}>
+                    {label}{count ? ` ${count}` : ''}
+                  </Text>
+                  {active && <View style={[styles.interestTabUnderline, { backgroundColor: theme.textPrimary }]} />}
+                </Pressable>
+              );
+            })}
+          </View>
+          {interestTab === 'views' ? (
+            <ViewsList
+              views={views}
+              loading={interestLoading}
+              refreshing={interestRefreshing}
+              error={interestError}
+              canSeeViews={canSeeViews}
+              onRefresh={() => fetchInterest(canSeeViews, true)}
+              onUpgrade={() => setUpgradeOpen(true)}
+            />
+          ) : (
+            <TapsList
+              taps={taps}
+              loading={interestLoading}
+              refreshing={interestRefreshing}
+              error={interestError}
+              onRefresh={() => fetchInterest(canSeeViews, true)}
+              onLimitReached={() => setUpgradeOpen(true)}
+            />
+          )}
+        </View>
+      ) : permDenied ? (
         <View style={styles.empty}>
           <Ionicons name="location-outline" size={48} color={theme.textTertiary} />
           <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>Location needed</Text>
@@ -246,6 +381,15 @@ export default function Browse() {
           )}
         />
       )}
+
+      <UpgradeModal
+        visible={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        title="See who's into you"
+        message="Upgrade to Gold to see everyone who viewed your profile."
+      />
+
+      <ProfileSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -261,9 +405,17 @@ const styles = StyleSheet.create({
   iconChip: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   filterBadge: { position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   filterBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.heavy, fontWeight: '800' },
+  exploreBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, paddingHorizontal: 14, height: 40, borderRadius: 999 },
+  exploreText: { flex: 1, fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
   chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  chipWrap: { position: 'relative' },
   chip: { borderRadius: 999, paddingHorizontal: 18, height: 36, justifyContent: 'center', alignItems: 'center' },
   chipText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  interestDot: { position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: 4 },
+  interestTabs: { flexDirection: 'row', marginBottom: 2 },
+  interestTabBtn: { flex: 1, alignItems: 'center', paddingBottom: 10 },
+  interestTabText: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600', paddingTop: 4 },
+  interestTabUnderline: { height: 2, width: '70%', marginTop: 8, borderRadius: 2 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
   emptyTitle: { fontSize: 19, fontFamily: DisplayFont.bold, fontWeight: '700' },
   emptyBody: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 20 },

@@ -266,9 +266,13 @@ model User {
   virtualDatingBadge Boolean @default(false)
 
   // ── verification / trust ──
-  // isVerified is computed: true when phoneVerified=true AND faceVerified=true (Change 3.1)
+  // isVerified is computed: true when phoneVerified=true OR emailVerified=true.
+  // (Face verification was removed — verifying via either phone OTP or email OTP
+  // is sufficient. See migration 20260618_remove_face_verification.)
   isVerified    Boolean @default(false)
   photoVerified Boolean @default(false)
+  // DEPRECATED: face verification was removed. Column retained to avoid a
+  // destructive drop on existing data; it is no longer read or written anywhere.
   faceVerified  Boolean @default(false)
 
   tier            SubscriptionTier @default(free)

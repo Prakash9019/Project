@@ -141,7 +141,8 @@ export async function getGrid(filters: GridFilters) {
   const users = await prisma.user.findMany({
     where: {
       id: { in: candidateIds },
-      phoneVerified: true,
+      // Verified-identity gate: phone OTP OR email OTP (face verification removed).
+      AND: [{ OR: [{ phoneVerified: true }, { emailVerified: true }] }],
       isOnGrid: true,
       incognitoMode: false,
       pauseIncomingMessages: false,

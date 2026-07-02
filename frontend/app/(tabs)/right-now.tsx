@@ -12,13 +12,12 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Switch,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { useTheme, FontFamily, DisplayFont, type AppTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { ListSkeleton } from '../../src/components/Skeleton';
 import { RightNowIcon } from '../../src/components/icons';
@@ -26,17 +25,6 @@ import { showError, showSuccess, toastApiError } from '../../src/lib/toast';
 import { minutesAgoLabel, expiresInLabel } from '../../src/lib/format';
 import { getRightNow, updateProfile, startConversation, ApiError } from '../../src/services/api';
 import type { RightNowCategory, RightNowCard, Self } from '../../src/types/api';
-
-/** Reference palette from ui_images/rightnow_ui.png */
-const RNUI = {
-  bg: '#000000',
-  chip: '#2C2C2E',
-  chipActive: '#3A3A3C',
-  purple: '#9B4DEE',
-  meta: '#8E8E93',
-  joinPill: '#2C2C2E',
-  online: '#30D158',
-};
 
 const MAX_CHARS = 140;
 
@@ -55,7 +43,7 @@ const DURATIONS: { key: string; label: string; hours: number | 'tonight' }[] = [
   { key: 'tonight', label: 'Tonight', hours: 'tonight' },
 ];
 
-type FilterKey = 'distance' | 'hosting' | 'position';
+type FilterKey = 'distance' | 'hosting' | 'position' | 'age';
 
 function expiresAtFor(hours: number | 'tonight'): string {
   const now = new Date();
@@ -94,10 +82,10 @@ export default function RightNow() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const [introDismissed, setIntroDismissed] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, boolean>>({
-    distance: false,
-    hosting: false,
-    position: false,
+    distance: false, hosting: false, position: false, age: false,
   });
   const [distanceDesc, setDistanceDesc] = useState(false);
   const [myJoinedAt, setMyJoinedAt] = useState<string | null>(null);
@@ -160,17 +148,17 @@ export default function RightNow() {
 
   const displayed = useMemo(() => {
     let list = feed.filter((u) => u.id !== user?.id);
-    if (filters.hosting) {
-      list = list.filter((u) => isHostingStatus(u.rightNowStatus, u.rightNowCategory));
+    if (filters.hosting) list = list.filter((u) => isHostingStatus(u.rightNowStatus, u.rightNowCategory));
+    if (filters.position) list = list.filter((u) => !!u.preferences?.trim());
+    if (filters.age) {
+      list = [...list].sort((a, b) => (a.age ?? 999) - (b.age ?? 999));
+    } else {
+      list.sort((a, b) => {
+        const da = parseDistanceMeters(a.distanceLabel, a.distanceMeters);
+        const db = parseDistanceMeters(b.distanceLabel, b.distanceMeters);
+        return distanceDesc ? db - da : da - db;
+      });
     }
-    if (filters.position) {
-      list = list.filter((u) => !!u.preferences?.trim());
-    }
-    list.sort((a, b) => {
-      const da = parseDistanceMeters(a.distanceLabel, a.distanceMeters);
-      const db = parseDistanceMeters(b.distanceLabel, b.distanceMeters);
-      return distanceDesc ? db - da : da - db;
-    });
     if (myRow) list = [myRow, ...list];
     return list;
   }, [feed, filters, distanceDesc, myRow, user?.id]);
@@ -178,7 +166,11 @@ export default function RightNow() {
   const toggleFilter = (key: FilterKey) => {
     if (key === 'distance') {
       setDistanceDesc((d) => !d);
-      setFilters((f) => ({ ...f, distance: true }));
+      setFilters((f) => ({ ...f, distance: true, age: false }));
+      return;
+    }
+    if (key === 'age') {
+      setFilters((f) => ({ ...f, age: !f.age }));
       return;
     }
     setFilters((f) => ({ ...f, [key]: !f[key] }));
@@ -194,6 +186,27 @@ export default function RightNow() {
     }
   };
 
+  const turnOff = async () => {
+    setConfirmOff(false);
+    setSheetOpen(false);
+    const patch = { rightNowStatus: null, rightNowCategory: null, rightNowExpiresAt: null };
+    try {
+      const updated = await updateProfile(patch);
+      setUser(updated);
+    } catch {
+      if (user) setUser({ ...user, ...patch });
+    }
+    load(true);
+  };
+
+  const styles = makeStyles(theme);
+  const FILTER_CHIPS: { key: FilterKey; label: string; icon?: keyof typeof Ionicons.glyphMap }[] = [
+    { key: 'distance', label: 'Distance', icon: 'swap-vertical' },
+    { key: 'hosting', label: 'Hosting' },
+    { key: 'position', label: 'Position' },
+    { key: 'age', label: 'Age' },
+  ];
+
   const renderRow = ({ item }: { item: RightNowCard }) => {
     const isMe = item.id === user?.id;
     const online = item.activity?.online ?? item.lastActiveAt?.toLowerCase() === 'online';
@@ -203,18 +216,14 @@ export default function RightNow() {
     return (
       <Pressable
         style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}
-        onPress={() =>
-          isMe
-            ? setSheetOpen(true)
-            : router.push({ pathname: '/profile/[id]', params: { id: item.id } })
-        }
+        onPress={() => (isMe ? setSheetOpen(true) : router.push({ pathname: '/profile/[id]', params: { id: item.id } }))}
       >
         <View style={styles.avatarWrap}>
           {item.profilePhoto ? (
             <Image source={{ uri: item.profilePhoto }} style={styles.avatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
           ) : (
-            <View style={[styles.avatar, styles.center, { backgroundColor: RNUI.chip }]}>
-              <Ionicons name="person" size={22} color={RNUI.meta} />
+            <View style={[styles.avatar, styles.center, { backgroundColor: theme.surfaceElevated }]}>
+              <Ionicons name="person" size={22} color={theme.textTertiary} />
             </View>
           )}
           {online && (
@@ -225,38 +234,42 @@ export default function RightNow() {
         </View>
 
         <View style={styles.rowBody}>
-          <Text style={styles.statusLine} numberOfLines={2}>
-            {item.rightNowStatus ?? 'Right now'}{' '}
-            <Text style={styles.joinedWord}>joined</Text>
-          </Text>
-          <View style={styles.metaRow}>
-            {!!joinedAgo && (
-              <View style={styles.metaItem}>
-                <Ionicons name="time-outline" size={12} color={RNUI.meta} />
-                <Text style={styles.metaText}>{joinedAgo}</Text>
+          {isMe ? (
+            <>
+              <Text style={styles.statusLine} numberOfLines={1}>{item.firstName ?? 'You'}</Text>
+              <View style={styles.reviewPill}>
+                <Text style={styles.reviewText}>POST UNDER REVIEW, CHECK BACK SOON</Text>
               </View>
-            )}
-            {!!item.distanceLabel && (
-              <View style={[styles.metaItem, styles.metaSpaced]}>
-                <Ionicons name="paper-plane-outline" size={12} color={RNUI.meta} />
-                <Text style={styles.metaText}>{item.distanceLabel}</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.statusLine} numberOfLines={2}>{item.rightNowStatus ?? 'Right now'}</Text>
+              <View style={styles.metaRow}>
+                {!!joinedAgo && (
+                  <View style={styles.metaItem}>
+                    <Ionicons name="time-outline" size={13} color={theme.textTertiary} />
+                    <Text style={styles.metaText}>{joinedAgo}</Text>
+                  </View>
+                )}
+                {!!item.distanceLabel && (
+                  <View style={[styles.metaItem, styles.metaSpaced]}>
+                    <Ionicons name="paper-plane-outline" size={13} color={theme.textTertiary} />
+                    <Text style={styles.metaText}>{item.distanceLabel}</Text>
+                  </View>
+                )}
+                {showHostBadge && (
+                  <View style={styles.hostBadge}>
+                    <Ionicons name="home" size={10} color="#fff" />
+                  </View>
+                )}
               </View>
-            )}
-            {showHostBadge && (
-              <View style={styles.hostBadge}>
-                <Ionicons name="home" size={10} color="#fff" />
-              </View>
-            )}
-          </View>
+            </>
+          )}
         </View>
 
         {!isMe && (
-          <Pressable
-            hitSlop={12}
-            style={styles.msgBtn}
-            onPress={() => openChat(item.id, item.firstName ?? 'Someone')}
-          >
-            <Ionicons name="chevron-forward" size={18} color={RNUI.meta} />
+          <Pressable hitSlop={12} style={styles.msgBtn} onPress={() => openChat(item.id, item.firstName ?? 'Someone')}>
+            <Ionicons name="chatbubble-outline" size={22} color={theme.textTertiary} />
           </Pressable>
         )}
       </Pressable>
@@ -267,77 +280,70 @@ export default function RightNow() {
     <SafeAreaView style={styles.root} edges={['top']}>
       <Text style={styles.title}>Right Now</Text>
 
-
       <View style={styles.chipsRow}>
-        <Pressable
-          onPress={() => toggleFilter('distance')}
-          style={[styles.chip, { backgroundColor: filters.distance ? RNUI.chipActive : RNUI.chip }]}
-        >
-          <Ionicons name="swap-vertical" size={16} color="#FFFFFF" />
-          <Text style={styles.chipText}>Distance</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => toggleFilter('hosting')}
-          style={[styles.chip, { backgroundColor: filters.hosting ? RNUI.chipActive : RNUI.chip }]}
-        >
-          <Text style={styles.chipText}>Hosting</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => toggleFilter('position')}
-          style={[styles.chip, { backgroundColor: filters.position ? RNUI.chipActive : RNUI.chip }]}
-        >
-          <Text style={styles.chipText}>Position</Text>
-        </Pressable>
+        {FILTER_CHIPS.map((c) => {
+          const on = filters[c.key];
+          return (
+            <Pressable
+              key={c.key}
+              onPress={() => toggleFilter(c.key)}
+              style={[styles.chip, { backgroundColor: on ? theme.backgroundTertiary : theme.surfaceElevated }]}
+            >
+              {c.icon && <Ionicons name={c.icon} size={16} color={theme.textPrimary} />}
+              <Text style={styles.chipText}>{c.label}</Text>
+            </Pressable>
+          );
+        })}
       </View>
 
-      <View style={styles.listWrap}>
-        <FlatList
-          data={displayed}
-          keyExtractor={(it) => it.id}
-          renderItem={renderRow}
-          style={styles.list}
-          contentContainerStyle={{
-            paddingTop: 4,
-            paddingBottom: 130,
-            flexGrow: displayed.length === 0 ? 1 : 0,
-          }}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => load(true)}
-              tintColor={RNUI.purple}
-            />
-          }
-          ListEmptyComponent={
-            loading ? null : (
-              <View
-                style={{
-                  flex: 1,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  paddingHorizontal: 32,
-                }}
-              >
-                <View style={[styles.emptyIcon, { backgroundColor: RNUI.purple }]}>
-                  <RightNowIcon size={26} color="#fff" solid />
-                </View>
-                <Text style={styles.emptyTitle}>Nothing happening yet</Text>
-                <Text style={styles.emptyBody}>
-                  {error ?? "Be the first to post what you're up to right now."}
-                </Text>
+      <FlatList
+        data={displayed}
+        keyExtractor={(it) => it.id}
+        renderItem={renderRow}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingTop: 4, paddingBottom: 130, flexGrow: displayed.length === 0 ? 1 : 0 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={theme.rightNow} />}
+        ListHeaderComponent={
+          !introDismissed ? (
+            <View style={styles.intro}>
+              <View style={styles.introIcon}>
+                <RightNowIcon size={24} color="#fff" solid />
               </View>
-            )
-          }
-        />
-      </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.introText}>
+                  Introducing the Right Now feed. Skip the small talk and get to it. Turn on Right Now to add your own post.
+                </Text>
+                <View style={styles.introActions}>
+                  <Pressable hitSlop={8}><Text style={styles.introLearn}>Learn More</Text></Pressable>
+                  <Pressable hitSlop={8} onPress={() => setIntroDismissed(true)}>
+                    <Text style={styles.introDismiss}>Dismiss</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          ) : null
+        }
+        ListEmptyComponent={
+          loading ? null : (
+            <View style={styles.empty}>
+              <View style={styles.emptyIcon}>
+                <RightNowIcon size={26} color="#fff" solid />
+              </View>
+              <Text style={styles.emptyTitle}>Nothing happening yet</Text>
+              <Text style={styles.emptyBody}>{error ?? "Be the first to post what you're up to right now."}</Text>
+            </View>
+          )
+        }
+      />
+      {loading && displayed.length === 0 ? <View style={styles.skeletonWrap}><ListSkeleton /></View> : null}
 
+      {/* Floating create button */}
       <View style={styles.fabRow} pointerEvents="box-none">
-        <Pressable style={styles.joinPill} onPress={() => setSheetOpen(true)}>
-          <Text style={styles.joinLabel}>{myActive ? 'Update' : 'Join'}</Text>
-          {!myActive && <Text style={styles.joinSub}>1 Free</Text>}
+        <Pressable style={styles.fabPill} onPress={() => setSheetOpen(true)}>
+          <Text style={styles.fabPillText}>Right Now</Text>
         </Pressable>
         <Pressable style={styles.fab} onPress={() => setSheetOpen(true)}>
-          <Ionicons name="add" size={34} color="#FFFFFF" />
+          <RightNowIcon size={26} color="#fff" solid />
         </Pressable>
       </View>
 
@@ -345,9 +351,12 @@ export default function RightNow() {
         visible={sheetOpen}
         onClose={() => setSheetOpen(false)}
         user={user}
+        theme={theme}
+        isActive={myActive}
         initialStatus={myStatus ?? ''}
         initialCategory={user?.rightNowCategory ?? null}
         expiresAt={user?.rightNowExpiresAt ?? null}
+        onRequestTurnOff={() => setConfirmOff(true)}
         onPosted={(updated) => {
           setUser(updated);
           setMyJoinedAt(new Date().toISOString());
@@ -361,6 +370,25 @@ export default function RightNow() {
           load(true);
         }}
       />
+
+      {/* Turn Off confirmation */}
+      <Modal visible={confirmOff} transparent animationType="slide" onRequestClose={() => setConfirmOff(false)}>
+        <Pressable style={styles.sheetOverlay} onPress={() => setConfirmOff(false)}>
+          <Pressable style={styles.confirmSheet} onPress={() => {}}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.confirmTitle}>Turn Off Right Now?</Text>
+            <Text style={styles.confirmBody}>
+              Your session timer will keep running, but you'll no longer appear in Right Now.
+            </Text>
+            <Pressable style={styles.turnOffBtn} onPress={turnOff}>
+              <Text style={styles.turnOffText}>Turn Off</Text>
+            </Pressable>
+            <Pressable style={styles.nevermindBtn} onPress={() => setConfirmOff(false)}>
+              <Text style={styles.nevermindText}>Nevermind</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -369,22 +397,28 @@ function CreateSheet({
   visible,
   onClose,
   user,
+  theme,
+  isActive,
   initialStatus,
   initialCategory,
   expiresAt,
+  onRequestTurnOff,
   onPosted,
   onLocalPost,
 }: {
   visible: boolean;
   onClose: () => void;
   user: Self | null;
+  theme: AppTheme;
+  isActive: boolean;
   initialStatus: string;
   initialCategory: RightNowCategory | null;
   expiresAt: string | null;
+  onRequestTurnOff: () => void;
   onPosted: (updated: Awaited<ReturnType<typeof updateProfile>>) => void;
   onLocalPost: (patch: { rightNowStatus: string; rightNowCategory: RightNowCategory; rightNowExpiresAt: string }) => void;
 }) {
-  const { theme } = useTheme();
+  const styles = makeStyles(theme);
   const [text, setText] = useState(initialStatus);
   const [category, setCategory] = useState<RightNowCategory | null>(initialCategory);
   const [duration, setDuration] = useState('2h');
@@ -400,13 +434,8 @@ function CreateSheet({
 
   const post = async () => {
     let status = text.trim();
-    if (!status) {
-      showError('Add a short status first');
-      return;
-    }
-    if (hosting && !status.toLowerCase().includes('host')) {
-      status = `Hosting — ${status}`;
-    }
+    if (!status) { showError('Add a short status first'); return; }
+    if (hosting && !status.toLowerCase().includes('host')) status = `Hosting — ${status}`;
     const dur = DURATIONS.find((d) => d.key === duration)!;
     const patch = {
       rightNowStatus: status.slice(0, MAX_CHARS),
@@ -427,27 +456,36 @@ function CreateSheet({
   };
 
   const pendingLeft = expiresAt ? expiresInLabel(expiresAt) : null;
+  const canPost = text.trim().length > 0;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={[styles.sheetOverlay, { backgroundColor: theme.overlay }]} onPress={onClose}>
+      <Pressable style={styles.sheetOverlay} onPress={onClose}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Pressable style={[styles.sheet, { backgroundColor: '#141414' }]} onPress={() => { }}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
             <View style={styles.sheetHandle} />
 
             <View style={styles.sheetHead}>
               <Pressable hitSlop={10}>
-                <Ionicons name="information-circle-outline" size={22} color={RNUI.meta} />
+                <Ionicons name="information-circle-outline" size={22} color={theme.textTertiary} />
               </Pressable>
               <View style={styles.sheetTitleWrap}>
                 <Text style={styles.sheetTitle}>Right Now</Text>
-                {pendingLeft && initialStatus ? (
-                  <Text style={styles.sheetPending}>Pending · {pendingLeft}</Text>
+                {isActive && pendingLeft ? (
+                  <Text style={styles.sheetPending}>
+                    <Text style={{ color: theme.rightNow }}>Active</Text> {pendingLeft}
+                  </Text>
                 ) : null}
               </View>
-              <Pressable hitSlop={10} onPress={onClose}>
-                <Ionicons name="close" size={24} color={RNUI.meta} />
-              </Pressable>
+              {isActive ? (
+                <Pressable onPress={onRequestTurnOff} style={[styles.masterSwitch, { backgroundColor: theme.rightNow }]}>
+                  <View style={[styles.masterKnob, { transform: [{ translateX: 22 }] }]} />
+                </Pressable>
+              ) : (
+                <Pressable hitSlop={10} onPress={onClose}>
+                  <Ionicons name="close" size={24} color={theme.textTertiary} />
+                </Pressable>
+              )}
             </View>
 
             <View style={styles.inputCard}>
@@ -455,8 +493,8 @@ function CreateSheet({
                 {user?.primaryPhotoUrl ? (
                   <Image source={{ uri: user.primaryPhotoUrl }} style={styles.sheetAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
                 ) : (
-                  <View style={[styles.sheetAvatar, styles.center, { backgroundColor: RNUI.chip }]}>
-                    <Ionicons name="person" size={22} color={RNUI.meta} />
+                  <View style={[styles.sheetAvatar, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
+                    <Ionicons name="person" size={22} color={theme.textTertiary} />
                   </View>
                 )}
                 <View style={styles.editBadge}>
@@ -467,9 +505,8 @@ function CreateSheet({
                 value={text}
                 onChangeText={(t) => setText(t.slice(0, MAX_CHARS))}
                 placeholder="What are you looking for?"
-                placeholderTextColor={RNUI.meta}
+                placeholderTextColor={theme.textTertiary}
                 multiline
-                autoFocus
                 style={styles.sheetInput}
               />
             </View>
@@ -477,15 +514,12 @@ function CreateSheet({
 
             <View style={styles.hostRow}>
               <View style={styles.hostLeft}>
-                <Ionicons name="home" size={20} color={RNUI.purple} />
+                <Ionicons name="home" size={20} color={theme.rightNow} />
                 <Text style={styles.hostLabel}>Hosting</Text>
               </View>
-              <Switch
-                value={hosting}
-                onValueChange={setHosting}
-                trackColor={{ false: RNUI.chip, true: RNUI.purple + '99' }}
-                thumbColor={hosting ? RNUI.purple : RNUI.meta}
-              />
+              <Pressable onPress={() => setHosting((h) => !h)} style={[styles.masterSwitch, { backgroundColor: hosting ? theme.rightNow : theme.backgroundTertiary }]}>
+                <View style={[styles.masterKnob, { transform: [{ translateX: hosting ? 22 : 2 }] }]} />
+              </Pressable>
             </View>
 
             <Text style={styles.sectionLabel}>Category</Text>
@@ -496,10 +530,10 @@ function CreateSheet({
                   <Pressable
                     key={c.key}
                     onPress={() => setCategory(on ? null : c.key)}
-                    style={[styles.catChip, { backgroundColor: on ? RNUI.purple : RNUI.chip }]}
+                    style={[styles.catChip, { backgroundColor: on ? theme.rightNow : theme.surfaceElevated }]}
                   >
-                    <Ionicons name={c.icon} size={15} color={on ? '#fff' : RNUI.meta} />
-                    <Text style={[styles.catText, { color: on ? '#fff' : '#fff' }]}>{c.label}</Text>
+                    <Ionicons name={c.icon} size={15} color={on ? '#fff' : theme.textSecondary} />
+                    <Text style={[styles.catText, { color: on ? '#fff' : theme.textPrimary }]}>{c.label}</Text>
                   </Pressable>
                 );
               })}
@@ -513,16 +547,24 @@ function CreateSheet({
                   <Pressable
                     key={d.key}
                     onPress={() => setDuration(d.key)}
-                    style={[styles.durChip, { backgroundColor: on ? RNUI.purple : RNUI.chip }]}
+                    style={[styles.durChip, { backgroundColor: on ? theme.rightNow : theme.surfaceElevated }]}
                   >
-                    <Text style={[styles.durText, { color: '#fff' }]}>{d.label}</Text>
+                    <Text style={[styles.durText, { color: on ? '#fff' : theme.textPrimary }]}>{d.label}</Text>
                   </Pressable>
                 );
               })}
             </View>
 
-            <Pressable onPress={post} disabled={posting} style={[styles.startBtn, { opacity: posting ? 0.7 : 1 }]}>
-              {posting ? <ActivityIndicator color="#fff" /> : <Text style={styles.startText}>Start</Text>}
+            <Pressable
+              onPress={post}
+              disabled={posting || !canPost}
+              style={[styles.startBtn, { backgroundColor: canPost ? theme.rightNow : theme.backgroundTertiary }]}
+            >
+              {posting ? <ActivityIndicator color="#fff" /> : (
+                <Text style={[styles.startText, { color: canPost ? '#fff' : theme.textTertiary }]}>
+                  {isActive ? 'Save' : 'Start'}
+                </Text>
+              )}
             </Pressable>
           </Pressable>
         </KeyboardAvoidingView>
@@ -531,186 +573,85 @@ function CreateSheet({
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: RNUI.bg },
-  center: { alignItems: 'center', justifyContent: 'center' },
-  title: {
-    fontSize: 26,
-    fontFamily: DisplayFont.bold,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 10,
-    letterSpacing: -0.3,
-  },
-  chipsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    height: 36,
-  },
-  chipText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600', color: '#FFFFFF' },
+function makeStyles(theme: AppTheme) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: theme.background },
+    center: { alignItems: 'center', justifyContent: 'center' },
+    title: {
+      fontSize: 26, fontFamily: DisplayFont.bold, fontWeight: '800', color: theme.textPrimary,
+      paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10, letterSpacing: -0.3,
+    },
+    chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+    chip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, paddingHorizontal: 16, height: 40 },
+    chipText: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600', color: theme.textPrimary },
 
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 12,
-  },
-  avatarWrap: { position: 'relative' },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: RNUI.chip, overflow: 'hidden' },
-  onlineDot: {
-    position: 'absolute',
-    right: -1,
-    bottom: 0,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: RNUI.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  onlineInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: RNUI.online },
-  rowBody: { flex: 1, gap: 5, paddingRight: 4 },
-  statusLine: {
-    fontSize: 15,
-    fontFamily: FontFamily.bold,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    lineHeight: 20,
-  },
-  joinedWord: { fontFamily: FontFamily.regular, fontWeight: '400', color: RNUI.meta },
-  metaRow: { flexDirection: 'row', alignItems: 'center' },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaSpaced: { marginLeft: 10 },
-  metaText: { fontSize: 13, fontFamily: FontFamily.regular, color: RNUI.meta },
-  hostBadge: {
-    marginLeft: 8,
-    width: 18,
-    height: 18,
-    borderRadius: 5,
-    backgroundColor: RNUI.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  msgBtn: { paddingLeft: 6, paddingVertical: 6 },
+    intro: { flexDirection: 'row', gap: 14, paddingHorizontal: 16, paddingVertical: 14 },
+    introIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+    introText: { fontSize: 17, fontFamily: FontFamily.semibold, fontWeight: '600', color: theme.textPrimary, lineHeight: 23 },
+    introActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 28, marginTop: 12 },
+    introLearn: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600', color: theme.textTertiary },
+    introDismiss: { fontSize: 15, fontFamily: FontFamily.bold, fontWeight: '700', color: theme.textPrimary },
 
-  listWrap: { flex: 1 },
-  list: { flex: 1 },
-  empty: { alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  emptyIcon: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
-  emptyTitle: { fontSize: 16, fontFamily: DisplayFont.bold, fontWeight: '700', color: '#FFFFFF' },
-  emptyBody: { fontSize: 13, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 19, color: RNUI.meta },
+    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 14 },
+    avatarWrap: { position: 'relative' },
+    avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.surfaceElevated, overflow: 'hidden' },
+    onlineDot: { position: 'absolute', right: -1, bottom: 0, width: 15, height: 15, borderRadius: 8, backgroundColor: theme.background, alignItems: 'center', justifyContent: 'center' },
+    onlineInner: { width: 11, height: 11, borderRadius: 6, backgroundColor: theme.online },
+    rowBody: { flex: 1, gap: 6, paddingRight: 4 },
+    statusLine: { fontSize: 16, fontFamily: FontFamily.bold, fontWeight: '700', color: theme.textPrimary, lineHeight: 21 },
+    reviewPill: { alignSelf: 'flex-start', backgroundColor: theme.rightNow, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+    reviewText: { fontSize: 12, fontFamily: FontFamily.bold, fontWeight: '700', color: '#fff', letterSpacing: 0.2 },
+    metaRow: { flexDirection: 'row', alignItems: 'center' },
+    metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    metaSpaced: { marginLeft: 12 },
+    metaText: { fontSize: 14, fontFamily: FontFamily.regular, color: theme.textTertiary },
+    hostBadge: { marginLeft: 10, width: 18, height: 18, borderRadius: 5, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+    msgBtn: { paddingLeft: 6, paddingVertical: 6 },
 
-  fabRow: {
-    position: 'absolute',
-    right: 16,
-    bottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  joinPill: {
-    backgroundColor: RNUI.joinPill,
-    borderRadius: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 9,
-    minWidth: 72,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  joinLabel: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '800', color: '#FFFFFF' },
-  joinSub: { fontSize: 11, fontFamily: FontFamily.regular, color: RNUI.meta, marginTop: 1 },
-  fab: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: RNUI.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    skeletonWrap: { position: 'absolute', top: 120, left: 0, right: 0 },
+    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
+    emptyIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+    emptyTitle: { fontSize: 16, fontFamily: DisplayFont.bold, fontWeight: '700', color: theme.textPrimary },
+    emptyBody: { fontSize: 13, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 19, color: theme.textTertiary },
 
-  sheetOverlay: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36 },
-  sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#555', marginBottom: 16 },
-  sheetHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  sheetTitleWrap: { flex: 1, alignItems: 'center' },
-  sheetTitle: { fontSize: 18, fontFamily: DisplayFont.bold, fontWeight: '800', color: '#FFFFFF' },
-  sheetPending: { fontSize: 12, fontFamily: FontFamily.regular, color: RNUI.meta, marginTop: 2 },
-  inputCard: {
-    flexDirection: 'row',
-    gap: 12,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'flex-start',
-    backgroundColor: RNUI.chip,
-  },
-  sheetAvatar: { width: 48, height: 48, borderRadius: 24 },
-  editBadge: {
-    position: 'absolute',
-    right: -2,
-    bottom: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: RNUI.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sheetInput: { flex: 1, minHeight: 72, fontSize: 16, fontFamily: FontFamily.regular, color: '#FFFFFF', textAlignVertical: 'top', paddingTop: 4 },
-  counter: { alignSelf: 'flex-end', fontSize: 12, fontFamily: FontFamily.regular, color: RNUI.meta, marginTop: 6 },
-  hostRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#333',
-    marginTop: 8,
-  },
-  hostLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  hostLabel: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600', color: '#FFFFFF' },
-  sectionLabel: {
-    fontSize: 12,
-    fontFamily: FontFamily.bold,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    color: RNUI.meta,
-    marginTop: 18,
-    marginBottom: 10,
-  },
-  catRow: { gap: 8 },
-  catChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    height: 38,
-    marginRight: 8,
-  },
-  catText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
-  durRow: { flexDirection: 'row', gap: 8 },
-  durChip: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  durText: { fontSize: 14, fontFamily: FontFamily.bold, fontWeight: '700' },
-  startBtn: {
-    height: 54,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 24,
-    backgroundColor: RNUI.purple,
-  },
-  startText: { color: '#fff', fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '800' },
-});
+    fabRow: { position: 'absolute', right: 16, bottom: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+    fabPill: { backgroundColor: theme.surfaceElevated, borderRadius: 24, paddingHorizontal: 20, height: 48, alignItems: 'center', justifyContent: 'center' },
+    fabPillText: { fontSize: 16, fontFamily: DisplayFont.bold, fontWeight: '700', color: theme.textPrimary },
+    fab: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+
+    sheetOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.overlay },
+    sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36, backgroundColor: theme.surface },
+    sheetHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: theme.border, marginBottom: 16 },
+    sheetHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+    sheetTitleWrap: { flex: 1, alignItems: 'center' },
+    sheetTitle: { fontSize: 18, fontFamily: DisplayFont.bold, fontWeight: '800', color: theme.textPrimary },
+    sheetPending: { fontSize: 13, fontFamily: FontFamily.regular, color: theme.textTertiary, marginTop: 2 },
+    masterSwitch: { width: 52, height: 30, borderRadius: 15, justifyContent: 'center' },
+    masterKnob: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#fff' },
+    inputCard: { flexDirection: 'row', gap: 12, borderRadius: 14, padding: 14, alignItems: 'flex-start', backgroundColor: theme.surfaceElevated },
+    sheetAvatar: { width: 48, height: 48, borderRadius: 24 },
+    editBadge: { position: 'absolute', right: -2, bottom: -2, width: 20, height: 20, borderRadius: 10, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+    sheetInput: { flex: 1, minHeight: 72, fontSize: 16, fontFamily: FontFamily.regular, color: theme.textPrimary, textAlignVertical: 'top', paddingTop: 4 },
+    counter: { alignSelf: 'flex-end', fontSize: 12, fontFamily: FontFamily.regular, color: theme.textTertiary, marginTop: 6 },
+    hostRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border, marginTop: 8 },
+    hostLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    hostLabel: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600', color: theme.textPrimary },
+    sectionLabel: { fontSize: 12, fontFamily: FontFamily.bold, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, color: theme.textTertiary, marginTop: 18, marginBottom: 10 },
+    catRow: { gap: 8 },
+    catChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, paddingHorizontal: 14, height: 38, marginRight: 8 },
+    catText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
+    durRow: { flexDirection: 'row', gap: 8 },
+    durChip: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    durText: { fontSize: 14, fontFamily: FontFamily.bold, fontWeight: '700' },
+    startBtn: { height: 54, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
+    startText: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '800' },
+
+    confirmSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 36, backgroundColor: theme.surface },
+    confirmTitle: { fontSize: 22, fontFamily: DisplayFont.bold, fontWeight: '800', color: theme.textPrimary, marginTop: 8 },
+    confirmBody: { fontSize: 16, fontFamily: FontFamily.regular, color: theme.textSecondary, lineHeight: 23, marginTop: 14 },
+    turnOffBtn: { height: 54, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 26, backgroundColor: theme.rightNow },
+    turnOffText: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '800', color: '#fff' },
+    nevermindBtn: { height: 54, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 12, backgroundColor: theme.surfaceElevated },
+    nevermindText: { fontSize: 17, fontFamily: DisplayFont.semibold, fontWeight: '700', color: theme.textPrimary },
+  });
+}

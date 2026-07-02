@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useTheme } from '../src/theme';
+import { useTheme, FontFamily, DisplayFont } from '../src/theme';
 import { useFilterStore, type Filters, type AdvancedFilters } from '../src/store/filterStore';
 import { useAuthStore } from '../src/store/authStore';
 import { UpgradeModal } from '../src/components/UpgradeModal';
@@ -361,34 +361,34 @@ export default function Filters() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 },
-  title: { fontSize: 20, fontWeight: '700' },
-  reset: { fontSize: 15, fontWeight: '700' },
+  title: { fontSize: 20, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  reset: { fontSize: 15, fontFamily: DisplayFont.semibold, fontWeight: '700' },
 
   section: { marginTop: 24 },
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  sectionTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.6 },
+  sectionTitle: { fontSize: 13, fontFamily: FontFamily.bold, fontWeight: '800', letterSpacing: 0.6 },
 
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  rowLabel: { fontSize: 16, fontWeight: '700' },
-  rowValue: { fontSize: 15, fontWeight: '600' },
-  subLabel: { fontSize: 15, fontWeight: '700', marginBottom: 10 },
-  hint: { fontSize: 12, marginTop: 8 },
+  rowLabel: { fontSize: 16, fontFamily: FontFamily.bold, fontWeight: '700' },
+  rowValue: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  subLabel: { fontSize: 15, fontFamily: FontFamily.bold, fontWeight: '700', marginBottom: 10 },
+  hint: { fontSize: 12, fontFamily: FontFamily.regular, marginTop: 8 },
 
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 14, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
 
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 },
-  toggleLabel: { fontSize: 16, fontWeight: '600' },
+  toggleLabel: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600' },
   switch: { width: 44, height: 26, borderRadius: 13, justifyContent: 'center' },
-  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
+  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF' },
 
   lock: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  lockText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
+  lockText: { fontSize: 12, fontFamily: FontFamily.bold, fontWeight: '700', textTransform: 'capitalize' },
 
   advLocked: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 16 },
-  advLockedText: { fontSize: 13, flex: 1, lineHeight: 19 },
+  advLockedText: { fontSize: 13, fontFamily: FontFamily.regular, flex: 1, lineHeight: 19 },
 
   footer: { padding: 16, borderTopWidth: 1 },
   applyBtn: { borderRadius: 999, height: 54, alignItems: 'center', justifyContent: 'center' },
-  applyText: { fontSize: 17, fontWeight: '700' },
+  applyText: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '700' },
 });

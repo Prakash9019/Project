@@ -107,6 +107,18 @@ export const firebaseLogin = (idToken: string) =>
 export const devLogin = (email: string, password: string) =>
   request<FirebaseLoginResponse>('POST', '/api/v1/auth/dev-login', { email, password }, { auth: false });
 
+// ── Email OTP (custom 6-digit code via Resend; no Firebase) ──
+export interface SendEmailOtpResponse {
+  message: string;
+  expiresInSeconds: number;
+}
+export const sendEmailOtp = (email: string) =>
+  request<SendEmailOtpResponse>('POST', '/api/v1/auth/email/send-otp', { email }, { auth: false });
+
+// verify-otp issues a NearMe JWT pair directly (same shape as Firebase login).
+export const verifyEmailOtp = (email: string, code: string) =>
+  request<FirebaseLoginResponse>('POST', '/api/v1/auth/email/verify-otp', { email, code }, { auth: false });
+
 
 export const logout = () => request<void>('POST', '/api/v1/auth/logout');
 
@@ -478,23 +490,15 @@ export const reportUser = (
 
 export interface VerificationStatusResponse {
   phoneVerified: boolean;
-  photoVerified: boolean;
-  faceVerified: boolean;
+  emailVerified: boolean;
   isVerified: boolean;
+  isCollegeVerified: boolean;
   history: unknown[];
 }
 export const getVerificationStatus = () =>
   request<VerificationStatusResponse>('GET', '/api/v1/verification/status');
 
-export const verifyPhoto = (mediaUrl: string) =>
-  request<{ id: string; status: string; score: number }>('POST', '/api/v1/verification/photo', {
-    mediaUrl,
-  });
-
-export const verifyFace = (mediaUrl: string) =>
-  request<{ id: string; status: string; score: number }>('POST', '/api/v1/verification/face', {
-    mediaUrl,
-  });
+// Face verification was removed (20260618). isVerified = phoneVerified OR emailVerified.
 
 /* ────────────────────────────── Albums ────────────────────────────── */
 
@@ -559,6 +563,24 @@ export const getUserAlbum = (userId: string, albumId: string, query?: { cursor?:
   request<AlbumDetailResponse>('GET', `/api/v1/users/${userId}/albums/${albumId}`, undefined, {
     query: query as Record<string, string | number | boolean | undefined>,
   });
+
+/** An album another user has shared with me. */
+export interface SharedAlbum {
+  id: string;
+  title: string;
+  coverPhoto: AlbumPhoto | null;
+  photoCount: number;
+  owner: { id: string; firstName: string | null; profilePhoto: string | null };
+}
+
+/**
+ * GET /api/v1/discovery/albums/shared → albums others shared with me.
+ * Tolerant: resolves to an empty list if the endpoint is unavailable so the
+ * "Shared With Me" section degrades gracefully rather than erroring the screen.
+ */
+export const getSharedAlbums = () =>
+  request<{ albums: SharedAlbum[] }>('GET', '/api/v1/discovery/albums/shared')
+    .catch(() => ({ albums: [] as SharedAlbum[] }));
 
 // ── Travel / city profiles (brief-specified; not in spec endpoints[]) ──
 // Gold+ travel mode. Spec lists travel_pass add-ons + travelMode plan perk but
