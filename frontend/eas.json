@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 20.4.0",
+    "version": ">=20.4.0",
     "appVersionSource": "remote"
   },
   "build": {
@@ -12,6 +12,9 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
       }
     },
     "production": {
