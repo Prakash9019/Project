@@ -1,0 +1,61 @@
+import { z } from 'zod';
+
+export const ROOM_CATEGORIES = [
+  'city_dating',
+  'orientation',
+  'age_group',
+  'relationship_intent',
+  'events',
+  'local_meetups',
+] as const;
+
+export const listRoomsQuerySchema = z.object({
+  category: z.enum(ROOM_CATEGORIES).optional(),
+  city: z.string().trim().min(1).max(100).optional(),
+  search: z.string().trim().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const listJoinedQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const listMessagesQuerySchema = z.object({
+  before: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(30),
+});
+
+export const sendMessageSchema = z.object({
+  content: z.string().trim().min(1, 'Message cannot be empty').max(1000, 'Message too long'),
+  type: z.enum(['text', 'image']).default('text'),
+  mediaUrl: z.string().url().optional(),
+  replyToId: z.string().uuid().optional(),
+});
+
+export const reactSchema = z.object({
+  emoji: z.string().min(1).max(2),
+});
+
+export const listMembersQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  online: z.coerce.boolean().optional(),
+});
+
+export const reportRoomSchema = z.object({
+  reason: z.string().trim().min(1).max(200),
+  details: z.string().trim().max(1000).optional(),
+});
+
+export const reportMessageSchema = z.object({
+  reason: z.string().trim().min(1).max(200),
+});
+
+export type ListRoomsQuery = z.infer<typeof listRoomsQuerySchema>;
+export type ListJoinedQuery = z.infer<typeof listJoinedQuerySchema>;
+export type ListMessagesQuery = z.infer<typeof listMessagesQuerySchema>;
+export type SendMessageBody = z.infer<typeof sendMessageSchema>;
+export type ReactBody = z.infer<typeof reactSchema>;
+export type ListMembersQuery = z.infer<typeof listMembersQuerySchema>;

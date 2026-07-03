@@ -11,6 +11,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "ts-node --transpile-only prisma/seed.ts",
+    "seed:rooms": "ts-node --transpile-only prisma/seeds/rooms.ts",
     "lint": "eslint . --ext .ts"
   },
   "prisma": {

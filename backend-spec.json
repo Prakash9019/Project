@@ -1,14 +1,14 @@
 {
   "project": "NearMe",
-  "description": "Real-Time Proximity Social Discovery \u2014 no swipe, no match request. Open chat immediately. Audio/video calls enabled once the other party has replied at least once.",
+  "description": "Real-Time Proximity Social Discovery — no swipe, no match request. Open chat immediately. Audio/video calls enabled once the other party has replied at least once.",
   "specVersion": "v3.0",
   "baseUrl": "http://localhost:4000",
   "stack": {
     "language": "TypeScript",
-    "framework": "Express (v1) \u2192 NestJS (v2 migration)",
+    "framework": "Express (v1) → NestJS (v2 migration)",
     "database": "PostgreSQL",
     "orm": "Prisma",
-    "auth": "Passwordless: Firebase Phone OTP (SMS) + Firebase Google Sign-In + custom Email OTP (6-digit via Resend) \u2192 custom JWT",
+    "auth": "Passwordless: Firebase Phone OTP (SMS) + Firebase Google Sign-In + custom Email OTP (6-digit via Resend) → custom JWT",
     "realtime": "Socket.IO",
     "cache": "Redis (geo-spatial index, rate limits, presence)",
     "calling": "Agora SDK or 100ms",
@@ -17,10 +17,10 @@
     "pushNotifications": "Firebase Cloud Messaging",
     "payments": "Razorpay (India), Stripe (global)",
     "identityVerification": "DigiLocker (India), Stripe Identity (global)",
-    "storage": "Google Cloud Storage (GCS) \u2014 signed URLs for all media"
+    "storage": "Google Cloud Storage (GCS) — signed URLs for all media"
   },
   "coreMechanic": {
-    "summary": "No swipe. No match request. Person A taps a profile \u2192 chat opens immediately. Audio/video call buttons are VISIBLE immediately but DISABLED until Person B sends their first reply. Enforced server-side \u2014 no paid override, no bypass.",
+    "summary": "No swipe. No match request. Person A taps a profile → chat opens immediately. Audio/video call buttons are VISIBLE immediately but DISABLED until Person B sends their first reply. Enforced server-side — no paid override, no bypass.",
     "callEnableRule": "Calls are enabled once the non-initiating user has sent at least one message. Tracked via aHasReplied/bHasReplied on the Conversation model. Call buttons always visible in UI; only disabled before first reply. No paid override.",
     "freeInteractionCap": {
       "description": "Free users can interact with a maximum of 20 unique people (lifetime cap, not daily)",
@@ -32,7 +32,7 @@
       ],
       "doesNotCount": "subsequent messages or calls to already-interacted people",
       "paidUsers": "no interaction cap",
-      "tracking": "UserInteraction table \u2014 unique (actorId, targetId) pairs",
+      "tracking": "UserInteraction table — unique (actorId, targetId) pairs",
       "enforcement": "server-side on POST /api/v1/conversations/start and POST /api/v1/discovery/taps"
     },
     "callTimeLimits": {
@@ -237,11 +237,11 @@
   "orientationGridLogic": {
     "notes": "Grid visibility based on WHO THEY WANT TO SEE and WHO WANTS TO SEE THEM.",
     "rules": [
-      "Straight man \u2192 grids of women who want to see men",
-      "Gay man \u2192 grids of men who want to see men",
-      "Lesbian woman \u2192 grids of women who want to see women",
-      "Bisexual \u2192 all matching grids by default",
-      "Non-binary \u2192 chooses via whoCanDiscoverMe setting"
+      "Straight man → grids of women who want to see men",
+      "Gay man → grids of men who want to see men",
+      "Lesbian woman → grids of women who want to see women",
+      "Bisexual → all matching grids by default",
+      "Non-binary → chooses via whoCanDiscoverMe setting"
     ]
   },
   "safetySystem": {
@@ -254,7 +254,7 @@
       "aiTextModeration": true
     },
     "blockingSystem": {
-      "mutualVisibility": "Fully mutual \u2014 if A blocks B, B also cannot see A in any listing (grid, search, nearby, likes, matches, profile views, recommendations)",
+      "mutualVisibility": "Fully mutual — if A blocks B, B also cannot see A in any listing (grid, search, nearby, likes, matches, profile views, recommendations)",
       "conversationHiding": "Block immediately sets aIsHidden=bIsHidden=true on the conversation; conversation disappears from both users' inboxes. Messages preserved in DB for moderation. Visibility restores if block is removed.",
       "utility": "isBlocked(userAId, userBId) checks both directions. Every user-listing query must filter blocked users."
     },
@@ -278,11 +278,15 @@
     "refreshToken": true,
     "refreshExpiry": "7d",
     "passwordless": true,
-    "methods": ["firebase_phone_otp", "firebase_google", "custom_email_otp"],
+    "methods": [
+      "firebase_phone_otp",
+      "firebase_google",
+      "custom_email_otp"
+    ],
     "flow": {
-      "phone": "Firebase Phone Auth SMS \u2192 Firebase ID token (carries phone_number) \u2192 POST /api/v1/auth/firebase \u2192 NearMe JWT. Sets phoneVerified=true.",
-      "google": "Firebase Google Sign-In \u2192 Firebase ID token (carries email) \u2192 POST /api/v1/auth/firebase \u2192 NearMe JWT. Sets emailVerified per token.",
-      "email": "POST /api/v1/auth/email/send-otp \u2192 POST /api/v1/auth/email/verify-otp \u2192 NearMe JWT directly (no Firebase involved). Sets emailVerified=true."
+      "phone": "Firebase Phone Auth SMS → Firebase ID token (carries phone_number) → POST /api/v1/auth/firebase → NearMe JWT. Sets phoneVerified=true.",
+      "google": "Firebase Google Sign-In → Firebase ID token (carries email) → POST /api/v1/auth/firebase → NearMe JWT. Sets emailVerified per token.",
+      "email": "POST /api/v1/auth/email/send-otp → POST /api/v1/auth/email/verify-otp → NearMe JWT directly (no Firebase involved). Sets emailVerified=true."
     },
     "endpoints": {
       "firebaseLogin": "POST /api/v1/auth/firebase",
@@ -293,9 +297,9 @@
       "me": "GET /api/v1/auth/me"
     },
     "removed": [
-      "POST /api/v1/auth/request-otp \u2014 removed, replaced by Firebase",
-      "POST /api/v1/auth/verify-otp \u2014 removed, replaced by Firebase",
-      "POST /api/v1/verification/face \u2014 removed, face verification dropped"
+      "POST /api/v1/auth/request-otp — removed, replaced by Firebase",
+      "POST /api/v1/auth/verify-otp — removed, replaced by Firebase",
+      "POST /api/v1/verification/face — removed, face verification dropped"
     ],
     "verifiedGate": "bearer+verified = valid accessToken AND (phoneVerified=true OR emailVerified=true)",
     "notes": "isVerified = phoneVerified OR emailVerified (changed from AND with faceVerified, which is removed). Discovery (grid/explore) shows users with phoneVerified OR emailVerified."
@@ -348,12 +352,29 @@
       "auth": "none",
       "summary": "Send a 6-digit email login code via Resend. Rate limited 3 per email per 10 min.",
       "requestBody": {
-        "required": ["email"],
-        "fields": [{ "name": "email", "type": "string" }]
+        "required": [
+          "email"
+        ],
+        "fields": [
+          {
+            "name": "email",
+            "type": "string"
+          }
+        ]
       },
       "responses": {
-        "200": { "schema": { "message": "string", "expiresInSeconds": "number" } },
-        "429": { "schema": { "error": "rate_limit_exceeded", "retryAfterSeconds": "number" } }
+        "200": {
+          "schema": {
+            "message": "string",
+            "expiresInSeconds": "number"
+          }
+        },
+        "429": {
+          "schema": {
+            "error": "rate_limit_exceeded",
+            "retryAfterSeconds": "number"
+          }
+        }
       }
     },
     {
@@ -363,10 +384,20 @@
       "auth": "none",
       "summary": "Verify a 6-digit email code → issues NearMe JWT pair directly (no Firebase). Upserts user by email, sets emailVerified=true. Max 5 attempts per code.",
       "requestBody": {
-        "required": ["email", "code"],
+        "required": [
+          "email",
+          "code"
+        ],
         "fields": [
-          { "name": "email", "type": "string" },
-          { "name": "code", "type": "string", "notes": "6-digit numeric code" }
+          {
+            "name": "email",
+            "type": "string"
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "notes": "6-digit numeric code"
+          }
         ]
       },
       "responses": {
@@ -379,7 +410,11 @@
             "user": "Self"
           }
         },
-        "400": { "schema": { "error": "code_expired_or_invalid | invalid_code" } }
+        "400": {
+          "schema": {
+            "error": "code_expired_or_invalid | invalid_code"
+          }
+        }
       }
     },
     {
@@ -746,7 +781,7 @@
             "audioCallEnabled": false,
             "videoCallEnabled": false
           },
-          "description": "New conversation \u2014 calls disabled until other party replies"
+          "description": "New conversation — calls disabled until other party replies"
         },
         "403": {
           "schema": {
@@ -1358,6 +1393,331 @@
           }
         }
       }
+    },
+    {
+      "id": "rooms-list",
+      "method": "GET",
+      "path": "/api/rooms",
+      "auth": "bearer+verified",
+      "summary": "List/discover Dating Rooms, sorted by memberCount DESC then lastActivityAt DESC, with recommendation ranking (user city rooms, then orientation matches, then rest). Each room includes isJoined.",
+      "query": [
+        {
+          "name": "category",
+          "type": "RoomCategory",
+          "nullable": true
+        },
+        {
+          "name": "city",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "search",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "notes": "default 20, max 50"
+        },
+        {
+          "name": "offset",
+          "type": "number",
+          "notes": "default 0"
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "rooms": "RoomCard[]"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-joined",
+      "method": "GET",
+      "path": "/api/rooms/joined",
+      "auth": "bearer+verified",
+      "summary": "Rooms the user has joined, sorted by lastActivityAt DESC. Includes unreadCount (messages since last read, tracked in Redis rooms:lastread:{userId}:{roomId}) and role.",
+      "responses": {
+        "200": {
+          "schema": {
+            "rooms": "JoinedRoomCard[]"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-detail",
+      "method": "GET",
+      "path": "/api/rooms/:roomId",
+      "auth": "bearer+verified",
+      "summary": "Full room detail incl isJoined, memberCount, and live onlineCount.",
+      "responses": {
+        "200": {
+          "schema": {
+            "room": "RoomDetail"
+          }
+        },
+        "404": {
+          "schema": {
+            "error": "not_found"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-join",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/join",
+      "auth": "bearer+verified",
+      "summary": "Join a room (upsert RoomMember role=member, increment memberCount). Emits room:member_joined. isVerifiedOnly rooms require user.isVerified.",
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": true,
+            "room": "RoomDetail"
+          }
+        },
+        "403": {
+          "schema": {
+            "error": "verified_only_room"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-leave",
+      "method": "DELETE",
+      "path": "/api/rooms/:roomId/join",
+      "auth": "bearer+verified",
+      "summary": "Leave a room (delete RoomMember, decrement memberCount). Emits room:member_left.",
+      "responses": {
+        "204": {
+          "schema": {}
+        }
+      }
+    },
+    {
+      "id": "rooms-messages-list",
+      "method": "GET",
+      "path": "/api/rooms/:roomId/messages",
+      "auth": "bearer+verified+member",
+      "summary": "Cursor-paginated room messages, newest first. Marks the room read (newest page). Each message carries a sender UserCard (username=firstName; never phone), reactions, replyTo (content truncated 60).",
+      "query": [
+        {
+          "name": "before",
+          "type": "iso8601",
+          "nullable": true,
+          "notes": "cursor"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "notes": "default 30, max 50"
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "messages": "RoomMessageCard[]",
+            "hasMore": "boolean",
+            "nextCursor": "iso8601|null"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-messages-send",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/messages",
+      "auth": "bearer+verified+member",
+      "summary": "Post a message. content max 1000, not empty. Runs AI text moderation; flagged -> 451 message_flagged. Updates room.lastActivityAt, emits room:message, batch push to non-muted members.",
+      "requestBody": {
+        "required": [
+          "content"
+        ],
+        "fields": [
+          {
+            "name": "content",
+            "type": "string",
+            "notes": "max 1000"
+          },
+          {
+            "name": "type",
+            "type": "'text'|'image'",
+            "notes": "default text"
+          },
+          {
+            "name": "mediaUrl",
+            "type": "string",
+            "nullable": true
+          },
+          {
+            "name": "replyToId",
+            "type": "uuid",
+            "nullable": true
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": "RoomMessageCard"
+        },
+        "451": {
+          "schema": {
+            "error": "message_flagged"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-message-react",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/messages/:messageId/react",
+      "auth": "bearer+verified+member",
+      "summary": "Toggle a single-emoji reaction (create if absent, delete if present). Emits room:message_reaction.",
+      "requestBody": {
+        "required": [
+          "emoji"
+        ],
+        "fields": [
+          {
+            "name": "emoji",
+            "type": "string",
+            "notes": "max 2 chars"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "added": "boolean",
+            "emoji": "string",
+            "count": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-members",
+      "method": "GET",
+      "path": "/api/rooms/:roomId/members",
+      "auth": "bearer+verified+member",
+      "summary": "Room members with user UserCard. Online first, then joined date. Optional online=true filter.",
+      "query": [
+        {
+          "name": "limit",
+          "type": "number",
+          "notes": "default 50, max 100"
+        },
+        {
+          "name": "offset",
+          "type": "number",
+          "notes": "default 0"
+        },
+        {
+          "name": "online",
+          "type": "boolean",
+          "nullable": true
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "members": "RoomMemberCard[]",
+            "total": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-mute",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/mute",
+      "auth": "bearer+verified",
+      "summary": "Toggle per-user mute for the room (skips push). Returns new state.",
+      "responses": {
+        "200": {
+          "schema": {
+            "muted": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-report",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/report",
+      "auth": "bearer+verified",
+      "summary": "Report a room. Creates RoomReport.",
+      "requestBody": {
+        "required": [
+          "reason"
+        ],
+        "fields": [
+          {
+            "name": "reason",
+            "type": "string"
+          },
+          {
+            "name": "details",
+            "type": "string",
+            "nullable": true
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": true
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-message-report",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/messages/:messageId/report",
+      "auth": "bearer+verified",
+      "summary": "Report a room message. Creates ModerationFlag targetType=room_message (reason mapped to flagType).",
+      "requestBody": {
+        "required": [
+          "reason"
+        ],
+        "fields": [
+          {
+            "name": "reason",
+            "type": "string"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": true
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-message-delete",
+      "method": "DELETE",
+      "path": "/api/rooms/:roomId/messages/:messageId",
+      "auth": "bearer+verified",
+      "summary": "Soft-delete a message (isDeleted=true, content='Message removed'). Sender OR room moderator/admin only. Emits room:message_deleted.",
+      "responses": {
+        "204": {
+          "schema": {}
+        },
+        "403": {
+          "schema": {
+            "error": "forbidden"
+          }
+        }
+      }
     }
   ],
   "models": [
@@ -1376,7 +1736,7 @@
           "type": "string",
           "frontendVisible": false,
           "nullable": true,
-          "notes": "Optional \u2014 only set if user adds phone for 2FA; not used for auth"
+          "notes": "Optional — only set if user adds phone for 2FA; not used for auth"
         },
         {
           "name": "phoneVerified",
@@ -1493,7 +1853,7 @@
         {
           "name": "fantasyTags",
           "type": "array<string>",
-          "notes": "NEW (Change 5) \u2014 curated + free-form tags"
+          "notes": "NEW (Change 5) — curated + free-form tags"
         },
         {
           "name": "datingIntentions",
@@ -1540,7 +1900,7 @@
         {
           "name": "verifiedBadge",
           "type": "boolean",
-          "notes": "legacy blue tick \u2014 superseded by isVerified rule"
+          "notes": "legacy blue tick — superseded by isVerified rule"
         },
         {
           "name": "isCollegeVerified",
@@ -1674,34 +2034,34 @@
           "type": "timestamp",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 user restricted from interactions until this time (e.g. after report/penalty)"
+          "notes": "NEW (Phase 9) — user restricted from interactions until this time (e.g. after report/penalty)"
         },
         {
           "name": "isBanned",
           "type": "boolean",
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 account banned; prevents re-login. Also used as soft-delete flag on account deletion."
+          "notes": "NEW (Phase 9) — account banned; prevents re-login. Also used as soft-delete flag on account deletion."
         },
         {
           "name": "bannedAt",
           "type": "timestamp",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 timestamp when account was banned"
+          "notes": "NEW (Phase 9) — timestamp when account was banned"
         },
         {
           "name": "interactionPenaltyUntil",
           "type": "timestamp",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 interaction-rate penalty expires at this time"
+          "notes": "NEW (Phase 9) — interaction-rate penalty expires at this time"
         },
         {
           "name": "interactionPenaltyMultiplier",
           "type": "number",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 multiplier applied to interaction cost during penalty window (default 1.0)"
+          "notes": "NEW (Phase 9) — multiplier applied to interaction cost during penalty window (default 1.0)"
         },
         {
           "name": "lastActiveAt",
@@ -1720,7 +2080,7 @@
           "type": "string",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "Firebase UID \u2014 primary identity key for Firebase Auth users"
+          "notes": "Firebase UID — primary identity key for Firebase Auth users"
         },
         {
           "name": "email",
@@ -1735,8 +2095,8 @@
         }
       ],
       "removed": [
-        "dailyNewChatCount \u2014 replaced by UserInteraction lifetime cap (Change 6)",
-        "dailyNewChatResetDate \u2014 no longer needed (Change 6)"
+        "dailyNewChatCount — replaced by UserInteraction lifetime cap (Change 6)",
+        "dailyNewChatResetDate — no longer needed (Change 6)"
       ]
     },
     {
@@ -1767,22 +2127,22 @@
         {
           "name": "aHasReplied",
           "type": "boolean",
-          "notes": "NEW (Change 2) \u2014 User A has sent at least one message. Call buttons enabled for B when this is true."
+          "notes": "NEW (Change 2) — User A has sent at least one message. Call buttons enabled for B when this is true."
         },
         {
           "name": "bHasReplied",
           "type": "boolean",
-          "notes": "NEW (Change 2) \u2014 User B has sent at least one message. Call buttons enabled for A when this is true."
+          "notes": "NEW (Change 2) — User B has sent at least one message. Call buttons enabled for A when this is true."
         },
         {
           "name": "aIsHidden",
           "type": "boolean",
-          "notes": "NEW (Change 1) \u2014 true when conversation hidden from User A's inbox (set by block). Messages preserved."
+          "notes": "NEW (Change 1) — true when conversation hidden from User A's inbox (set by block). Messages preserved."
         },
         {
           "name": "bIsHidden",
           "type": "boolean",
-          "notes": "NEW (Change 1) \u2014 true when conversation hidden from User B's inbox."
+          "notes": "NEW (Change 1) — true when conversation hidden from User B's inbox."
         },
         {
           "name": "aPinned",
@@ -1822,7 +2182,7 @@
         }
       ],
       "removed": [
-        "callUnlocked \u2014 replaced by aHasReplied/bHasReplied (Change 2)"
+        "callUnlocked — replaced by aHasReplied/bHasReplied (Change 2)"
       ]
     },
     {
@@ -1849,14 +2209,14 @@
       ],
       "indexes": [
         "UNIQUE(blockerId, blockedId)",
-        "INDEX(blockedId, blockerId) \u2014 reverse lookup for bidirectional checks (Change 1.2)"
+        "INDEX(blockedId, blockerId) — reverse lookup for bidirectional checks (Change 1.2)"
       ],
       "effects": "Block immediately hides conversation for both users (aIsHidden=bIsHidden=true). Both users excluded from each other's results in ALL user-listing queries."
     },
     {
       "name": "UserInteraction",
       "table": "user_interactions",
-      "notes": "NEW (Change 6) \u2014 tracks unique interactions for the free-tier lifetime cap of 20 unique people. Each (actorId, targetId) pair stored once regardless of how many messages/taps follow.",
+      "notes": "NEW (Change 6) — tracks unique interactions for the free-tier lifetime cap of 20 unique people. Each (actorId, targetId) pair stored once regardless of how many messages/taps follow.",
       "fields": [
         {
           "name": "id",
@@ -1890,7 +2250,7 @@
     {
       "name": "Album",
       "table": "albums",
-      "notes": "NEW (Change 7) \u2014 user photo albums. Separate from PrivateAlbum (legacy grant system). Plan limits enforced at app layer.",
+      "notes": "NEW (Change 7) — user photo albums. Separate from PrivateAlbum (legacy grant system). Plan limits enforced at app layer.",
       "fields": [
         {
           "name": "id",
@@ -1948,7 +2308,7 @@
     {
       "name": "AlbumPhoto",
       "table": "album_photos",
-      "notes": "NEW (Change 7) \u2014 photos within an Album. Signed GCS URLs, 15 min expiry. Validated: JPEG/PNG/WebP, max 10MB. Moderated via AWS Rekognition on upload.",
+      "notes": "NEW (Change 7) — photos within an Album. Signed GCS URLs, 15 min expiry. Validated: JPEG/PNG/WebP, max 10MB. Moderated via AWS Rekognition on upload.",
       "fields": [
         {
           "name": "id",
@@ -1961,7 +2321,7 @@
         {
           "name": "userId",
           "type": "uuid",
-          "notes": "owner \u2014 for fast ownership checks"
+          "notes": "owner — for fast ownership checks"
         },
         {
           "name": "photoUrl",
@@ -2268,7 +2628,7 @@
     {
       "name": "Photo",
       "table": "photos",
-      "notes": "Phase 9: added isPublished field. Profile photos \u2014 Change 3.2: single optional profile picture, no minimum. First public photo auto-set as primary.",
+      "notes": "Phase 9: added isPublished field. Profile photos — Change 3.2: single optional profile picture, no minimum. First public photo auto-set as primary.",
       "fields": [
         {
           "name": "id",
@@ -2297,7 +2657,7 @@
         {
           "name": "isPublished",
           "type": "boolean",
-          "notes": "NEW (Phase 9) \u2014 false = pending manual moderation review. Unpublished photos hidden from all public listings."
+          "notes": "NEW (Phase 9) — false = pending manual moderation review. Unpublished photos hidden from all public listings."
         },
         {
           "name": "albumId",
@@ -2313,6 +2673,339 @@
         {
           "name": "createdAt",
           "type": "timestamp"
+        }
+      ]
+    },
+    {
+      "name": "Room",
+      "table": "Room",
+      "notes": "Dating Room (Group). Official rooms pre-seeded via seed:rooms (migration 20260619_dating_rooms).",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "notes": "max 100"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "nullable": true,
+          "notes": "max 500"
+        },
+        {
+          "name": "category",
+          "type": "RoomCategory"
+        },
+        {
+          "name": "city",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "country",
+          "type": "string",
+          "notes": "default India"
+        },
+        {
+          "name": "isOfficial",
+          "type": "boolean"
+        },
+        {
+          "name": "isVerifiedOnly",
+          "type": "boolean",
+          "notes": "join requires user.isVerified"
+        },
+        {
+          "name": "coverImageUrl",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "creatorId",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "memberCount",
+          "type": "number"
+        },
+        {
+          "name": "onlineCount",
+          "type": "number",
+          "notes": "stored; detail endpoint returns a live count"
+        },
+        {
+          "name": "lastActivityAt",
+          "type": "iso8601"
+        },
+        {
+          "name": "isActive",
+          "type": "boolean"
+        },
+        {
+          "name": "rules",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        },
+        {
+          "name": "updatedAt",
+          "type": "iso8601"
+        }
+      ]
+    },
+    {
+      "name": "RoomMember",
+      "table": "RoomMember",
+      "notes": "Unique (roomId,userId).",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "roomId",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "role",
+          "type": "RoomRole",
+          "notes": "default member"
+        },
+        {
+          "name": "joinedAt",
+          "type": "iso8601"
+        },
+        {
+          "name": "isMuted",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "name": "RoomMessage",
+      "table": "RoomMessage",
+      "notes": "Soft-deletable; supports reply threading and pinning.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "roomId",
+          "type": "uuid"
+        },
+        {
+          "name": "senderId",
+          "type": "uuid"
+        },
+        {
+          "name": "content",
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "type": "RoomMessageType",
+          "notes": "default text"
+        },
+        {
+          "name": "mediaUrl",
+          "type": "string",
+          "nullable": true,
+          "notes": "signed on read"
+        },
+        {
+          "name": "replyToId",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "isDeleted",
+          "type": "boolean"
+        },
+        {
+          "name": "isPinned",
+          "type": "boolean"
+        },
+        {
+          "name": "moderationFlagged",
+          "type": "boolean"
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        },
+        {
+          "name": "editedAt",
+          "type": "iso8601",
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "name": "RoomMessageReaction",
+      "table": "RoomMessageReaction",
+      "notes": "Unique (messageId,userId,emoji).",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "messageId",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "emoji",
+          "type": "string",
+          "notes": "max 10 chars stored"
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        }
+      ]
+    },
+    {
+      "name": "RoomReport",
+      "table": "RoomReport",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "roomId",
+          "type": "uuid"
+        },
+        {
+          "name": "reporterId",
+          "type": "uuid"
+        },
+        {
+          "name": "reason",
+          "type": "string"
+        },
+        {
+          "name": "details",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        }
+      ]
+    },
+    {
+      "name": "RoomMute",
+      "table": "RoomMute",
+      "notes": "Unique (roomId,userId).",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "roomId",
+          "type": "uuid"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        }
+      ]
+    },
+    {
+      "name": "RoomMessageCard",
+      "table": null,
+      "notes": "Serialized room message (API/socket shape).",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "roomId",
+          "type": "uuid"
+        },
+        {
+          "name": "senderId",
+          "type": "uuid"
+        },
+        {
+          "name": "sender",
+          "type": "UserCard",
+          "notes": "{id,firstName,username(=firstName),age,isVerified,planBadge,distanceLabel,profilePhotoUrl(signed),isOnline}. Never phone/email."
+        },
+        {
+          "name": "type",
+          "type": "RoomMessageType"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "notes": "'Message removed' when isDeleted"
+        },
+        {
+          "name": "mediaUrl",
+          "type": "string|null",
+          "notes": "signed"
+        },
+        {
+          "name": "isPinned",
+          "type": "boolean"
+        },
+        {
+          "name": "isDeleted",
+          "type": "boolean"
+        },
+        {
+          "name": "replyTo",
+          "type": "{id,senderFirstName,content}|null",
+          "notes": "content truncated 60"
+        },
+        {
+          "name": "reactions",
+          "type": "{emoji,count,userReacted}[]"
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        },
+        {
+          "name": "editedAt",
+          "type": "iso8601|null"
         }
       ]
     }
@@ -2421,7 +3114,7 @@
         "open_relationship",
         "prefer_not_to_say"
       ],
-      "notes": "NEW (Change 5) \u2014 distinct from legacy RelationshipType"
+      "notes": "NEW (Change 5) — distinct from legacy RelationshipType"
     },
     {
       "name": "LookingForOption",
@@ -2433,7 +3126,7 @@
         "casual",
         "friendship"
       ],
-      "notes": "NEW (Change 5) \u2014 lookingFor field values validated against these at app layer"
+      "notes": "NEW (Change 5) — lookingFor field values validated against these at app layer"
     },
     {
       "name": "WhereWeCanMeet",
@@ -2458,7 +3151,7 @@
         "complicated",
         "prefer_not_to_say"
       ],
-      "notes": "legacy \u2014 keep for existing profiles"
+      "notes": "legacy — keep for existing profiles"
     },
     {
       "name": "DatingIntention",
@@ -2570,13 +3263,40 @@
         "nudity",
         "spam"
       ]
+    },
+    {
+      "name": "RoomCategory",
+      "values": [
+        "city_dating",
+        "orientation",
+        "age_group",
+        "relationship_intent",
+        "events",
+        "local_meetups"
+      ]
+    },
+    {
+      "name": "RoomRole",
+      "values": [
+        "member",
+        "moderator",
+        "admin"
+      ]
+    },
+    {
+      "name": "RoomMessageType",
+      "values": [
+        "text",
+        "image",
+        "system"
+      ]
     }
   ],
   "events": [
     {
       "name": "message.created",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "id": "uuid",
         "conversationId": "uuid",
@@ -2593,7 +3313,7 @@
     {
       "name": "message.read",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "readerId": "uuid"
@@ -2602,7 +3322,7 @@
     {
       "name": "message.unsend",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid"
@@ -2611,7 +3331,7 @@
     {
       "name": "message.deleted",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid"
@@ -2620,7 +3340,7 @@
     {
       "name": "message.viewed",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid",
@@ -2630,7 +3350,7 @@
     {
       "name": "message.edited",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid",
@@ -2652,7 +3372,7 @@
     {
       "name": "tap.received",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "tapId": "uuid",
         "senderId": "uuid",
@@ -2662,18 +3382,18 @@
     {
       "name": "call:invite",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid",
         "callerId": "uuid",
         "type": "audio|video"
       },
-      "notes": "LEGACY WebRTC \u2014 v2 uses Agora SDK"
+      "notes": "LEGACY WebRTC — v2 uses Agora SDK"
     },
     {
       "name": "call:answer",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid"
       },
@@ -2682,7 +3402,7 @@
     {
       "name": "call:decline",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid"
       }
@@ -2690,7 +3410,7 @@
     {
       "name": "call:end",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid",
         "durationSec": "number|null"
@@ -2699,7 +3419,7 @@
     {
       "name": "location:update",
       "transport": "websocket",
-      "direction": "client\u2192server",
+      "direction": "client→server",
       "payload": {
         "lat": "number",
         "lng": "number"
@@ -2708,17 +3428,94 @@
     {
       "name": "heartbeat",
       "transport": "websocket",
-      "direction": "client\u2192server",
+      "direction": "client→server",
       "payload": {}
     },
     {
       "name": "boost.activated",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "boostId": "uuid",
         "boostType": "string",
         "expiresAt": "iso8601"
+      }
+    },
+    {
+      "name": "room:message",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": "RoomMessageCard"
+    },
+    {
+      "name": "room:typing",
+      "transport": "websocket",
+      "direction": "client↔server",
+      "room": "room:{roomId}",
+      "payload": {
+        "userId": "uuid",
+        "firstName": "string|null",
+        "isTyping": "boolean"
+      }
+    },
+    {
+      "name": "room:join",
+      "transport": "websocket",
+      "direction": "client→server",
+      "payload": {
+        "roomId": "uuid"
+      }
+    },
+    {
+      "name": "room:leave",
+      "transport": "websocket",
+      "direction": "client→server",
+      "payload": {
+        "roomId": "uuid"
+      }
+    },
+    {
+      "name": "room:member_joined",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "userId": "uuid",
+        "firstName": "string|null",
+        "memberCount": "number"
+      }
+    },
+    {
+      "name": "room:member_left",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "userId": "uuid",
+        "memberCount": "number"
+      }
+    },
+    {
+      "name": "room:message_reaction",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "messageId": "uuid",
+        "emoji": "string",
+        "count": "number",
+        "userId": "uuid",
+        "added": "boolean"
+      }
+    },
+    {
+      "name": "room:message_deleted",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "messageId": "uuid"
       }
     }
   ],
@@ -2776,7 +3573,7 @@
     },
     {
       "key": "AGORA_APP_CERTIFICATE",
-      "description": "Server-side only \u2014 NEVER expose to client",
+      "description": "Server-side only — NEVER expose to client",
       "required": true
     },
     {
@@ -2877,16 +3674,16 @@
     }
   ],
   "notes": [
-    "Socket.IO: connect with io(baseUrl, {auth:{token}}) \u2014 socket joins room user:<id> on connect.",
+    "Socket.IO: connect with io(baseUrl, {auth:{token}}) — socket joins room user:<id> on connect.",
     "Auth: Authorization: Bearer <accessToken>. Refresh on 401 via /auth/refresh.",
     "Error envelope: {error:string, message:string, requestId:string, details?:any}. Every request gets a unique requestId (UUID) echoed in X-Request-ID response header. Pass X-Request-ID in requests to correlate logs.",
-    "Fuzzy location: API NEVER returns lat/lng \u2014 only distanceLabel or 'Near you' for hideExactDistance users.",
-    "CRITICAL \u2014 Call gate (Change 2): calls enabled when the OTHER party has replied. aHasReplied = User A has sent a message; bHasReplied = User B has. Call buttons always visible; returns audioCallEnabled/videoCallEnabled=false until flag is true. No paid override.",
-    "CRITICAL \u2014 Blocking (Change 1): bidirectional \u2014 if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
-    "CRITICAL \u2014 Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
-    "CRITICAL \u2014 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
-    "CRITICAL \u2014 isVerified: computed = phoneVerified OR emailVerified (face verification removed 20260618). Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
-    "CRITICAL \u2014 Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
+    "Fuzzy location: API NEVER returns lat/lng — only distanceLabel or 'Near you' for hideExactDistance users.",
+    "CRITICAL — Call gate (Change 2): calls enabled when the OTHER party has replied. aHasReplied = User A has sent a message; bHasReplied = User B has. Call buttons always visible; returns audioCallEnabled/videoCallEnabled=false until flag is true. No paid override.",
+    "CRITICAL — Blocking (Change 1): bidirectional — if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
+    "CRITICAL — Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
+    "CRITICAL — 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
+    "CRITICAL — isVerified: computed = phoneVerified OR emailVerified (face verification removed 20260618). Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
+    "CRITICAL — Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
     "UserCard response fields (Change 5): profilePhoto, firstName, age, distance, lastActiveAt (human-readable), isVerified, height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked.",
     "Albums (Change 7): /api/albums endpoints. Plan limits: free=1/10, premium=3/30, gold=5/50, platinum=unlimited/100. Photos: JPEG/PNG/WebP, max 10MB, AWS Rekognition moderated. Served as signed GCS URLs (15 min expiry). Block check on /api/v1/users/:userId/albums.",
     "Plan enforcement: check user.plan and user.planExpiresAt on every gated endpoint. Expired plan = free tier.",
@@ -2894,7 +3691,7 @@
     "Women safety defaults on signup: verifiedUsersOnlyFilter=true for users who specify gender=woman.",
     "Moderation: AWS Rekognition scans all uploaded photos/clips before publish. Required for all album photo uploads.",
     "AI features: use claude-sonnet-4-6 for icebreakers/reply suggestions/profile optimizer. All opt-in.",
-    "Health endpoints (no auth): GET /health \u2192 {status:'ok'}, GET /health/live \u2192 {status:'ok'}, GET /health/ready \u2192 checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
+    "Health endpoints (no auth): GET /health → {status:'ok'}, GET /health/live → {status:'ok'}, GET /health/ready → checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
     "Request logger: every response emits structured JSON {requestId, userId, method, path, statusCode, durationMs, plan} to stdout.",
     "Spec: /Users/suryprakash/Project/backend-spec.json (use frontend-from-spec skill to consume).",
     "Auth: Firebase Auth handles identity. Client gets Firebase ID token via Firebase SDK, exchanges at POST /api/v1/auth/firebase for NearMe JWT pair (accessToken + refreshToken).",
@@ -2906,6 +3703,7 @@
     "GET /api/v1/profile/users/:userId (getPublicProfile) (IMPLEMENTED): now returns isLiked (viewer has an active Tap on this user) and isShortlisted (viewer has a Favorite on this user) so the profile screen renders Fire/Star state consistently with the grid. Still upserts a ProfileView unless viewer is incognito or viewing self.",
     "GET /api/v1/me/photos/upload-url (IMPLEMENTED, alias of /api/v1/me/upload-url): { uploadUrl, gcsPath, expiresAt }. Client PUTs bytes to uploadUrl then POST /api/v1/me/photos { url, isPrimary } (url must be a fully-qualified URL).",
     "Self (GET /api/v1/auth/me) (IMPLEMENTED): now includes primaryPhotoUrl (published primary Photo.url, or null) and callLimits. callLimits = { audioMinutesUsed, audioMinutesLimit, videoMinutesUsed, videoMinutesLimit } for FREE plan only (base 5 audio / 2 video per day + active *_call_topup add-ons; resets at UTC midnight); null for paid plans (unlimited).",
-    "Grid query additions sent by the Filters screen (handle server-side on GET /api/v1/grid): gender (csv), relationshipIntent (csv), verifiedOnly (bool, Premium+), activeLast30Min (Premium+), activeLast5Min/recentlyJoined/highReplyRate (Gold+), radius (meters; free ≤25km, Gold+ ≤100km), advancedFilters (JSON string of { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[], Premium+)."
+    "Grid query additions sent by the Filters screen (handle server-side on GET /api/v1/grid): gender (csv), relationshipIntent (csv), verifiedOnly (bool, Premium+), activeLast30Min (Premium+), activeLast5Min/recentlyJoined/highReplyRate (Gold+), radius (meters; free ≤25km, Gold+ ≤100km), advancedFilters (JSON string of { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[], Premium+).",
+    "Dating Rooms (Groups): brand-new module (migration 20260619_dating_rooms). Endpoints under /api/rooms (bearer+verified). Message/member endpoints require room membership (requireRoomMember -> 403 not_a_room_member). Messages run AI text moderation (adapters/moderation.classifyText) -> 451 message_flagged. Unread tracked in Redis rooms:lastread:{userId}:{roomId}. Socket channel room:{roomId}; sockets auto-join on connect for joined rooms. Username in room UI = firstName; phone/email/exact location never exposed."
   ]
 }

@@ -30,6 +30,13 @@ import type {
   RelationshipStatus,
   WhereWeCanMeet,
   DatingIntention,
+  RoomCard,
+  RoomDetail,
+  JoinedRoomCard,
+  RoomMessageCard,
+  RoomMemberCard,
+  RoomCategory,
+  RoomMessageType,
 } from '../types/api';
 
 export interface ApiError extends Error {
@@ -654,5 +661,74 @@ export const verifyAddOnPurchase = (body: {
 
 export const getDailyTop10 = () =>
   request<{ profiles: UserCard[]; refreshesAt: string }>('GET', '/api/ai/top-10');
+
+/* ─────────────────────── Dating Rooms (Groups) ─────────────────────── */
+
+export interface ListRoomsQuery {
+  category?: RoomCategory;
+  city?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export const listRooms = (query?: ListRoomsQuery) =>
+  request<{ rooms: RoomCard[] }>('GET', '/api/rooms', undefined, { query: query as Record<string, unknown> });
+
+export const listJoinedRooms = (query?: { limit?: number; offset?: number }) =>
+  request<{ rooms: JoinedRoomCard[] }>('GET', '/api/rooms/joined', undefined, {
+    query: query as Record<string, unknown>,
+  });
+
+export const getRoom = (roomId: string) =>
+  request<{ room: RoomDetail }>('GET', `/api/rooms/${roomId}`);
+
+export const joinRoom = (roomId: string) =>
+  request<{ ok: true; room: RoomDetail }>('POST', `/api/rooms/${roomId}/join`);
+
+export const leaveRoom = (roomId: string) =>
+  request<void>('DELETE', `/api/rooms/${roomId}/join`);
+
+export const listRoomMessages = (roomId: string, query?: { before?: string; limit?: number }) =>
+  request<{ messages: RoomMessageCard[]; hasMore: boolean; nextCursor: string | null }>(
+    'GET',
+    `/api/rooms/${roomId}/messages`,
+    undefined,
+    { query: query as Record<string, unknown> },
+  );
+
+export interface SendRoomMessageBody {
+  content: string;
+  type?: RoomMessageType;
+  mediaUrl?: string;
+  replyToId?: string;
+}
+
+export const sendRoomMessage = (roomId: string, body: SendRoomMessageBody) =>
+  request<RoomMessageCard>('POST', `/api/rooms/${roomId}/messages`, body);
+
+export const reactToRoomMessage = (roomId: string, messageId: string, emoji: string) =>
+  request<{ added: boolean; emoji: string; count: number }>(
+    'POST',
+    `/api/rooms/${roomId}/messages/${messageId}/react`,
+    { emoji },
+  );
+
+export const listRoomMembers = (roomId: string, query?: { limit?: number; offset?: number; online?: boolean }) =>
+  request<{ members: RoomMemberCard[]; total: number }>('GET', `/api/rooms/${roomId}/members`, undefined, {
+    query: query as Record<string, unknown>,
+  });
+
+export const muteRoom = (roomId: string) =>
+  request<{ muted: boolean }>('POST', `/api/rooms/${roomId}/mute`);
+
+export const reportRoom = (roomId: string, reason: string, details?: string) =>
+  request<{ ok: true }>('POST', `/api/rooms/${roomId}/report`, { reason, details });
+
+export const reportRoomMessage = (roomId: string, messageId: string, reason: string) =>
+  request<{ ok: true }>('POST', `/api/rooms/${roomId}/messages/${messageId}/report`, { reason });
+
+export const deleteRoomMessage = (roomId: string, messageId: string) =>
+  request<void>('DELETE', `/api/rooms/${roomId}/messages/${messageId}`);
 
 export { BASE_URL };

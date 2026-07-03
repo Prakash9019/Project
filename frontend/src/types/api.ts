@@ -481,3 +481,91 @@ export interface ApiErrorEnvelope {
   requestId?: string;
   details?: unknown;
 }
+
+/* ─────────────────────── Dating Rooms (Groups) ─────────────────────── */
+
+export type RoomCategory =
+  | 'city_dating'
+  | 'orientation'
+  | 'age_group'
+  | 'relationship_intent'
+  | 'events'
+  | 'local_meetups';
+
+export type RoomRole = 'member' | 'moderator' | 'admin';
+export type RoomMessageType = 'text' | 'image' | 'system';
+
+/** Room card in the Discover list (also the base for detail/joined). */
+export interface RoomCard {
+  id: string;
+  name: string;
+  description: string | null;
+  category: RoomCategory;
+  city: string | null;
+  state: string | null;
+  country: string;
+  isOfficial: boolean;
+  isVerifiedOnly: boolean;
+  coverImageUrl: string | null;
+  memberCount: number;
+  onlineCount: number;
+  lastActivityAt: string;
+  rules: string | null;
+  isJoined: boolean;
+  createdAt: string;
+}
+
+export type RoomDetail = RoomCard;
+
+export interface JoinedRoomCard extends RoomCard {
+  unreadCount: number;
+  role: RoomRole;
+}
+
+/** Compact sender/member card inside a room. Never exposes phone/email. */
+export interface RoomUserCard {
+  id: string;
+  firstName: string | null;
+  username: string | null;
+  age: number | null;
+  isVerified: boolean;
+  planBadge: Plan | null;
+  distanceLabel: string | null;
+  profilePhotoUrl: string | null;
+  isOnline: boolean;
+}
+
+export interface RoomReaction {
+  emoji: string;
+  count: number;
+  userReacted: boolean;
+}
+
+export interface RoomReplyPreview {
+  id: string;
+  senderFirstName: string | null;
+  content: string;
+}
+
+export interface RoomMessageCard {
+  id: string;
+  roomId: string;
+  senderId: string;
+  sender: RoomUserCard;
+  type: RoomMessageType;
+  content: string;
+  mediaUrl: string | null;
+  isPinned: boolean;
+  isDeleted: boolean;
+  replyTo: RoomReplyPreview | null;
+  reactions: RoomReaction[];
+  createdAt: string;
+  editedAt: string | null;
+}
+
+export interface RoomMemberCard {
+  id: string;
+  role: RoomRole;
+  joinedAt: string;
+  user: RoomUserCard;
+}

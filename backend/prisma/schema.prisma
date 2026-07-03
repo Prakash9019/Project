@@ -404,6 +404,12 @@ model User {
 
   refreshTokens RefreshToken[]
 
+  // ── Dating Rooms (Groups) ──
+  roomsCreated    Room[]
+  roomMemberships RoomMember[]
+  roomMessages    RoomMessage[]
+  roomReactions   RoomMessageReaction[]
+
   @@index([lastActiveAt])
   @@index([createdAt])
   @@index([plan])
@@ -962,4 +968,130 @@ model RefreshToken {
   @@index([userId])
   @@index([family])
   @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────────────────
+// Dating Rooms (Groups) — 20260619_dating_rooms
+// ─────────────────────────────────────────────────────────
+
+enum RoomCategory {
+  city_dating
+  orientation
+  age_group
+  relationship_intent
+  events
+  local_meetups
+}
+
+enum RoomRole {
+  member
+  moderator
+  admin
+}
+
+enum RoomMessageType {
+  text
+  image
+  system
+}
+
+model Room {
+  id              String        @id @default(uuid())
+  name            String        @db.VarChar(100)
+  description     String?       @db.VarChar(500)
+  category        RoomCategory
+  city            String?
+  state           String?
+  country         String        @default("India")
+  isOfficial      Boolean       @default(false)
+  isVerifiedOnly  Boolean       @default(false)
+  coverImageUrl   String?
+  creatorId       String?
+  memberCount     Int           @default(0)
+  onlineCount     Int           @default(0)
+  lastActivityAt  DateTime      @default(now())
+  isActive        Boolean       @default(true)
+  rules           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  members         RoomMember[]
+  messages        RoomMessage[]
+  reports         RoomReport[]
+  mutes           RoomMute[]
+  creator         User?         @relation(fields: [creatorId], references: [id])
+
+  @@index([category, isActive])
+  @@index([city, isActive])
+  @@index([lastActivityAt])
+}
+
+model RoomMember {
+  id        String    @id @default(uuid())
+  roomId    String
+  userId    String
+  role      RoomRole  @default(member)
+  joinedAt  DateTime  @default(now())
+  isMuted   Boolean   @default(false)
+  room      Room      @relation(fields: [roomId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@unique([roomId, userId])
+  @@index([userId])
+}
+
+model RoomMessage {
+  id                String                @id @default(uuid())
+  roomId            String
+  senderId          String
+  content           String                @db.Text
+  type              RoomMessageType       @default(text)
+  mediaUrl          String?
+  replyToId         String?
+  isDeleted         Boolean               @default(false)
+  isPinned          Boolean               @default(false)
+  moderationFlagged Boolean               @default(false)
+  createdAt         DateTime              @default(now())
+  editedAt          DateTime?
+  room              Room                  @relation(fields: [roomId], references: [id])
+  sender            User                  @relation(fields: [senderId], references: [id])
+  replyTo           RoomMessage?          @relation("RoomMessageReply", fields: [replyToId], references: [id])
+  replies           RoomMessage[]         @relation("RoomMessageReply")
+  reactions         RoomMessageReaction[]
+
+  @@index([roomId, createdAt])
+  @@index([senderId])
+}
+
+model RoomMessageReaction {
+  id        String      @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String      @db.VarChar(10)
+  createdAt DateTime    @default(now())
+  message   RoomMessage @relation(fields: [messageId], references: [id])
+  user      User        @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId, emoji])
+}
+
+model RoomReport {
+  id         String   @id @default(uuid())
+  roomId     String
+  reporterId String
+  reason     String
+  details    String?
+  createdAt  DateTime @default(now())
+  room       Room     @relation(fields: [roomId], references: [id])
+
+  @@index([roomId])
+}
+
+model RoomMute {
+  id        String   @id @default(uuid())
+  roomId    String
+  userId    String
+  createdAt DateTime @default(now())
+  room      Room     @relation(fields: [roomId], references: [id])
+
+  @@unique([roomId, userId])
 }

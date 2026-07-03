@@ -51,3 +51,20 @@ export function disconnectSocket(): void {
 export function emitTyping(conversationId: string, userId: string, isTyping: boolean): void {
   socket?.emit('typing', { conversationId, userId, isTyping });
 }
+
+/* ─────────────────────── Dating Rooms (Groups) ─────────────────────── */
+
+/** Join a room's socket channel to receive live messages/typing. */
+export function emitRoomJoin(roomId: string): void {
+  socket?.emit('room:join', { roomId });
+}
+
+/** Leave a room's socket channel. */
+export function emitRoomLeave(roomId: string): void {
+  socket?.emit('room:leave', { roomId });
+}
+
+/** Broadcast a typing indicator within a room. */
+export function emitRoomTyping(roomId: string, isTyping: boolean): void {
+  socket?.emit('room:typing', { roomId, isTyping });
+}

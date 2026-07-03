@@ -38,6 +38,8 @@ export const RedisKeys = {
   emailOtpAttempts: (email: string) => `email-otp-attempts:${email}`,
   emailOtpRate:     (email: string) => `email-otp-rate:${email}`,
   lastActive: (userId: string) => `lastActive:${userId}`,
+  // Dating Rooms: per-user last-read timestamp for a room (unread badge)
+  roomLastRead: (userId: string, roomId: string) => `rooms:lastread:${userId}:${roomId}`,
   aiTop10: (userId: string) => `ai:top10:${userId}`,
 
   // Rate-limiting keys

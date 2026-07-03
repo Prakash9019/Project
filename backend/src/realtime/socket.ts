@@ -4,7 +4,7 @@ import { verifyAccessToken } from '../utils/jwt';
 import { redis, RedisKeys } from '../config/redis';
 import { prisma } from '../config/prisma';
 import { env } from '../config/env';
-import { bindIo, userRoom, emitToUser } from './emitter';
+import { bindIo, userRoom, emitToUser, roomChannel } from './emitter';
 import { getParticipantConversation, otherParty } from '../modules/chat/chat.service';
 import { activeWsConnections } from '../config/metrics';
 
@@ -32,6 +32,14 @@ export function initSocket(httpServer: HttpServer): Server {
     const userId: string = socket.data.userId;
     socket.join(userRoom(userId));
     activeWsConnections.inc();
+
+    // ── Dating Rooms: auto-join socket channels for every room the user is in ──
+    prisma.roomMember
+      .findMany({ where: { userId }, select: { roomId: true } })
+      .then((memberships) => {
+        for (const m of memberships) socket.join(roomChannel(m.roomId));
+      })
+      .catch(() => { /* rooms optional */ });
     await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
     await prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {});
 
@@ -54,6 +62,38 @@ export function initSocket(httpServer: HttpServer): Server {
           conversationId: payload.conversationId, userId, isTyping: !!payload.isTyping,
         });
       } catch { /* not a participant */ }
+    });
+
+    // ── Dating Rooms: join / leave / typing ─────────────────
+    socket.on('room:join', async (payload: { roomId: string }) => {
+      const roomId = payload?.roomId;
+      if (!roomId) return;
+      const member = await prisma.roomMember
+        .findUnique({ where: { roomId_userId: { roomId, userId } }, select: { id: true } })
+        .catch(() => null);
+      if (member) socket.join(roomChannel(roomId));
+    });
+
+    socket.on('room:leave', (payload: { roomId: string }) => {
+      const roomId = payload?.roomId;
+      if (roomId) socket.leave(roomChannel(roomId));
+    });
+
+    socket.on('room:typing', async (payload: { roomId: string; isTyping: boolean }) => {
+      const { roomId, isTyping } = payload ?? {};
+      if (!roomId) return;
+      const member = await prisma.roomMember
+        .findUnique({ where: { roomId_userId: { roomId, userId } }, select: { id: true } })
+        .catch(() => null);
+      if (!member) return;
+      const user = await prisma.user
+        .findUnique({ where: { id: userId }, select: { firstName: true, name: true } })
+        .catch(() => null);
+      socket.to(roomChannel(roomId)).emit('room:typing', {
+        userId,
+        firstName: user?.firstName ?? user?.name ?? null,
+        isTyping: !!isTyping,
+      });
     });
 
     // ── Heartbeat ───────────────────────────────────────────

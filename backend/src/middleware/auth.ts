@@ -4,6 +4,24 @@ import { Errors } from '../utils/httpError';
 import { computeEffectiveLimits, maybePersistExpiry, type EffectiveLimits } from './subscription';
 import { redis, RedisKeys } from '../config/redis';
 import { prisma } from '../config/prisma';
+import { withTimeout } from '../utils/withTimeout';
+
+/** Max time to wait on the Redis banned-check before failing open. */
+const REDIS_CHECK_TIMEOUT_MS = 1000;
+/** Sentinel returned by withTimeout when the Redis command hangs past the timeout. */
+const REDIS_TIMEOUT = Symbol('redis_timeout');
+
+/** Structured, non-throwing log of a Redis failure inside auth (never blocks the request). */
+function logRedisFailure(event: string, userId: string, err: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(
+    JSON.stringify({
+      event,
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    }),
+  );
+}
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -25,34 +43,60 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
   if (!header?.startsWith('Bearer ')) {
     return next(Errors.unauthorized('Missing Bearer token'));
   }
-  try {
-    const claims = verifyAccessToken(header.slice(7));
 
-    // Banned check via Redis — O(1), no DB hit on normal requests
-    const bannedFlag = await redis.get(RedisKeys.banned(claims.sub));
-    if (bannedFlag === '1') {
+  // Token verification is the ONLY thing that may reject with 401. A malformed
+  // or expired token is an auth failure; a Redis/infrastructure failure is not.
+  let claims: AccessClaims;
+  try {
+    claims = verifyAccessToken(header.slice(7));
+  } catch {
+    return next(Errors.unauthorized('Invalid or expired token'));
+  }
+
+  // Banned check via Redis — O(1), no DB hit on normal requests.
+  // FAIL OPEN: if Redis is unreachable, rejects, or hangs, log and let the
+  // request through. A Redis outage must degrade gracefully, not 401 every user.
+  // withTimeout guards against a hung command (ioredis can queue on a dead
+  // connection); the try/catch guards against a rejected command.
+  try {
+    const bannedFlag = await withTimeout<string | null | typeof REDIS_TIMEOUT>(
+      redis.get(RedisKeys.banned(claims.sub)),
+      REDIS_CHECK_TIMEOUT_MS,
+      REDIS_TIMEOUT,
+    );
+    if (bannedFlag === REDIS_TIMEOUT) {
+      logRedisFailure('redis_banned_check_timeout', claims.sub, `>${REDIS_CHECK_TIMEOUT_MS}ms`);
+    } else if (bannedFlag === '1') {
       return next(Errors.forbidden('Account suspended'));
     }
-
-    req.user = claims;
-    req.effectiveLimits = computeEffectiveLimits(claims.plan ?? 'free', claims.planExpiresAt);
-    // Fire-and-forget: persist downgrade to DB if plan expired
-    maybePersistExpiry(claims.sub, claims.plan ?? 'free', claims.planExpiresAt ?? null);
-    // Debounced lastActiveAt update — max once per 60s per user (no DB hit when cached)
-    refreshLastActive(claims.sub);
-    next();
-  } catch {
-    next(Errors.unauthorized('Invalid or expired token'));
+  } catch (err) {
+    logRedisFailure('redis_banned_check_failed', claims.sub, err);
+    // fall through — do not block the request
   }
+
+  req.user = claims;
+  req.effectiveLimits = computeEffectiveLimits(claims.plan ?? 'free', claims.planExpiresAt);
+  // Fire-and-forget: persist downgrade to DB if plan expired
+  maybePersistExpiry(claims.sub, claims.plan ?? 'free', claims.planExpiresAt ?? null);
+  // Debounced lastActiveAt update — max once per 60s per user (no DB hit when cached)
+  refreshLastActive(claims.sub);
+  next();
 }
 
+/**
+ * Debounced lastActiveAt refresh. Fully fire-and-forget: any Redis failure is
+ * logged but never blocks the request (this runs after next() has been called).
+ */
 function refreshLastActive(userId: string): void {
-  redis.set(RedisKeys.lastActive(userId), '1', 'EX', 60, 'NX').then((result) => {
-    // NX means only set if NOT exists — result is null when key already exists (skip DB write)
-    if (result === 'OK') {
-      prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {});
-    }
-  }).catch(() => {});
+  redis
+    .set(RedisKeys.lastActive(userId), '1', 'EX', 60, 'NX')
+    .then((result) => {
+      // NX means only set if NOT exists — result is null when key already exists (skip DB write)
+      if (result === 'OK') {
+        prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {});
+      }
+    })
+    .catch((err) => logRedisFailure('redis_last_active_failed', userId, err));
 }
 
 /**

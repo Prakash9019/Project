@@ -26,6 +26,7 @@ import albumsRoutes from './modules/albums/albums.routes';
 import cityProfilesRoutes from './modules/city-profiles/city-profiles.routes';
 import aiRoutes from './modules/ai/ai.routes';
 import meRoutes from './modules/me/me.routes';
+import roomsRoutes from './modules/rooms/rooms.routes';
 
 // Re-export metrics so other modules can import from app.ts if needed
 export { httpRequestsTotal, httpRequestDuration, activeWsConnections };
@@ -134,6 +135,9 @@ export function createApp(): Application {
   app.use(`${v1}/city-profiles`, cityProfilesRoutes);
   app.use(`${v1}/ai`, aiRoutes);
   app.use(`${v1}/me`, meRoutes);
+
+  // Dating Rooms (Groups) — spec mounts these at /api/rooms
+  app.use('/api/rooms', roomsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
