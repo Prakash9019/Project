@@ -332,6 +332,15 @@ eas submit --platform android
 ```
 
 
+If you changed the backend URL in the Expo EAS Environment Variables (for example EXPO_PUBLIC_API_URL):
+
+You do not need a full native rebuild, but you do need to publish an OTA update for the new value to be bundled into your app. EAS environment variables are applied when you publish an update using the correct environment.
+
+For example:
+
+eas update --environment production --channel production
+
+
 you can run:
 
 # Android APK
