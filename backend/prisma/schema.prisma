@@ -993,6 +993,7 @@ enum RoomMessageType {
   text
   image
   system
+  voice
 }
 
 model Room {

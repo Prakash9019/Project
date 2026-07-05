@@ -1,23 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
   TextInput,
-  FlatList,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Modal,
 } from 'react-native';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Avatar } from '../../src/components/Avatar';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Location from 'expo-location';
+import { Audio } from 'expo-av';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { MiniProfile } from '../../src/components/MiniProfile';
-import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../../src/theme';
+import { RoomHeader } from '../../src/components/rooms/RoomHeader';
+import { MessageBubble } from '../../src/components/rooms/MessageBubble';
+import { ReplyPreview } from '../../src/components/rooms/ReplyPreview';
+import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
+import { AttachmentSheet, type AttachmentKind } from '../../src/components/rooms/AttachmentSheet';
+import type { GifResult } from '../../src/components/rooms/GifPicker';
+import { ContextMenu } from '../../src/components/rooms/ContextMenu';
+import { VoiceRecorder } from '../../src/components/rooms/VoiceRecorder';
+import { useTheme, FontFamily, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import {
   getRoom,
@@ -29,14 +42,15 @@ import {
   muteRoom,
   reportRoom,
   leaveRoom,
+  uploadChatPhoto,
+  pinRoomMessage,
 } from '../../src/services/api';
 import { connectSocket, getSocket, emitRoomJoin, emitRoomLeave, emitRoomTyping } from '../../src/services/socket';
-import { formatCount } from '../../src/lib/rooms';
+import { uploadToR2 } from '../../src/utils/uploadToR2';
 import { toastApiError, showSuccess, showError } from '../../src/lib/toast';
 import type { RoomDetail, RoomMessageCard, RoomReaction, RoomUserCard } from '../../src/types/api';
 
 const PAGE = 30;
-const EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '🔥'];
 
 function dayKey(iso: string): string {
   return new Date(iso).toDateString();
@@ -50,16 +64,14 @@ function dayLabel(iso: string): string {
   if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
-function timeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-}
 
 export default function RoomChat() {
   const { theme } = useTheme();
   const router = useRouter();
   const me = useAuthStore((s) => s.user);
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const roomId = String(id);
+  const params = useLocalSearchParams<{ id: string; unread?: string }>();
+  const roomId = String(params.id);
+  const initialUnread = params.unread ? parseInt(params.unread, 10) || 0 : 0;
 
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [messages, setMessages] = useState<RoomMessageCard[]>([]);
@@ -75,9 +87,27 @@ export default function RoomChat() {
   const [contextMsg, setContextMsg] = useState<RoomMessageCard | null>(null);
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [reactTarget, setReactTarget] = useState<RoomMessageCard | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [pinnedDismissed, setPinnedDismissed] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  // Search-in-chat
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [matchIdx, setMatchIdx] = useState(0);
+
+  const listRef = useRef<FlashListRef<RoomMessageCard>>(null);
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const lastTypingSent = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordCancelled = useRef(false);
+  const holdingRef = useRef(false);
 
   // ── Initial load ──
   const load = useCallback(async () => {
@@ -100,7 +130,7 @@ export default function RoomChat() {
     load();
   }, [load]);
 
-  // ── Socket wiring ──
+  // ── Socket wiring (unchanged logic) ──
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -149,17 +179,42 @@ export default function RoomChat() {
         });
       };
 
+      const onInfoUpdated = (p: { name: string; description: string | null }) => {
+        setRoom((prev) => (prev ? { ...prev, name: p.name, description: p.description } : prev));
+      };
+      const onPinned = (p: { messageId: string; isPinned: boolean }) => {
+        setPinnedDismissed(false);
+        setMessages((prev) => prev.map((m) => (m.id === p.messageId ? { ...m, isPinned: p.isPinned } : m)));
+      };
+      const onMemberRemoved = (p: { userId: string }) => {
+        if (p.userId === me?.id) {
+          showError('You were removed from this group');
+          router.replace('/(tabs)/groups' as Href);
+        }
+      };
+      const onRoleChanged = (p: { userId: string; role: 'admin' | 'member' }) => {
+        // If my own role changed, refresh admin affordances (pin, etc.).
+        if (p.userId === me?.id) setRoom((prev) => (prev ? { ...prev, myRole: p.role } : prev));
+      };
+
       socket.on('room:message', onMessage);
       socket.on('room:message_reaction', onReaction);
       socket.on('room:message_deleted', onDeleted);
       socket.on('room:typing', onTyping);
+      socket.on('room:info_updated', onInfoUpdated);
+      socket.on('room:message_pinned', onPinned);
+      socket.on('room:member_removed', onMemberRemoved);
+      socket.on('room:member_role_changed', onRoleChanged);
 
-      // Store cleanup on the socket instance via closure
       cleanupRef.current = () => {
         socket.off('room:message', onMessage);
         socket.off('room:message_reaction', onReaction);
         socket.off('room:message_deleted', onDeleted);
         socket.off('room:typing', onTyping);
+        socket.off('room:info_updated', onInfoUpdated);
+        socket.off('room:message_pinned', onPinned);
+        socket.off('room:member_removed', onMemberRemoved);
+        socket.off('room:member_role_changed', onRoleChanged);
         emitRoomLeave(roomId);
       };
     })();
@@ -169,10 +224,11 @@ export default function RoomChat() {
       cleanupRef.current?.();
       cleanupRef.current = null;
       Object.values(typingTimers.current).forEach(clearTimeout);
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
     };
   }, [roomId, me?.id]);
 
-  // ── Load older (inverted list → onEndReached is the top) ──
+  // ── Load older ──
   const loadOlder = async () => {
     if (loadingOlder || !hasMore || !cursor) return;
     setLoadingOlder(true);
@@ -188,7 +244,7 @@ export default function RoomChat() {
     }
   };
 
-  // ── Send ──
+  // ── Send text ──
   const onChangeText = (t: string) => {
     setText(t);
     const now = Date.now();
@@ -203,15 +259,11 @@ export default function RoomChat() {
     if (!content || sending) return;
     setSending(true);
     try {
-      const msg = await sendRoomMessage(roomId, {
-        content,
-        type: 'text',
-        replyToId: replyTo?.id,
-      });
+      const msg = await sendRoomMessage(roomId, { content, type: 'text', replyToId: replyTo?.id });
       setText('');
       setReplyTo(null);
+      setShowEmoji(false);
       emitRoomTyping(roomId, false);
-      // Optimistic append (socket echo is de-duped by id).
       setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
     } catch (e: unknown) {
       const err = e as { status?: number; code?: string };
@@ -225,15 +277,117 @@ export default function RoomChat() {
     }
   };
 
+  // ── Send image (direct-to-R2 photo upload) ──
+  const sendImage = async (localUri: string) => {
+    setSending(true);
+    try {
+      const key = await uploadChatPhoto(localUri);
+      const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: key, replyToId: replyTo?.id });
+      setReplyTo(null);
+      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+    } catch (e) {
+      toastApiError(e, 'Could not send photo');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // Run an R2 upload with a visible progress bar, then reset.
+  const runUpload = async (fn: () => Promise<void>) => {
+    setUploadProgress(0);
+    try {
+      await fn();
+    } catch (e) {
+      toastApiError(e, 'Upload failed');
+    } finally {
+      setUploadProgress(null);
+    }
+  };
+
+  const appendMessage = (msg: RoomMessageCard) => {
+    setReplyTo(null);
+    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+  };
+
+  const sendVideo = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      quality: 0.7,
+    });
+    if (res.canceled || !res.assets[0]) return;
+    await runUpload(async () => {
+      const url = await uploadToR2(res.assets[0].uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
+      const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: url, replyToId: replyTo?.id });
+      appendMessage(msg);
+    });
+  };
+
+  const sendDocument = async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    if (res.canceled || !res.assets?.[0]) return;
+    const file = res.assets[0];
+    const ext = file.name?.includes('.') ? file.name.split('.').pop() : undefined;
+    await runUpload(async () => {
+      const url = await uploadToR2(file.uri, 'document', file.mimeType || 'application/octet-stream', {
+        ext,
+        onProgress: setUploadProgress,
+      });
+      const msg = await sendRoomMessage(roomId, {
+        content: `📄 ${file.name ?? 'Document'}`,
+        type: 'text',
+        mediaUrl: url,
+        replyToId: replyTo?.id,
+      });
+      appendMessage(msg);
+    });
+  };
+
+  const sendAudioFile = async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
+    if (res.canceled || !res.assets?.[0]) return;
+    const file = res.assets[0];
+    await runUpload(async () => {
+      const url = await uploadToR2(file.uri, 'audio', file.mimeType || 'audio/mpeg', {
+        onProgress: setUploadProgress,
+      });
+      const msg = await sendRoomMessage(roomId, {
+        content: `🎵 ${file.name ?? 'Audio'}`,
+        type: 'text',
+        mediaUrl: url,
+        replyToId: replyTo?.id,
+      });
+      appendMessage(msg);
+    });
+  };
+
+  // ── Send GIF (Tenor URL is already hosted — no R2 upload) ──
+  const sendGif = async (gif: GifResult) => {
+    setSending(true);
+    try {
+      const msg = await sendRoomMessage(roomId, {
+        content: '',
+        type: 'image',
+        mediaUrl: gif.url,
+        replyToId: replyTo?.id,
+      });
+      setReplyTo(null);
+      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+    } catch (e) {
+      toastApiError(e, 'Could not send GIF');
+    } finally {
+      setSending(false);
+    }
+  };
+
   // ── Reactions ──
   const toggleReaction = async (msg: RoomMessageCard, emoji: string) => {
+    setContextMsg(null);
+    setReactTarget(null);
     try {
       await reactToRoomMessage(roomId, msg.id, emoji);
-      // Server emits room:message_reaction to everyone incl. us — state updates there.
     } catch (e) {
       toastApiError(e, 'Could not react');
     }
-    setContextMsg(null);
   };
 
   const doDelete = async (msg: RoomMessageCard) => {
@@ -255,12 +409,34 @@ export default function RoomChat() {
     }
   };
 
+  const doCopy = async (msg: RoomMessageCard) => {
+    setContextMsg(null);
+    await Clipboard.setStringAsync(msg.content);
+    showSuccess('Copied');
+  };
+
+  const isAdmin = room?.isCreator === true || room?.myRole === 'admin';
+
+  const doPin = async (msg: RoomMessageCard) => {
+    setContextMsg(null);
+    const next = !msg.isPinned;
+    // Optimistic: banner updates immediately; socket echo keeps others in sync.
+    setPinnedDismissed(false);
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isPinned: next } : m)));
+    try {
+      await pinRoomMessage(roomId, msg.id, next);
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isPinned: !next } : m)));
+      toastApiError(e, 'Could not pin message');
+    }
+  };
+
   // ── Room menu actions ──
   const handleMute = async () => {
     setMenuOpen(false);
     try {
       const res = await muteRoom(roomId);
-      showSuccess(res.muted ? 'Room muted' : 'Room unmuted');
+      showSuccess(res.muted ? 'Notifications muted' : 'Notifications unmuted');
     } catch (e) {
       toastApiError(e);
     }
@@ -269,7 +445,7 @@ export default function RoomChat() {
     setMenuOpen(false);
     try {
       await reportRoom(roomId, 'inappropriate');
-      showSuccess('Room reported');
+      showSuccess('Group reported');
     } catch (e) {
       toastApiError(e);
     }
@@ -284,55 +460,263 @@ export default function RoomChat() {
     }
   };
 
+  const openInfo = () => router.push(`/rooms/info?roomId=${roomId}` as Href);
+
+  // ── Attachments ──
+  const onPickAttachment = async (kind: AttachmentKind) => {
+    if (kind === 'camera') {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return showError('Camera permission needed');
+      const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+      if (!res.canceled && res.assets[0]) sendImage(res.assets[0].uri);
+    } else if (kind === 'gallery') {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+      });
+      if (!res.canceled && res.assets[0]) sendImage(res.assets[0].uri);
+    } else if (kind === 'location') {
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (!perm.granted) return showError('Location permission needed');
+        const pos = await Location.getCurrentPositionAsync({});
+        const { latitude, longitude } = pos.coords;
+        const msg = await sendRoomMessage(roomId, {
+          content: `📍 Location: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+          type: 'text',
+        });
+        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+      } catch {
+        showError('Could not get location');
+      }
+    } else if (kind === 'video') {
+      await sendVideo();
+    } else if (kind === 'document') {
+      await sendDocument();
+    } else if (kind === 'audio') {
+      await sendAudioFile();
+    } else if (kind === 'sticker') {
+      showSuccess('Sticker packs coming soon');
+    } else {
+      showSuccess('Coming soon');
+    }
+  };
+
+  // ── Voice recording (expo-av → R2 → { type:'voice' }) ──
+  const startRecording = async () => {
+    holdingRef.current = true;
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) {
+        showError('Microphone permission needed');
+        holdingRef.current = false;
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
+      // User already released before init finished — discard immediately.
+      if (!holdingRef.current) {
+        await recording.stopAndUnloadAsync().catch(() => {});
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+        return;
+      }
+      recordingRef.current = recording;
+      recordCancelled.current = false;
+      setRecording(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    } catch {
+      showError('Could not start recording');
+      holdingRef.current = false;
+    }
+  };
+
+  const stopRecording = async () => {
+    holdingRef.current = false;
+    const rec = recordingRef.current;
+    if (!rec) return;
+    recordingRef.current = null;
+    setRecording(false);
+    let uri: string | null = null;
+    let durationMs = 0;
+    try {
+      const status = await rec.stopAndUnloadAsync();
+      durationMs = status.durationMillis ?? 0;
+      uri = rec.getURI();
+    } catch {
+      /* already stopped */
+    }
+    await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+
+    // Discard cancelled or too-short (< 1s) recordings.
+    if (recordCancelled.current || !uri || durationMs < 1000) {
+      recordCancelled.current = false;
+      return;
+    }
+
+    await runUpload(async () => {
+      const url = await uploadToR2(uri!, 'voice_clip', 'audio/mp4', { onProgress: setUploadProgress });
+      const msg = await sendRoomMessage(roomId, {
+        content: '',
+        type: 'voice',
+        mediaUrl: url,
+        replyToId: replyTo?.id,
+      });
+      appendMessage(msg);
+    });
+  };
+
+  // ── Reply / swipe ──
+  const onSwipeReply = useCallback((msg: RoomMessageCard) => {
+    setReplyTo(msg);
+    Haptics.selectionAsync().catch(() => {});
+  }, []);
+
+  const scrollToMessage = useCallback(
+    (messageId: string) => {
+      const idx = messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) return;
+      listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+      setHighlightId(messageId);
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+      highlightTimer.current = setTimeout(() => setHighlightId(null), 1500);
+    },
+    [messages],
+  );
+
   const typingText = (() => {
     const names = Object.values(typingUsers);
     if (names.length === 0) return null;
     if (names.length === 1) return `${names[0]} is typing…`;
     if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
-    return `${names.length} people are typing…`;
+    return 'Several people are typing…';
   })();
 
-  const renderItem = ({ item, index }: { item: RoomMessageCard; index: number }) => {
-    // Inverted list: the next-older message is at index+1.
-    const older = messages[index + 1];
-    const showDateSep = !older || dayKey(older.createdAt) !== dayKey(item.createdAt);
-    const isOwn = item.senderId === me?.id;
-    return (
-      <View>
-        <MessageBubble
-          msg={item}
-          isOwn={isOwn}
-          onAvatar={() => setMiniUser(item.sender)}
-          onLongPress={() => setContextMsg(item)}
-          onToggleReaction={(emoji) => toggleReaction(item, emoji)}
-        />
-        {showDateSep ? <DateSeparator label={dayLabel(item.createdAt)} /> : null}
-      </View>
-    );
+  const pinned = useMemo(
+    () => (pinnedDismissed ? null : messages.find((m) => m.isPinned && !m.isDeleted) ?? null),
+    [messages, pinnedDismissed],
+  );
+
+  // ── Search matches ──
+  const matches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [] as number[];
+    const idxs: number[] = [];
+    messages.forEach((m, i) => {
+      if (!m.isDeleted && m.content.toLowerCase().includes(q)) idxs.push(i);
+    });
+    return idxs;
+  }, [searchQuery, messages]);
+
+  useEffect(() => {
+    setMatchIdx(0);
+  }, [searchQuery]);
+
+  const jumpMatch = (dir: 1 | -1) => {
+    if (matches.length === 0) return;
+    const next = (matchIdx + dir + matches.length) % matches.length;
+    setMatchIdx(next);
+    const idx = matches[next];
+    listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+    setHighlightId(messages[idx]?.id ?? null);
   };
+
+  const searchHighlightId = searchMode && matches.length ? messages[matches[matchIdx]]?.id : null;
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: RoomMessageCard; index: number }) => {
+      const older = messages[index + 1];
+      const showDateSep = !older || dayKey(older.createdAt) !== dayKey(item.createdAt);
+      const showUnread = initialUnread > 0 && index === initialUnread - 1;
+      const isOwn = item.senderId === me?.id;
+      return (
+        <View style={styles.invertRow}>
+          <MessageBubble
+            message={item}
+            isOwn={isOwn}
+            highlight={highlightId === item.id || searchHighlightId === item.id}
+            onAvatarPress={() => setMiniUser(item.sender)}
+            onLongPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              setContextMsg(item);
+            }}
+            onSwipeReply={() => onSwipeReply(item)}
+            onReactionPress={(emoji) => toggleReaction(item, emoji)}
+            onReplyPress={() => item.replyTo && scrollToMessage(item.replyTo.id)}
+          />
+          {showUnread ? <UnreadDivider /> : null}
+          {showDateSep ? <DateSeparator label={dayLabel(item.createdAt)} /> : null}
+        </View>
+      );
+    },
+    // toggleReaction stable enough; deps kept minimal to avoid re-renders
+    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage],
+  );
+
+  const hasText = text.trim().length > 0;
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
-          <Ionicons name="chevron-back" size={26} color={theme.textPrimary} />
-        </Pressable>
-        <Pressable style={styles.headerCenter} onPress={() => openMembers(router, roomId)}>
-          <Text style={[styles.headerTitle, { color: theme.textPrimary }]} numberOfLines={1}>
-            {room?.name ?? 'Room'}
-          </Text>
-          {room ? (
-            <Text style={[styles.headerSub, { color: theme.textSecondary }]}>
-              {formatCount(room.memberCount)} members
-              {room.onlineCount > 0 ? ` · ${formatCount(room.onlineCount)} online` : ''}
-            </Text>
+      {/* Header or search bar */}
+      {searchMode ? (
+        <View style={[styles.searchHeader, { borderBottomColor: theme.border }]}>
+          <Pressable onPress={() => { setSearchMode(false); setSearchQuery(''); }} hitSlop={10}>
+            <Ionicons name="chevron-back" size={26} color={theme.textPrimary} />
+          </Pressable>
+          <View style={[styles.searchInputWrap, { backgroundColor: theme.surfaceElevated }]}>
+            <Ionicons name="search" size={18} color={theme.textTertiary} />
+            <TextInput
+              autoFocus
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search in chat"
+              placeholderTextColor={theme.textTertiary}
+              style={[styles.searchInput, { color: theme.textPrimary }]}
+            />
+          </View>
+          {searchQuery.trim() ? (
+            <View style={styles.searchNav}>
+              <Text style={[styles.matchCount, { color: theme.textSecondary }]}>
+                {matches.length ? `${matchIdx + 1} of ${matches.length}` : '0'}
+              </Text>
+              <Pressable onPress={() => jumpMatch(-1)} hitSlop={6}>
+                <Ionicons name="chevron-up" size={22} color={theme.textPrimary} />
+              </Pressable>
+              <Pressable onPress={() => jumpMatch(1)} hitSlop={6}>
+                <Ionicons name="chevron-down" size={22} color={theme.textPrimary} />
+              </Pressable>
+            </View>
           ) : null}
+        </View>
+      ) : (
+        <RoomHeader
+          room={room}
+          onBack={() => router.back()}
+          onOpenInfo={openInfo}
+          onSearch={() => setSearchMode(true)}
+          onMenu={() => setMenuOpen(true)}
+        />
+      )}
+
+      {/* Pinned banner */}
+      {pinned && !searchMode ? (
+        <Pressable
+          onPress={() => scrollToMessage(pinned.id)}
+          style={[styles.pinnedBanner, { backgroundColor: theme.surfaceElevated, borderLeftColor: theme.brand }]}
+        >
+          <Ionicons name="pin" size={16} color={theme.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.pinnedLabel, { color: theme.brand }]}>Pinned message</Text>
+            <Text style={[styles.pinnedText, { color: theme.textSecondary }]} numberOfLines={1}>
+              {pinned.content || 'Photo'}
+            </Text>
+          </View>
+          <Pressable onPress={() => setPinnedDismissed(true)} hitSlop={8}>
+            <Ionicons name="close" size={18} color={theme.textTertiary} />
+          </Pressable>
         </Pressable>
-        <Pressable onPress={() => setMenuOpen(true)} hitSlop={10}>
-          <Ionicons name="ellipsis-vertical" size={22} color={theme.textPrimary} />
-        </Pressable>
-      </View>
+      ) : null}
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -344,113 +728,176 @@ export default function RoomChat() {
             <ActivityIndicator color={theme.brand} />
           </View>
         ) : (
-          <FlatList
+          <FlashList
+            ref={listRef}
             data={messages}
-            inverted
+            style={styles.invertList}
             keyExtractor={(m) => m.id}
             renderItem={renderItem}
             contentContainerStyle={{ paddingHorizontal: spacing.md, paddingVertical: spacing.md }}
             onEndReached={loadOlder}
             onEndReachedThreshold={0.3}
             ListFooterComponent={
-              loadingOlder ? <ActivityIndicator color={theme.brand} style={{ marginVertical: spacing.md }} /> : null
+              loadingOlder ? (
+                <View style={styles.invertRow}>
+                  <ActivityIndicator color={theme.brand} style={{ marginVertical: spacing.md }} />
+                </View>
+              ) : null
             }
             keyboardShouldPersistTaps="handled"
           />
         )}
 
-        {typingText ? (
-          <Text style={[styles.typing, { color: theme.textTertiary }]}>{typingText}</Text>
+        {typingText ? <Text style={[styles.typing, { color: theme.textTertiary }]}>{typingText}</Text> : null}
+
+        {/* Upload progress */}
+        {uploadProgress !== null ? (
+          <View style={styles.uploadBar}>
+            <Ionicons name="cloud-upload-outline" size={16} color={theme.brand} />
+            <View style={[styles.uploadTrack, { backgroundColor: theme.surfaceElevated }]}>
+              <View
+                style={[
+                  styles.uploadFill,
+                  { backgroundColor: theme.brand, width: `${Math.round(uploadProgress * 100)}%` },
+                ]}
+              />
+            </View>
+            <Text style={[styles.uploadLabel, { color: theme.textSecondary }]}>
+              {Math.round(uploadProgress * 100)}%
+            </Text>
+          </View>
         ) : null}
 
-        {/* Reply preview */}
+        {/* Reply preview bar */}
         {replyTo ? (
-          <View style={[styles.replyBar, { backgroundColor: theme.surfaceElevated, borderLeftColor: theme.brand }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.replyName, { color: theme.brand }]}>{replyTo.sender.firstName ?? 'Reply'}</Text>
-              <Text style={[styles.replyContent, { color: theme.textSecondary }]} numberOfLines={1}>
-                {replyTo.content}
-              </Text>
-            </View>
-            <Pressable onPress={() => setReplyTo(null)} hitSlop={8}>
-              <Ionicons name="close" size={20} color={theme.textTertiary} />
-            </Pressable>
+          <View style={{ marginHorizontal: spacing.md, marginBottom: 4 }}>
+            <ReplyPreview
+              senderName={replyTo.sender.firstName}
+              content={replyTo.content || 'Photo'}
+              onCancel={() => setReplyTo(null)}
+            />
           </View>
         ) : null}
 
         {/* Input bar */}
-        <View style={[styles.inputBar, { borderTopColor: theme.border, backgroundColor: theme.background }]}>
-          <View style={[styles.inputWrap, { backgroundColor: theme.surfaceElevated }]}>
-            <TextInput
-              value={text}
-              onChangeText={onChangeText}
-              placeholder="Message"
-              placeholderTextColor={theme.textTertiary}
-              style={[styles.input, { color: theme.textPrimary }]}
-              multiline
-            />
+        {!searchMode ? (
+          <View style={[styles.inputBar, { borderTopColor: theme.border, backgroundColor: theme.background }]}>
+            {recording ? (
+              <VoiceRecorder cancelling={false} />
+            ) : (
+              <>
+                <Pressable onPress={() => setShowEmoji((v) => !v)} hitSlop={6} style={styles.iconBtn}>
+                  <Ionicons name={showEmoji ? 'close' : 'happy-outline'} size={24} color={theme.textSecondary} />
+                </Pressable>
+                <View style={[styles.inputWrap, { backgroundColor: theme.surfaceElevated }]}>
+                  <TextInput
+                    value={text}
+                    onChangeText={onChangeText}
+                    onFocus={() => setShowEmoji(false)}
+                    placeholder="Message"
+                    placeholderTextColor={theme.textTertiary}
+                    style={[styles.input, { color: theme.textPrimary }]}
+                    multiline
+                  />
+                </View>
+                {!hasText ? (
+                  <>
+                    <Pressable onPress={() => setAttachOpen(true)} hitSlop={6} style={styles.iconBtn}>
+                      <Ionicons name="add-circle-outline" size={26} color={theme.textSecondary} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => onPickAttachment('camera')}
+                      onLongPress={startRecording}
+                      onPressOut={stopRecording}
+                      delayLongPress={250}
+                      hitSlop={6}
+                      style={styles.iconBtn}
+                    >
+                      <Ionicons name="camera-outline" size={24} color={theme.textSecondary} />
+                    </Pressable>
+                  </>
+                ) : null}
+              </>
+            )}
+
+            {hasText && !recording ? (
+              <Pressable onPress={send} disabled={sending}>
+                <LinearGradient
+                  colors={theme.gradientWarm}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.sendBtn}
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="arrow-up" size={22} color="#fff" />
+                  )}
+                </LinearGradient>
+              </Pressable>
+            ) : null}
           </View>
-          <Pressable onPress={send} disabled={!text.trim() || sending}>
-            <LinearGradient
-              colors={theme.gradientWarm}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[styles.sendBtn, { opacity: text.trim() ? 1 : 0.4 }]}
-            >
-              {sending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="arrow-up" size={22} color="#fff" />}
-            </LinearGradient>
-          </Pressable>
-        </View>
+        ) : null}
+
+        {/* Emoji panel (compose) */}
+        {showEmoji && !searchMode ? <EmojiPicker onSelect={(e) => setText((t) => t + e)} /> : null}
       </KeyboardAvoidingView>
 
       {/* Room three-dot menu */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={[styles.menuBackdrop, { backgroundColor: theme.overlay }]} onPress={() => setMenuOpen(false)}>
           <View style={[styles.menu, { backgroundColor: theme.surface }]}>
-            <MenuItem icon="people-outline" label="View Members" onPress={() => { setMenuOpen(false); openMembers(router, roomId); }} />
-            <MenuItem icon="notifications-off-outline" label="Mute Room" onPress={handleMute} />
-            <MenuItem icon="flag-outline" label="Report Room" onPress={handleReportRoom} />
-            <MenuItem icon="exit-outline" label="Leave Room" destructive onPress={handleLeave} />
+            <MenuItem icon="search-outline" label="Search in chat" onPress={() => { setMenuOpen(false); setSearchMode(true); }} />
+            <MenuItem icon="information-circle-outline" label="Group Info" onPress={() => { setMenuOpen(false); openInfo(); }} />
+            <MenuItem icon="notifications-off-outline" label="Mute Notifications" onPress={handleMute} />
+            <MenuItem icon="flag-outline" label="Report Group" onPress={handleReportRoom} />
+            <MenuItem icon="exit-outline" label="Leave Group" destructive onPress={handleLeave} />
           </View>
         </Pressable>
       </Modal>
 
-      {/* Message context menu */}
-      <Modal visible={!!contextMsg} transparent animationType="fade" onRequestClose={() => setContextMsg(null)}>
-        <Pressable style={[styles.menuBackdrop, { backgroundColor: theme.overlay }]} onPress={() => setContextMsg(null)}>
-          <View style={[styles.menu, { backgroundColor: theme.surface }]}>
-            <View style={styles.emojiRow}>
-              {EMOJIS.map((e) => (
-                <Pressable key={e} onPress={() => contextMsg && toggleReaction(contextMsg, e)} hitSlop={6}>
-                  <Text style={styles.emoji}>{e}</Text>
-                </Pressable>
-              ))}
-            </View>
-            <MenuItem icon="arrow-undo-outline" label="Reply" onPress={() => { setReplyTo(contextMsg); setContextMsg(null); }} />
-            {contextMsg && contextMsg.senderId !== me?.id ? (
-              <MenuItem icon="flag-outline" label="Report" onPress={() => contextMsg && doReport(contextMsg)} />
-            ) : null}
-            {contextMsg && contextMsg.senderId === me?.id ? (
-              <MenuItem icon="trash-outline" label="Delete" destructive onPress={() => contextMsg && doDelete(contextMsg)} />
-            ) : null}
-          </View>
-        </Pressable>
-      </Modal>
-
-      <MiniProfile
-        visible={!!miniUser}
-        member={miniUser}
-        onClose={() => setMiniUser(null)}
+      {/* Long-press context menu */}
+      <ContextMenu
+        message={contextMsg}
+        isOwn={contextMsg?.senderId === me?.id}
+        isAdmin={isAdmin}
+        onClose={() => setContextMsg(null)}
+        onReact={(e) => contextMsg && toggleReaction(contextMsg, e)}
+        onOpenEmojiPicker={() => {
+          setReactTarget(contextMsg);
+          setContextMsg(null);
+        }}
+        onReply={() => { setReplyTo(contextMsg); setContextMsg(null); }}
+        onCopy={() => contextMsg && doCopy(contextMsg)}
+        onForward={() => {}}
+        onPin={() => contextMsg && doPin(contextMsg)}
+        onDelete={() => contextMsg && doDelete(contextMsg)}
+        onReport={() => contextMsg && doReport(contextMsg)}
+        onInfo={() => { setContextMsg(null); showSuccess('Delivered'); }}
       />
+
+      {/* Full emoji picker for a reaction */}
+      <Modal visible={!!reactTarget} transparent animationType="slide" onRequestClose={() => setReactTarget(null)}>
+        <Pressable style={[styles.menuBackdrop, { backgroundColor: theme.overlay }]} onPress={() => setReactTarget(null)}>
+          <Pressable style={{ width: '100%' }} onPress={(e) => e.stopPropagation()}>
+            <EmojiPicker onSelect={(e) => reactTarget && toggleReaction(reactTarget, e)} />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <AttachmentSheet
+        visible={attachOpen}
+        onClose={() => setAttachOpen(false)}
+        onPick={onPickAttachment}
+        onGifSelected={sendGif}
+      />
+
+      <MiniProfile visible={!!miniUser} member={miniUser} onClose={() => setMiniUser(null)} />
     </SafeAreaView>
   );
 }
 
-function openMembers(router: ReturnType<typeof useRouter>, roomId: string) {
-  router.push(`/rooms/members?roomId=${roomId}` as never);
-}
-
-/* ── Reaction merge helper ── */
+/* ── Reaction merge helper (unchanged) ── */
 function applyReaction(
   reactions: RoomReaction[],
   p: { emoji: string; count: number; userId: string; added: boolean },
@@ -459,9 +906,7 @@ function applyReaction(
   const isMe = p.userId === myId;
   const next = reactions.map((r) => ({ ...r }));
   const idx = next.findIndex((r) => r.emoji === p.emoji);
-  if (p.count <= 0) {
-    return next.filter((r) => r.emoji !== p.emoji);
-  }
+  if (p.count <= 0) return next.filter((r) => r.emoji !== p.emoji);
   if (idx === -1) {
     next.push({ emoji: p.emoji, count: p.count, userReacted: isMe ? p.added : false });
   } else {
@@ -471,103 +916,6 @@ function applyReaction(
   return next;
 }
 
-/* ── Message bubble ── */
-function MessageBubble({
-  msg,
-  isOwn,
-  onAvatar,
-  onLongPress,
-  onToggleReaction,
-}: {
-  msg: RoomMessageCard;
-  isOwn: boolean;
-  onAvatar: () => void;
-  onLongPress: () => void;
-  onToggleReaction: (emoji: string) => void;
-}) {
-  const { theme } = useTheme();
-  const s = msg.sender;
-
-  return (
-    <View style={[styles.msgRow, isOwn ? styles.msgRowOwn : null]}>
-      {!isOwn ? (
-        <Pressable onPress={onAvatar} style={{ marginRight: 8 }}>
-          <Avatar uri={s.profilePhotoUrl} size={36} online={s.isOnline} />
-        </Pressable>
-      ) : null}
-
-      <View style={{ maxWidth: '78%' }}>
-        {!isOwn ? (
-          <Pressable onPress={onAvatar} style={styles.senderRow}>
-            <Text style={[styles.senderName, { color: theme.brand }]}>{s.firstName ?? 'Someone'}</Text>
-            {s.age != null ? <Text style={[styles.senderAge, { color: theme.textTertiary }]}>{s.age}</Text> : null}
-            {s.isVerified ? <Ionicons name="checkmark-circle" size={12} color={theme.info} /> : null}
-            {s.distanceLabel ? <Text style={[styles.senderDist, { color: theme.textTertiary }]}>{s.distanceLabel}</Text> : null}
-          </Pressable>
-        ) : null}
-
-        <Pressable onLongPress={onLongPress} delayLongPress={250}>
-          {/* reply quote */}
-          {msg.replyTo ? (
-            <View style={[styles.quote, { backgroundColor: isOwn ? '#ffffff22' : theme.backgroundTertiary, borderLeftColor: isOwn ? '#fff' : theme.brand }]}>
-              <Text style={[styles.quoteName, { color: isOwn ? '#fff' : theme.brand }]}>{msg.replyTo.senderFirstName ?? '—'}</Text>
-              <Text style={[styles.quoteText, { color: isOwn ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
-                {msg.replyTo.content}
-              </Text>
-            </View>
-          ) : null}
-
-          {isOwn ? (
-            <LinearGradient
-              colors={theme.gradientWarm}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[styles.bubble, styles.bubbleOwn]}
-            >
-              <Text style={[styles.bubbleText, { color: '#fff', fontStyle: msg.isDeleted ? 'italic' : 'normal' }]}>
-                {msg.content}
-              </Text>
-            </LinearGradient>
-          ) : (
-            <View style={[styles.bubble, styles.bubbleOther, { backgroundColor: theme.surfaceElevated }]}>
-              <Text
-                style={[
-                  styles.bubbleText,
-                  { color: msg.isDeleted ? theme.textTertiary : theme.textPrimary, fontStyle: msg.isDeleted ? 'italic' : 'normal' },
-                ]}
-              >
-                {msg.content}
-              </Text>
-            </View>
-          )}
-        </Pressable>
-
-        {/* timestamp + reactions */}
-        <View style={[styles.metaRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
-          <Text style={[styles.time, { color: theme.textTertiary }]}>{timeLabel(msg.createdAt)}</Text>
-        </View>
-        {msg.reactions.length > 0 ? (
-          <View style={[styles.reactionsRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
-            {msg.reactions.map((r) => (
-              <Pressable
-                key={r.emoji}
-                onPress={() => onToggleReaction(r.emoji)}
-                style={[
-                  styles.reactionPill,
-                  { backgroundColor: r.userReacted ? theme.brand + '33' : theme.backgroundTertiary, borderColor: r.userReacted ? theme.brand : 'transparent' },
-                ]}
-              >
-                <Text style={styles.reactionEmoji}>{r.emoji}</Text>
-                <Text style={[styles.reactionCount, { color: theme.textSecondary }]}>{r.count}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 function DateSeparator({ label }: { label: string }) {
   const { theme } = useTheme();
   return (
@@ -575,6 +923,17 @@ function DateSeparator({ label }: { label: string }) {
       <View style={[styles.dateSep, { backgroundColor: theme.surfaceElevated }]}>
         <Text style={[styles.dateSepText, { color: theme.textTertiary }]}>{label}</Text>
       </View>
+    </View>
+  );
+}
+
+function UnreadDivider() {
+  const { theme } = useTheme();
+  return (
+    <View style={styles.unreadWrap}>
+      <View style={[styles.unreadLine, { backgroundColor: theme.brand }]} />
+      <Text style={[styles.unreadText, { color: theme.brand }]}>Unread Messages</Text>
+      <View style={[styles.unreadLine, { backgroundColor: theme.brand }]} />
     </View>
   );
 }
@@ -603,53 +962,41 @@ function MenuItem({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingBottom: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth },
-  headerCenter: { flex: 1 },
-  headerTitle: { fontSize: 17, fontFamily: DisplayFont.bold },
-  headerSub: { fontSize: 13, fontFamily: FontFamily.regular, marginTop: 1 },
+  invertList: { transform: [{ scaleY: -1 }] },
+  invertRow: { transform: [{ scaleY: -1 }] },
 
-  msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginVertical: 4, alignSelf: 'flex-start', maxWidth: '100%' },
-  msgRowOwn: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
-  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
-  senderName: { fontSize: 13, fontFamily: FontFamily.semibold },
-  senderAge: { fontSize: 12, fontFamily: FontFamily.regular },
-  senderDist: { fontSize: 11, fontFamily: FontFamily.regular },
+  searchHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth },
+  searchInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, borderRadius: radius.lg, paddingHorizontal: spacing.md },
+  searchInput: { flex: 1, fontSize: 15, fontFamily: FontFamily.regular },
+  searchNav: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  matchCount: { fontSize: 13, fontFamily: FontFamily.medium },
 
-  bubble: { paddingVertical: 10, paddingHorizontal: 12 },
-  bubbleOther: { borderTopLeftRadius: 4, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
-  bubbleOwn: { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 4 },
-  bubbleText: { fontSize: 15, fontFamily: FontFamily.regular, lineHeight: 20 },
-
-  quote: { borderLeftWidth: 2, paddingLeft: 8, paddingVertical: 4, paddingRight: 8, borderTopLeftRadius: 6, borderTopRightRadius: 6, marginBottom: 2 },
-  quoteName: { fontSize: 12, fontFamily: FontFamily.semibold },
-  quoteText: { fontSize: 12, fontFamily: FontFamily.regular },
-
-  metaRow: { flexDirection: 'row', marginTop: 2 },
-  time: { fontSize: 10, fontFamily: FontFamily.regular },
-  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3 },
-  reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.pill, borderWidth: 1 },
-  reactionEmoji: { fontSize: 12 },
-  reactionCount: { fontSize: 11, fontFamily: FontFamily.medium },
+  pinnedBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderLeftWidth: 3 },
+  pinnedLabel: { fontSize: 12, fontFamily: FontFamily.semibold },
+  pinnedText: { fontSize: 13, fontFamily: FontFamily.regular, marginTop: 1 },
 
   dateSepWrap: { alignItems: 'center', marginVertical: spacing.sm },
   dateSep: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: radius.pill },
   dateSepText: { fontSize: 12, fontFamily: FontFamily.medium },
 
+  unreadWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginVertical: spacing.sm, paddingHorizontal: spacing.xl },
+  unreadLine: { flex: 1, height: StyleSheet.hairlineWidth },
+  unreadText: { fontSize: 12, fontFamily: FontFamily.semibold },
+
   typing: { fontSize: 12, fontFamily: FontFamily.regular, paddingHorizontal: spacing.lg, paddingBottom: 4 },
+  uploadBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: 6 },
+  uploadTrack: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
+  uploadFill: { height: 4, borderRadius: 2 },
+  uploadLabel: { fontSize: 12, fontFamily: FontFamily.medium, width: 40, textAlign: 'right' },
 
-  replyBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginHorizontal: spacing.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderLeftWidth: 2, borderRadius: radius.sm },
-  replyName: { fontSize: 13, fontFamily: FontFamily.semibold },
-  replyContent: { fontSize: 13, fontFamily: FontFamily.regular },
-
-  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth },
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth },
+  iconBtn: { paddingBottom: 8, paddingHorizontal: 2 },
   inputWrap: { flex: 1, borderRadius: radius.xl, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? 10 : 4, maxHeight: 110, justifyContent: 'center' },
   input: { fontSize: 15, fontFamily: FontFamily.regular, maxHeight: 90 },
   sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
 
   menuBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  menu: { minWidth: 240, borderRadius: radius.lg, paddingVertical: spacing.sm, gap: 2 },
+  menu: { minWidth: 250, borderRadius: radius.lg, paddingVertical: spacing.sm, gap: 2 },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   menuItemText: { fontSize: 15, fontFamily: FontFamily.medium },
-  emojiRow: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  emoji: { fontSize: 28 },
 });

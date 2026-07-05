@@ -13,6 +13,9 @@ import {
   listMembersQuerySchema,
   reportRoomSchema,
   reportMessageSchema,
+  updateRoomSchema,
+  pinMessageSchema,
+  updateMemberRoleSchema,
 } from './rooms.schema';
 
 const router = Router();
@@ -22,6 +25,9 @@ router.use(requireAuth, requireVerifiedPhone);
 router.get('/', validate(listRoomsQuerySchema, 'query'), asyncHandler(c.listRooms));
 router.get('/joined', validate(listJoinedQuerySchema, 'query'), asyncHandler(c.listJoined));
 router.get('/:roomId', asyncHandler(c.getRoom));
+
+// Admin / creator: edit room info
+router.patch('/:roomId', validate(updateRoomSchema), asyncHandler(c.updateRoom));
 
 // Join / leave
 router.post('/:roomId/join', asyncHandler(c.joinRoom));
@@ -53,6 +59,14 @@ router.post(
 );
 router.delete('/:roomId/messages/:messageId', asyncHandler(c.deleteMessage));
 
+// Admin / creator: pin a message
+router.post(
+  '/:roomId/messages/:messageId/pin',
+  requireRoomMember,
+  validate(pinMessageSchema),
+  asyncHandler(c.pinMessage),
+);
+
 // Members — require membership
 router.get(
   '/:roomId/members',
@@ -60,6 +74,10 @@ router.get(
   validate(listMembersQuerySchema, 'query'),
   asyncHandler(c.listMembers),
 );
+
+// Admin / creator: remove a member; creator only: change a member's role
+router.delete('/:roomId/members/:userId', asyncHandler(c.removeMember));
+router.patch('/:roomId/members/:userId', validate(updateMemberRoleSchema), asyncHandler(c.updateMemberRole));
 
 // Room-level actions
 router.post('/:roomId/mute', asyncHandler(c.muteRoom));

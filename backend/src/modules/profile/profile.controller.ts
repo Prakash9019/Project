@@ -59,7 +59,7 @@ export const updateProfileSchema = z.object({
   rightNowExpiresAt:  z.string().datetime().nullable().optional(),
 });
 
-// Accepts either a full https:// URL or a raw R2 storage key (gcsPath).
+// Accepts either a full https:// URL or a raw R2 storage key.
 export const addPhotoSchema = z.object({
   url:       z.string().min(1),
   isPrimary: z.boolean().optional(),

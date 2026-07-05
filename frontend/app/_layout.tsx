@@ -80,6 +80,8 @@ function RootStack() {
           <Stack.Screen name="verification" />
           <Stack.Screen name="rooms/[id]" />
           <Stack.Screen name="rooms/members" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="rooms/info" />
+          <Stack.Screen name="rooms/media" />
         </Stack>
         <IncomingCallSheet />
         <OfflineBanner />

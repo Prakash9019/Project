@@ -334,3 +334,103 @@ cd backend && npx prisma migrate deploy
 6. Rebuild native app
 cd frontend && expo run:android  # or expo run:ios
 (Required because Firebase SDK adds native modules)
+
+
+
+All four investigations are complete. Here's the full research report — no code was changed, this is a map of what's wrong and where to fix it.
+
+---
+1. Email OTP — not received
+
+The flow is wired correctly (frontend → POST /api/v1/auth/email/send-otp → backend). The break is in the actual email send, and the app looks successful because errors are swallowed.
+
+Three causes, most likely first:
+
+#: 1
+Problem: Invalid / unverified "from" address — RESEND_FROM_EMAIL="NearMe
+  plsprakash2003@gmail.com". Missing angle brackets (Resend needs Name <email>) and gmail.com
+  can't be a verified Resend sender.
+Where: backend/.env:114 (consumed at backend/src/adapters/resend.ts:16)
+Fix: Set RESEND_FROM_EMAIL="NearMe <noreply@your-verified-domain>" — or onboarding@resend.dev for
+  a quick sandbox test. Then verify the domain (SPF/DKIM DNS) in the Resend dashboard.
+────────────────────────────────────────
+#: 2
+Problem: Send errors silently swallowed — emails.send() returns { data, error } and does not
+  throw. The code ignores error, so sendOtpEmail "succeeds" even when Resend rejected it, and the
+   controller returns 200 "Code sent". This is why you see success but no email.
+Where: backend/src/adapters/resend.ts:17-27
+Fix: Destructure { error } and throw if present so failures surface.
+────────────────────────────────────────
+#: 3
+Problem: Dev console-stub is NOT active (because RESEND_API_KEY is set), so it's attempting a
+  real send, not logging the code.
+Where: backend/src/modules/auth/emailOtp.controller.ts:58-64
+Fix: To test locally without Resend, temporarily blank RESEND_API_KEY → the OTP prints to the
+  backend console.
+
+Also check: the key at backend/.env:113 is a live re_… key (re-paste from dashboard to be sure), and rate limiting (EMAIL_OTP_RATE_MAX = 3 per 10 min, env.ts:151) if you've been testing repeatedly → returns 429.
+
+👉 Primary fix: the RESEND_FROM_EMAIL value + verify a real domain. That's almost certainly why nothing arrives.
+
+---
+2. Auth works in local build, fails after EAS build
+
+Two independent root causes (both need fixing):
+
+#1 — API URL is a LAN IP baked into the build (biggest one)
+- frontend/.env:2 → EXPO_PUBLIC_API_URL=http://10.50.67.35:4000, read at frontend/src/services/config.ts:3 (BASE_URL), used by every auth call (api.ts, auth.ts:72, socket.ts).
+- EXPO_PUBLIC_* is inlined at build time. A standalone build baked with a LAN IP only reaches the server while the phone is on your exact Wi-Fi — off-network, every auth/API/socket call fails.
+- Worse: .env is git-ignored, so on a cloud EAS build it may not upload at all → BASE_URL falls back to http://localhost:4000 (the phone itself) → total failure.
+- Fix: point it at the public HTTPS backend (https://project-wrqp.onrender.com, already commented at .env:3) and define it per-profile in eas.json env blocks — don't rely on the git-ignored .env.
+
+#2 — Release keystore SHA-1 not registered in Firebase (Android Google/Phone auth)
+- frontend/google-services.json has one Android OAuth cert hash (5e8f1606…) = your debug keystore. EAS builds are signed with the EAS-managed keystore (different SHA-1/SHA-256), so Google Sign-In throws DEVELOPER_ERROR and Phone Auth silently fails.
+- Fix: eas credentials (Android) → get the build keystore's SHA-1 and SHA-256 → add both in Firebase Console → Android app → re-download google-services.json → confirm the SHA-1 is also on the Android OAuth client in Google Cloud Console.
+
+Good news — not the problem: Firebase native files, plugins, bundle IDs (com.nearme.app), and googleServicesFile wiring are all correct and tracked in git. eas.json currently has no env blocks (frontend/eas.json), which is why builds inherit whatever .env happens to hold.
+
+---
+3. Where to add the Google Maps API key
+
+There is currently NO maps key anywhere — nothing to replace, only to add.
+
+- Map library: react-native-maps (only frontend/app/map-explore.tsx renders a real MapView).
+- Add to frontend/app.json (static config — no app.config.js):
+  - Android (required): expo.android.config.googleMaps.apiKey — add a config block inside the android object (currently app.json:22-49, has none):
+"android": { …, "config": { "googleMaps": { "apiKey": "YOUR_ANDROID_KEY" } } }
+  - iOS (optional): expo.ios.config.googleMapsApiKey (ios object, app.json:11-21). Not needed today because map-explore.tsx:123 doesn't set provider={PROVIDER_GOOGLE}, so iOS uses Apple Maps (no key).
+- No EXPO_PUBLIC_* maps var — react-native-maps reads from native config, not process.env.
+- After adding: must rebuild (expo prebuild / EAS) so it lands in AndroidManifest.xml. Editing app.json alone won't touch an existing android/ folder.
+- Enable in Google Cloud: "Maps SDK for Android" (and "Maps SDK for iOS" only if you switch iOS to Google). Geocoding uses expo-location, so no Geocoding API needed.
+
+---
+4. Font sizes too large
+
+Here's the key finding that answers "where to change": font sizes are almost entirely hardcoded per-screen, not driven by a central token.
+
+- Two token scales exist and are basically unused:
+  - frontend/src/theme/typography.ts:30-39 → FontSize (xs:11 … xxl:24, xxxl:32, hero:42)
+  - frontend/src/theme/index.ts:30-39 → font.size (… xxl:24, title:28, hero:34) — a near-duplicate that diverges.
+- Reality: of 373 fontSize: occurrences across src/ + app/, 367 are hardcoded numbers and only 5 read a token. The shared T text component doesn't set a size either. So editing the token scale changes almost nothing.
+
+What your friend is asking for, translated:
+- "Overall same size, reduce it" → the many body sizes hardcoded at 13–17 across per-screen StyleSheets.
+- "Only in-screen headings one size bigger" → headings are the StyleSheet entries using fontFamily: DisplayFont.* with hardcoded 20–28 (e.g. tab headers at 26: app/(tabs)/groups.tsx:336, interest.tsx:158; onboarding titles at 28; MiniProfile.tsx:188 at 22).
+
+Where to edit (the honest answer): there's no single global lever. To do it properly:
+1. Define a canonical body size and one heading size (one step up) in frontend/src/theme/typography.ts:30-39.
+2. Then sweep the ~367 hardcoded fontSize: literals — heaviest in app/(tabs)/*.tsx, app/onboarding/*.tsx, app/albums/*.tsx, app/rooms/*.tsx, src/components/** — repointing the DisplayFont heading styles to the heading token and body text to the body token.
+
+A quick "reduce everything a bit" is not a 2-line change here; it's a per-screen sweep because the design system tokens aren't actually consumed.
+
+---
+TL;DR — what to change where
+
+1. Email: fix RESEND_FROM_EMAIL (backend/.env:114) to a bracketed, verified-domain sender + surface Resend errors (backend/src/adapters/resend.ts:17).
+2. EAS auth: set EXPO_PUBLIC_API_URL to the public HTTPS URL in eas.json (not the git-ignored .env), and register the EAS keystore SHA-1/SHA-256 in Firebase.
+3. Maps key: add expo.android.config.googleMaps.apiKey in frontend/app.json, then rebuild.
+4. Fonts: tokens in frontend/src/theme/typography.ts exist but are ignored (5/373); a real change means editing the token + a per-screen sweep of hardcoded sizes.
+
+Want me to go ahead and actually implement any of these? #1 (email from-address + error handling) and #3 (maps key placeholder in app.json) are quick, safe changes; #2 is mostly config/dashboard work; #4 is the big one and I'd want to confirm exact target sizes with your friend first.
+
+

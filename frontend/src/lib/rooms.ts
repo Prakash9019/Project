@@ -44,3 +44,41 @@ export const CATEGORY_FILTERS: { label: string; value: RoomCategory | null }[] =
 export function formatCount(n: number): string {
   return n.toLocaleString('en-IN');
 }
+
+/** Relative activity time: "now", "2 min ago", "3 h ago", "Yesterday", "Mon", "12 Jun". */
+export function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffMs = Date.now() - then;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'now';
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} h ago`;
+  const d = new Date(then);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  const days = Math.floor(hr / 24);
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'short' });
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** Secondary Discover sort options (client passes to listRooms as-is when supported). */
+export const ROOM_SORTS = [
+  { label: 'Trending', value: 'trending' },
+  { label: 'Recently Active', value: 'recent' },
+  { label: 'Most Members', value: 'members' },
+  { label: 'Nearby', value: 'nearby' },
+] as const;
+
+export type RoomSort = (typeof ROOM_SORTS)[number]['value'];
+
+export const MEMBER_FLOORS = [
+  { label: 'Any', value: 0 },
+  { label: '100+', value: 100 },
+  { label: '1000+', value: 1000 },
+  { label: '10000+', value: 10000 },
+] as const;

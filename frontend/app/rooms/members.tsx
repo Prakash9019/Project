@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -85,7 +86,7 @@ export default function RoomMembers() {
           <ActivityIndicator color={theme.brand} />
         </View>
       ) : (
-        <FlatList
+        <FlashList
           data={rows}
           keyExtractor={(r, i) => (r.type === 'header' ? `h-${r.title}-${i}` : `m-${r.member.id}`)}
           renderItem={({ item }) =>

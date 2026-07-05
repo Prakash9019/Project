@@ -37,6 +37,7 @@ import type {
   RoomMemberCard,
   RoomCategory,
   RoomMessageType,
+  RoomRole,
 } from '../types/api';
 
 export interface ApiError extends Error {
@@ -181,13 +182,48 @@ export const deleteAccount = () => request<void>('DELETE', '/api/v1/me');
 export const addPhoto = (url: string, isPrimary?: boolean, isPrivate?: boolean) =>
   request<Photo>('POST', '/api/v1/me/photos', { url, isPrimary, isPrivate });
 
-// ── Direct-to-GCS profile photo upload (upload-url is a frontend spec addition) ──
+// ── Direct-to-R2 upload URLs (upload-url is a frontend spec addition) ──
 export interface PhotoUploadUrl {
-  uploadUrl: string; // presigned GCS PUT URL
-  gcsPath: string; // object path to send to POST /me/photos
+  uploadUrl: string; // presigned R2 PUT URL
+  key: string; // object key to send to POST /me/photos
+  mediaUrl: string; // public/base URL for the object
 }
 export const getPhotoUploadUrl = () =>
   request<PhotoUploadUrl>('GET', '/api/v1/me/photos/upload-url');
+
+/** R2 upload types (backend UPLOAD_TYPE_CONFIG). */
+export type UploadType =
+  | 'photo'
+  | 'album_photo'
+  | 'chat_photo'
+  | 'video'
+  | 'document'
+  | 'audio'
+  | 'voice_clip'
+  | 'room_image';
+
+export interface UploadUrlResponse {
+  uploadUrl: string; // presigned R2 PUT URL
+  key: string; // object key
+  mediaUrl: string; // final URL to store as the message mediaUrl
+  expiresAt: string;
+}
+
+/** Request a presigned R2 upload URL for any media type. */
+export const getUploadUrl = (params: {
+  type: UploadType;
+  contentType?: string;
+  ext?: string;
+  roomId?: string;
+}) =>
+  request<UploadUrlResponse>('GET', '/api/v1/me/upload-url', undefined, {
+    query: {
+      type: params.type,
+      contentType: params.contentType,
+      ext: params.ext,
+      roomId: params.roomId,
+    },
+  });
 
 /**
  * Read a local file URI as a Blob using XMLHttpRequest responseType='blob'.
@@ -218,11 +254,11 @@ function readFileAsBlob(uri: string): Promise<Blob> {
 
 /**
  * Upload a picked image as the primary profile photo.
- * GET upload-url → PUT bytes to R2 → POST /me/photos { gcsPath }.
+ * GET upload-url → PUT bytes to R2 → POST /me/photos { url: key }.
  * Returns the created Photo (its `url` is the signed URL to display).
  */
 export async function uploadProfilePhoto(localUri: string): Promise<Photo> {
-  const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
+  const { uploadUrl, key } = await getPhotoUploadUrl();
   const blob = await readFileAsBlob(localUri);
   const put = await fetch(uploadUrl, {
     method: 'PUT',
@@ -230,7 +266,7 @@ export async function uploadProfilePhoto(localUri: string): Promise<Photo> {
     headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
   });
   if (!put.ok) throw new Error(`R2 upload failed (${put.status})`);
-  return await addPhoto(gcsPath, true);
+  return await addPhoto(key, true);
 }
 
 export const setPrimaryPhoto = (photoId: string) =>
@@ -378,16 +414,17 @@ export const consumeExpiringPhoto = (conversationId: string, messageId: string) 
 
 export interface ChatPhotoUploadUrl {
   uploadUrl: string;
-  gcsPath: string;
+  key: string;
+  mediaUrl: string;
 }
 export const getChatPhotoUploadUrl = () =>
   request<ChatPhotoUploadUrl>('GET', '/api/v1/me/photos/upload-url', undefined, {
     query: { type: 'chat_photo' },
   });
 
-/** Upload a local image for chat (photo or view-once). Returns the GCS path for mediaUrls. */
+/** Upload a local image for chat (photo or view-once). Returns the R2 key for mediaUrls. */
 export async function uploadChatPhoto(localUri: string): Promise<string> {
-  const { uploadUrl, gcsPath } = await getChatPhotoUploadUrl();
+  const { uploadUrl, key } = await getChatPhotoUploadUrl();
   const blob = await readFileAsBlob(localUri);
   const put = await fetch(uploadUrl, {
     method: 'PUT',
@@ -395,7 +432,7 @@ export async function uploadChatPhoto(localUri: string): Promise<string> {
     headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
   });
   if (!put.ok) throw new Error(`Photo upload failed (${put.status})`);
-  return gcsPath;
+  return key;
 }
 
 /* ─────────────────────────────── Calls ────────────────────────────── */
@@ -541,10 +578,10 @@ export const addAlbumPhoto = (albumId: string, url: string) =>
 
 /**
  * Upload a picked image into an album.
- * GET upload-url → PUT bytes to R2 → POST the gcsPath.
+ * GET upload-url → PUT bytes to R2 → POST the key.
  */
 export async function uploadAlbumPhoto(albumId: string, localUri: string): Promise<AlbumPhoto> {
-  const { uploadUrl, gcsPath } = await getPhotoUploadUrl();
+  const { uploadUrl, key } = await getPhotoUploadUrl();
   const blob = await readFileAsBlob(localUri);
   const put = await fetch(uploadUrl, {
     method: 'PUT',
@@ -552,7 +589,7 @@ export async function uploadAlbumPhoto(albumId: string, localUri: string): Promi
     headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
   });
   if (!put.ok) throw new Error(`R2 upload failed (${put.status})`);
-  return await addAlbumPhoto(albumId, gcsPath);
+  return await addAlbumPhoto(albumId, key);
 }
 
 export const removeAlbumPhoto = (albumId: string, photoId: string) =>
@@ -730,5 +767,21 @@ export const reportRoomMessage = (roomId: string, messageId: string, reason: str
 
 export const deleteRoomMessage = (roomId: string, messageId: string) =>
   request<void>('DELETE', `/api/rooms/${roomId}/messages/${messageId}`);
+
+/** Admin/creator: edit room name/description. */
+export const updateRoom = (roomId: string, body: { name?: string; description?: string }) =>
+  request<{ room: RoomDetail }>('PATCH', `/api/rooms/${roomId}`, body);
+
+/** Admin/creator: pin or unpin a message. */
+export const pinRoomMessage = (roomId: string, messageId: string, pin: boolean) =>
+  request<{ ok: true; isPinned: boolean }>('POST', `/api/rooms/${roomId}/messages/${messageId}/pin`, { pin });
+
+/** Admin/creator: remove a member from the room. */
+export const removeRoomMember = (roomId: string, userId: string) =>
+  request<void>('DELETE', `/api/rooms/${roomId}/members/${userId}`);
+
+/** Creator only: promote/demote a member between admin and member. */
+export const updateRoomMemberRole = (roomId: string, userId: string, role: RoomRole) =>
+  request<{ ok: true; role: RoomRole }>('PATCH', `/api/rooms/${roomId}/members/${userId}`, { role });
 
 export { BASE_URL };

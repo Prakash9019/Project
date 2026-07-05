@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "1078544839352-e2kfj8bl2lul7e1qqalu33me6efgqugq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nearme.app",
+            "certificate_hash": "5f30643198d9c599bd65609f45eae8c16f73c476"
+          }
+        },
+        {
           "client_id": "1078544839352-ggmo7efpslu5f5u4057f5ml78q29l32q.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
@@ -37,6 +45,13 @@
             {
               "client_id": "1078544839352-mf52pft228kgg5k2rrbrq6kelc2n464q.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "1078544839352-3u84umnjqu36lcld7ki7g4dembeum15t.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nearme.app"
+              }
             }
           ]
         }

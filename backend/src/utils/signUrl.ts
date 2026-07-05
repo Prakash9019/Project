@@ -1,4 +1,4 @@
-import { gcs } from '../adapters/gcs';
+import { mediaStorage } from '../adapters/r2';
 
 const SIGNED_URL_TTL_MS = 15 * 60 * 1000; // 15 min
 
@@ -13,7 +13,7 @@ export async function signUrl(path: string | null | undefined): Promise<string |
   // Local device URI stored by a broken upload fallback — treat as absent rather
   // than trying to sign it as an R2 key (which would produce a 404 URL).
   if (path.startsWith('file://') || path.startsWith('content://')) return null;
-  return gcs.getSignedUrl(path, SIGNED_URL_TTL_MS);
+  return mediaStorage.getSignedUrl(path, SIGNED_URL_TTL_MS);
 }
 
 /** Sign an array of storage paths in parallel, preserving order. */

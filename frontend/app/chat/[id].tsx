@@ -275,10 +275,10 @@ export default function Chat() {
     ]);
 
     try {
-      const gcsPath = await uploadChatPhoto(localUri);
+      const key = await uploadChatPhoto(localUri);
       const apiRes = await sendMessage(conversationId, {
         type: viewOnce ? 'expiring_photo' : 'photo',
-        mediaUrls: [gcsPath],
+        mediaUrls: [key],
       });
       const { audioCallEnabled, videoCallEnabled, ...msg } = apiRes;
       // Replace the optimistic entry with the real server message (has signed URLs).

@@ -1,0 +1,425 @@
+import { memo, useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'react-native';
+import { Image, type ImageLoadEventData } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Audio, type AVPlaybackStatus } from 'expo-av';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
+import { Avatar } from '../Avatar';
+import { useTheme, FontFamily } from '../../theme';
+import type { RoomMessageCard } from '../../types/api';
+
+const SWIPE_TRIGGER = 60;
+
+function timeLabel(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function MessageBubbleBase({
+  message,
+  isOwn,
+  isAdmin,
+  highlight,
+  onLongPress,
+  onSwipeReply,
+  onReactionPress,
+  onReactionLongPress,
+  onAvatarPress,
+  onReplyPress,
+}: {
+  message: RoomMessageCard;
+  isOwn: boolean;
+  isAdmin?: boolean;
+  highlight?: boolean;
+  onLongPress: () => void;
+  onSwipeReply: () => void;
+  onReactionPress: (emoji: string) => void;
+  onReactionLongPress?: (emoji: string) => void;
+  onAvatarPress: () => void;
+  onReplyPress?: () => void;
+}) {
+  const { theme } = useTheme();
+  const s = message.sender;
+  const deleted = message.isDeleted;
+
+  // Media classification.
+  const media = message.mediaUrl ?? '';
+  const isVideo =
+    message.type === 'image' && !!media && (/\.mp4($|\?)/i.test(media) || media.includes('/video-clips/'));
+  // GIFs (Tenor) render at a fixed width with preserved aspect ratio.
+  const isGif =
+    message.type === 'image' &&
+    !!media &&
+    !isVideo &&
+    (/\.gif($|\?)/i.test(media) || media.includes('tenor.com'));
+  const isImage = message.type === 'image' && !!media && !isVideo && !isGif;
+  const isVoice = message.type === 'voice' && !!media;
+  // Document / audio-file arrive as text messages carrying a mediaUrl + emoji prefix.
+  const isDoc = message.type === 'text' && !!media && message.content.startsWith('📄');
+  const isAudioFile = message.type === 'text' && !!media && message.content.startsWith('🎵');
+
+  const [gifAspect, setGifAspect] = useState<number | null>(null);
+  const onGifLoad = (e: ImageLoadEventData) => {
+    const src = e.source;
+    if (src?.width && src?.height) setGifAspect(src.width / src.height);
+  };
+
+  const openMedia = () => {
+    if (media) Linking.openURL(media).catch(() => {});
+  };
+
+  const renderMediaCard = (icon: React.ComponentProps<typeof Ionicons>['name'], label: string, subtitle: string) => {
+    const fg = isOwn ? '#fff' : theme.textPrimary;
+    const sub = isOwn ? '#ffffffcc' : theme.textTertiary;
+    const iconBg = isOwn ? 'rgba(255,255,255,0.2)' : theme.brand + '22';
+    const iconColor = isOwn ? '#fff' : theme.brand;
+    return (
+      <Pressable onPress={openMedia} style={styles.mediaCard}>
+        <View style={[styles.mediaIcon, { backgroundColor: iconBg }]}>
+          <Ionicons name={icon} size={22} color={iconColor} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.mediaLabel, { color: fg }]} numberOfLines={1}>
+            {label}
+          </Text>
+          <Text style={[styles.mediaSub, { color: sub }]}>{subtitle}</Text>
+        </View>
+        <Ionicons name="download-outline" size={20} color={fg} />
+      </Pressable>
+    );
+  };
+
+  const translateX = useSharedValue(0);
+  const pan = Gesture.Pan()
+    .activeOffsetX([-15, 15])
+    .failOffsetY([-12, 12])
+    .onUpdate((e) => {
+      // Swipe right only, damped.
+      translateX.value = Math.max(0, Math.min(e.translationX, 90));
+    })
+    .onEnd(() => {
+      if (translateX.value >= SWIPE_TRIGGER) runOnJS(onSwipeReply)();
+      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+    });
+
+  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
+  const arrowStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0, 1], Extrapolation.CLAMP),
+    transform: [
+      { scale: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0.5, 1], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  const bubbleInner = (
+    <>
+      {/* Reply quote */}
+      {message.replyTo ? (
+        <Pressable onPress={onReplyPress}>
+          <View
+            style={[
+              styles.quote,
+              {
+                backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
+                borderLeftColor: isOwn ? '#fff' : theme.brand,
+              },
+            ]}
+          >
+            <Text style={[styles.quoteName, { color: isOwn ? '#fff' : theme.brand }]} numberOfLines={1}>
+              {message.replyTo.senderFirstName ?? '—'}
+            </Text>
+            <Text
+              style={[styles.quoteText, { color: isOwn ? '#ffffffcc' : theme.textSecondary }]}
+              numberOfLines={1}
+            >
+              {message.replyTo.content}
+            </Text>
+          </View>
+        </Pressable>
+      ) : null}
+
+      {/* Media */}
+      {!deleted && isGif ? (
+        <Image
+          source={{ uri: media }}
+          style={[styles.gif, { height: gifAspect ? 200 / gifAspect : 200 }]}
+          contentFit="contain"
+          transition={120}
+          cachePolicy="memory-disk"
+          onLoad={onGifLoad}
+        />
+      ) : null}
+      {!deleted && isImage ? (
+        <Image
+          source={{ uri: media }}
+          style={styles.image}
+          contentFit="cover"
+          transition={120}
+          cachePolicy="memory-disk"
+        />
+      ) : null}
+      {!deleted && isVideo ? renderMediaCard('videocam', 'Video', 'Tap to play') : null}
+      {!deleted && isVoice ? <VoicePlayer uri={media} seed={message.id} isOwn={isOwn} /> : null}
+      {!deleted && isDoc ? renderMediaCard('document-text', message.content.replace(/^📄\s*/, '') || 'Document', 'Tap to open') : null}
+      {!deleted && isAudioFile ? renderMediaCard('musical-notes', message.content.replace(/^🎵\s*/, '') || 'Audio', 'Tap to play') : null}
+
+      {/* Text */}
+      {deleted ? (
+        <Text style={[styles.text, styles.deleted, { color: isOwn ? '#ffffffcc' : theme.textTertiary }]}>
+          This message was deleted
+        </Text>
+      ) : message.content && !isDoc && !isAudioFile ? (
+        <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>{message.content}</Text>
+      ) : null}
+    </>
+  );
+
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View style={rowStyle}>
+        {/* Swipe reply arrow */}
+        <Animated.View style={[styles.swipeArrow, arrowStyle]}>
+          <Ionicons name="arrow-undo" size={18} color={theme.brand} />
+        </Animated.View>
+
+        <View style={[styles.row, isOwn ? styles.rowOwn : null]}>
+          {!isOwn ? (
+            <Pressable onPress={onAvatarPress} style={{ marginRight: 8 }}>
+              <Avatar uri={s.profilePhotoUrl} size={36} online={s.isOnline} />
+            </Pressable>
+          ) : null}
+
+          <View style={{ maxWidth: '78%' }}>
+            {!isOwn ? (
+              <Pressable onPress={onAvatarPress} style={styles.senderRow}>
+                <Text style={[styles.senderName, { color: theme.brand }]}>{s.firstName ?? 'Someone'}</Text>
+                {s.age != null ? <Text style={[styles.senderAge, { color: theme.textTertiary }]}>{s.age}</Text> : null}
+                {s.isVerified ? <Ionicons name="checkmark-circle" size={12} color={theme.info} /> : null}
+                {isAdmin ? (
+                  <View style={[styles.adminChip, { backgroundColor: theme.warning + '22' }]}>
+                    <Text style={[styles.adminChipText, { color: theme.warning }]}>Admin</Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            ) : null}
+
+            <Pressable onLongPress={onLongPress} delayLongPress={220}>
+              {isOwn ? (
+                <LinearGradient
+                  colors={theme.gradientWarm}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[
+                    styles.bubble,
+                    styles.bubbleOwn,
+                    highlight && { borderWidth: 1.5, borderColor: theme.brandSecondary },
+                  ]}
+                >
+                  {bubbleInner}
+                </LinearGradient>
+              ) : (
+                <View
+                  style={[
+                    styles.bubble,
+                    styles.bubbleOther,
+                    { backgroundColor: theme.surfaceElevated },
+                    highlight && { borderWidth: 1.5, borderColor: theme.brandSecondary },
+                  ]}
+                >
+                  {bubbleInner}
+                </View>
+              )}
+            </Pressable>
+
+            {/* Timestamp + delivery */}
+            <View style={[styles.metaRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
+              <Text style={[styles.time, { color: theme.textTertiary }]}>{timeLabel(message.createdAt)}</Text>
+              {isOwn ? <Ionicons name="checkmark-done" size={13} color={theme.info} /> : null}
+            </View>
+
+            {/* Reactions */}
+            {message.reactions.length > 0 ? (
+              <View style={[styles.reactionsRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
+                {message.reactions.map((r) => (
+                  <Pressable
+                    key={r.emoji}
+                    onPress={() => onReactionPress(r.emoji)}
+                    onLongPress={() => onReactionLongPress?.(r.emoji)}
+                    style={[
+                      styles.reactionPill,
+                      {
+                        backgroundColor: r.userReacted ? theme.brand + '33' : theme.surfaceElevated,
+                        borderColor: r.userReacted ? theme.brand : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text style={styles.reactionEmoji}>{r.emoji}</Text>
+                    <Text style={[styles.reactionCount, { color: theme.textSecondary }]}>{r.count}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
+  const a = prev.message;
+  const b = next.message;
+  return (
+    a.id === b.id &&
+    a.content === b.content &&
+    a.isDeleted === b.isDeleted &&
+    a.isPinned === b.isPinned &&
+    a.mediaUrl === b.mediaUrl &&
+    a.reactions === b.reactions &&
+    prev.isOwn === next.isOwn &&
+    prev.isAdmin === next.isAdmin &&
+    prev.highlight === next.highlight
+  );
+});
+
+/* ── Voice message player (expo-av) ── */
+const WAVE_BARS = 26;
+
+function seededBars(seed: string): number[] {
+  // Deterministic static waveform derived from the message id, so it never
+  // reshuffles on re-render. Heights normalized to 0.25..1.
+  const bars: number[] = [];
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) & 0xffff;
+  for (let i = 0; i < WAVE_BARS; i++) {
+    h = (h * 1103515245 + 12345) & 0x7fffffff;
+    bars.push(0.25 + (h % 1000) / 1000 * 0.75);
+  }
+  return bars;
+}
+
+function fmt(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function VoicePlayer({ uri, seed, isOwn }: { uri: string; seed: string; isOwn: boolean }) {
+  const { theme } = useTheme();
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [durationMs, setDurationMs] = useState(0);
+  const [positionMs, setPositionMs] = useState(0);
+  const bars = useRef(seededBars(seed)).current;
+
+  useEffect(() => {
+    return () => {
+      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+    };
+  }, []);
+
+  const onStatus = (status: AVPlaybackStatus) => {
+    if (!status.isLoaded) return;
+    setDurationMs(status.durationMillis ?? 0);
+    setPositionMs(status.positionMillis ?? 0);
+    setPlaying(status.isPlaying);
+    if (status.didJustFinish) {
+      setPlaying(false);
+      soundRef.current?.setPositionAsync(0).catch(() => {});
+    }
+  };
+
+  const toggle = async () => {
+    try {
+      if (!soundRef.current) {
+        setLoading(true);
+        const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, onStatus);
+        soundRef.current = sound;
+        setLoading(false);
+        return;
+      }
+      if (playing) await soundRef.current.pauseAsync();
+      else await soundRef.current.playAsync();
+    } catch {
+      setLoading(false);
+    }
+  };
+
+  const fg = isOwn ? '#fff' : theme.textPrimary;
+  const track = isOwn ? 'rgba(255,255,255,0.35)' : theme.border;
+  const fill = isOwn ? '#fff' : theme.brand;
+  const btnBg = isOwn ? 'rgba(255,255,255,0.22)' : theme.brand + '22';
+  const btnFg = isOwn ? '#fff' : theme.brand;
+  const progress = durationMs > 0 ? positionMs / durationMs : 0;
+  const label = playing || positionMs > 0 ? fmt(positionMs) : fmt(durationMs);
+
+  return (
+    <View style={styles.voiceRow}>
+      <Pressable onPress={toggle} style={[styles.voiceBtn, { backgroundColor: btnBg }]} hitSlop={6}>
+        {loading ? (
+          <ActivityIndicator size="small" color={btnFg} />
+        ) : (
+          <Ionicons name={playing ? 'pause' : 'play'} size={18} color={btnFg} />
+        )}
+      </Pressable>
+      <View style={styles.voiceWave}>
+        {bars.map((b, i) => {
+          const active = i / WAVE_BARS <= progress;
+          return (
+            <View
+              key={i}
+              style={{ width: 2.5, height: 22 * b, borderRadius: 2, backgroundColor: active ? fill : track }}
+            />
+          );
+        })}
+      </View>
+      <Text style={[styles.voiceTime, { color: fg }]}>{label}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  swipeArrow: { position: 'absolute', left: 12, top: 0, bottom: 0, justifyContent: 'center' },
+  row: { flexDirection: 'row', alignItems: 'flex-end', marginVertical: 4, alignSelf: 'flex-start', maxWidth: '100%' },
+  rowOwn: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
+  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  senderName: { fontSize: 13, fontFamily: FontFamily.semibold },
+  senderAge: { fontSize: 12, fontFamily: FontFamily.regular },
+  adminChip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999 },
+  adminChipText: { fontSize: 10, fontFamily: FontFamily.semibold },
+
+  bubble: { paddingVertical: 10, paddingHorizontal: 12 },
+  bubbleOther: { borderTopLeftRadius: 0, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
+  bubbleOwn: { borderTopLeftRadius: 16, borderTopRightRadius: 0, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
+  text: { fontSize: 15, fontFamily: FontFamily.regular, lineHeight: 20 },
+  deleted: { fontStyle: 'italic' },
+  image: { width: 220, height: 220, borderRadius: 12, marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.1)' },
+  gif: { width: 200, borderRadius: 12, marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.1)' },
+  voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
+  voiceBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  voiceWave: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 24 },
+  voiceTime: { fontSize: 11, fontFamily: FontFamily.medium, width: 34, textAlign: 'right' },
+  mediaCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
+  mediaIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  mediaLabel: { fontSize: 14, fontFamily: FontFamily.semibold },
+  mediaSub: { fontSize: 11, fontFamily: FontFamily.regular, marginTop: 1 },
+
+  quote: { borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 8, borderRadius: 6, marginBottom: 4 },
+  quoteName: { fontSize: 12, fontFamily: FontFamily.semibold },
+  quoteText: { fontSize: 12, fontFamily: FontFamily.regular },
+
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  time: { fontSize: 10, fontFamily: FontFamily.regular },
+  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3 },
+  reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },
+  reactionEmoji: { fontSize: 12 },
+  reactionCount: { fontSize: 11, fontFamily: FontFamily.medium },
+});

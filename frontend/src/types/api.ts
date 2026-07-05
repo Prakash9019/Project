@@ -129,7 +129,7 @@ export interface AiOptInFeatures {
 export interface Photo {
   id: string;
   userId: string;
-  url: string; // pre-signed GCS URL
+  url: string; // pre-signed R2 URL
   isPrimary: boolean;
   isPrivate: boolean;
   isPublished: boolean;
@@ -436,9 +436,9 @@ export interface AlbumSummary {
 /** A photo within an album. */
 export interface AlbumPhoto {
   id: string;
-  /** Signed GCS URL (15 min expiry). Backend serializes this field as `url`. */
+  /** Signed R2 URL (15 min expiry). Backend serializes this field as `url`. */
   url: string;
-  /** Raw GCS path — present on own-album detail responses for sharing in chat. */
+  /** Raw R2 object key — present on own-album detail responses for sharing in chat. */
   path?: string;
   order: number;
   createdAt: string;
@@ -493,7 +493,7 @@ export type RoomCategory =
   | 'local_meetups';
 
 export type RoomRole = 'member' | 'moderator' | 'admin';
-export type RoomMessageType = 'text' | 'image' | 'system';
+export type RoomMessageType = 'text' | 'image' | 'system' | 'voice';
 
 /** Room card in the Discover list (also the base for detail/joined). */
 export interface RoomCard {
@@ -515,7 +515,12 @@ export interface RoomCard {
   createdAt: string;
 }
 
-export type RoomDetail = RoomCard;
+export interface RoomDetail extends RoomCard {
+  /** Caller's role in this room (null if not a member). Used to gate admin UI. */
+  myRole?: RoomRole | null;
+  /** True when the caller created this room. */
+  isCreator?: boolean;
+}
 
 export interface JoinedRoomCard extends RoomCard {
   unreadCount: number;

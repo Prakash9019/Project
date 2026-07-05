@@ -61,7 +61,7 @@ router.post(
   asyncHandler(media.uploadVideoClip)
 );
 
-// ── Pre-signed GCS upload URL ────────────────────────────
+// ── Pre-signed R2 upload URL ─────────────────────────────
 router.get('/me/upload-url', asyncHandler(media.getUploadUrl));
 router.get('/me/photos/upload-url', asyncHandler(media.getUploadUrl));
 

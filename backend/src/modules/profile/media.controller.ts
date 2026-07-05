@@ -2,7 +2,8 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
 import { prisma } from '../../config/prisma';
-import { gcs } from '../../adapters/gcs';
+import { mediaStorage } from '../../adapters/r2';
+import { env } from '../../config/env';
 import { moderateImage } from '../../services/imageModeration';
 import { Errors, HttpError } from '../../utils/httpError';
 import { signUrl } from '../../utils/signUrl';
@@ -56,12 +57,12 @@ export async function uploadVoiceClip(req: Request, res: Response): Promise<void
     throw Errors.badRequest(`Audio exceeds ${limits.voiceClipSec}s duration limit for your plan`);
   }
 
-  const gcsPath = `voice-clips/${userId}/${uuidv4()}.m4a`;
-  await gcs.uploadBuffer(file.buffer, gcsPath, 'audio/mp4');
+  const key = `voice-clips/${userId}/${uuidv4()}.m4a`;
+  await mediaStorage.uploadBuffer(file.buffer, key, 'audio/mp4');
 
-  await prisma.user.update({ where: { id: userId }, data: { voiceClipUrl: gcsPath } });
+  await prisma.user.update({ where: { id: userId }, data: { voiceClipUrl: key } });
 
-  const signedUrl = await signUrl(gcsPath);
+  const signedUrl = await signUrl(key);
   res.status(200).json({ voiceClipUrl: signedUrl });
 }
 
@@ -94,23 +95,32 @@ export async function uploadVideoClip(req: Request, res: Response): Promise<void
   // For now, fall through to allow with isPublished=true.
   void thumbnailPath; void isPublished;
 
-  const gcsPath = `video-clips/${userId}/${uuidv4()}.mp4`;
-  await gcs.uploadBuffer(file.buffer, gcsPath, 'video/mp4');
+  const key = `video-clips/${userId}/${uuidv4()}.mp4`;
+  await mediaStorage.uploadBuffer(file.buffer, key, 'video/mp4');
 
-  await prisma.user.update({ where: { id: userId }, data: { videoClipUrl: gcsPath } });
+  await prisma.user.update({ where: { id: userId }, data: { videoClipUrl: key } });
 
-  const signedUrl = await signUrl(gcsPath);
+  const signedUrl = await signUrl(key);
   res.status(200).json({ videoClipUrl: signedUrl, thumbnailUrl: null });
 }
 
 // ── Signed upload URL — GET /me/upload-url ────────────────────────────────────
 
-const UPLOAD_TYPE_CONFIG: Record<string, { folder: string; ext: string; contentType: string }> = {
-  photo:       { folder: 'profile-photos', ext: 'jpg',  contentType: 'image/jpeg' },
-  album_photo: { folder: 'album-photos',   ext: 'jpg',  contentType: 'image/jpeg' },
-  chat_photo:  { folder: 'chat-photos',    ext: 'jpg',  contentType: 'image/jpeg' },
-  voice_clip:  { folder: 'voice-clips',    ext: 'm4a',  contentType: 'audio/mp4' },
-  video_clip:  { folder: 'video-clips',    ext: 'mp4',  contentType: 'video/mp4' },
+type UploadScope = 'user' | 'room';
+const UPLOAD_TYPE_CONFIG: Record<
+  string,
+  { folder: string; ext: string; contentType: string; scope: UploadScope }
+> = {
+  photo:       { folder: 'profile-photos', ext: 'jpg', contentType: 'image/jpeg',              scope: 'user' },
+  album_photo: { folder: 'album-photos',   ext: 'jpg', contentType: 'image/jpeg',              scope: 'user' },
+  chat_photo:  { folder: 'chat-photos',    ext: 'jpg', contentType: 'image/jpeg',              scope: 'user' },
+  voice_clip:  { folder: 'voice-clips',    ext: 'm4a', contentType: 'audio/mp4',               scope: 'user' },
+  video_clip:  { folder: 'video-clips',    ext: 'mp4', contentType: 'video/mp4',               scope: 'user' },
+  // Generic room-chat media (video/document/audio/room image).
+  video:       { folder: 'video-clips',    ext: 'mp4', contentType: 'video/mp4',               scope: 'user' },
+  document:    { folder: 'documents',      ext: 'bin', contentType: 'application/octet-stream', scope: 'user' },
+  audio:       { folder: 'audio',          ext: 'm4a', contentType: 'audio/mp4',               scope: 'user' },
+  room_image:  { folder: 'room-media',     ext: 'jpg', contentType: 'image/jpeg',              scope: 'room' },
 };
 
 export async function getUploadUrl(req: Request, res: Response): Promise<void> {
@@ -119,11 +129,28 @@ export async function getUploadUrl(req: Request, res: Response): Promise<void> {
   if (!config) throw Errors.badRequest(`Invalid type. Must be one of: ${Object.keys(UPLOAD_TYPE_CONFIG).join(', ')}`);
 
   const userId = req.user!.sub;
-  const gcsPath = `${config.folder}/${userId}/${uuidv4()}.${config.ext}`;
-  const uploadUrl = await gcs.getSignedUploadUrl(gcsPath, config.contentType, 15);
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-  res.status(200).json({ uploadUrl, gcsPath, expiresAt });
+  // Optional caller overrides: document extension, arbitrary content type, and
+  // (for room media) the target room id used to scope the object key.
+  const extOverride = (req.query.ext as string | undefined)?.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
+  const ext = type === 'document' && extOverride ? extOverride : config.ext;
+  const contentType = (req.query.contentType as string | undefined) || config.contentType;
+
+  let scopeId = userId;
+  if (config.scope === 'room') {
+    const roomId = req.query.roomId as string | undefined;
+    if (!roomId) throw Errors.badRequest('roomId is required for room_image uploads');
+    scopeId = roomId;
+  }
+
+  const key = `${config.folder}/${scopeId}/${uuidv4()}.${ext}`;
+  const uploadUrl = await mediaStorage.getSignedUploadUrl(key, contentType, 15);
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  // Public URL when a media base domain is configured; otherwise the raw key,
+  // which signUrl() will presign on read.
+  const mediaUrl = env.mediaBaseUrl ? `${env.mediaBaseUrl}/${key}` : key;
+
+  res.status(200).json({ uploadUrl, key, mediaUrl, expiresAt });
 }
 
 // ── Multer error handler helper ───────────────────────────────────────────────

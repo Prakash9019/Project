@@ -1534,16 +1534,14 @@
       "method": "POST",
       "path": "/api/rooms/:roomId/messages",
       "auth": "bearer+verified+member",
-      "summary": "Post a message. content max 1000, not empty. Runs AI text moderation; flagged -> 451 message_flagged. Updates room.lastActivityAt, emits room:message, batch push to non-muted members.",
+      "summary": "Post a message. Text messages require non-empty content (max 1000); image/GIF messages require mediaUrl and may send empty content. Tenor GIF URLs are stored verbatim (no R2 upload; external http(s) URLs pass through signUrl unchanged). Runs AI text moderation on content; flagged -> 451 message_flagged. Updates room.lastActivityAt, emits room:message, batch push to non-muted members.",
       "requestBody": {
-        "required": [
-          "content"
-        ],
+        "required": [],
         "fields": [
           {
             "name": "content",
             "type": "string",
-            "notes": "max 1000"
+            "notes": "max 1000; required for text, optional/empty for image"
           },
           {
             "name": "type",
@@ -1553,7 +1551,8 @@
           {
             "name": "mediaUrl",
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "notes": "required when type=image (GCS path or external URL e.g. Tenor GIF)"
           },
           {
             "name": "replyToId",
@@ -1718,6 +1717,118 @@
           }
         }
       }
+    },
+    {
+      "id": "rooms-update",
+      "method": "PATCH",
+      "path": "/api/rooms/:roomId",
+      "auth": "bearer+verified",
+      "summary": "Edit a room's name/description. Caller must be the room creator or a room admin. Emits room:info_updated to room:{roomId}.",
+      "body": [
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": true,
+          "notes": "max 100 chars"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "nullable": true,
+          "notes": "max 500 chars; at least one of name/description required"
+        }
+      ],
+      "returns": "{ room: RoomDetail }",
+      "errors": [
+        "403 forbidden (not creator/admin)",
+        "404 room not found",
+        "400 validation"
+      ]
+    },
+    {
+      "id": "rooms-message-pin",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/messages/:messageId/pin",
+      "auth": "bearer+verified",
+      "summary": "Pin or unpin a message. Caller must be the room creator or a room admin (membership required). Emits room:message_pinned to room:{roomId}.",
+      "body": [
+        {
+          "name": "pin",
+          "type": "boolean"
+        }
+      ],
+      "returns": "{ ok: true, isPinned: boolean }",
+      "errors": [
+        "403 forbidden (not creator/admin)",
+        "404 message not found"
+      ]
+    },
+    {
+      "id": "rooms-member-remove",
+      "method": "DELETE",
+      "path": "/api/rooms/:roomId/members/:userId",
+      "auth": "bearer+verified",
+      "summary": "Remove a member from a room. Caller must be the room creator or a room admin. Cannot remove the creator; cannot remove yourself (use DELETE /api/rooms/:roomId/join). Decrements memberCount and emits room:member_removed to room:{roomId}.",
+      "returns": "204 No Content",
+      "errors": [
+        "403 forbidden (not creator/admin)",
+        "400 cannot_remove_self",
+        "400 cannot_remove_creator",
+        "404 member not found"
+      ]
+    },
+    {
+      "id": "rooms-member-role",
+      "method": "PATCH",
+      "path": "/api/rooms/:roomId/members/:userId",
+      "auth": "bearer+verified",
+      "summary": "Promote/demote a member between admin and member. Caller must be the room creator (creator-only). Cannot change the creator's own role. Emits room:member_role_changed to room:{roomId}.",
+      "body": [
+        {
+          "name": "role",
+          "type": "'admin' | 'member'"
+        }
+      ],
+      "returns": "{ ok: true, role: RoomRole }",
+      "errors": [
+        "403 forbidden (not creator)",
+        "400 cannot_change_creator_role",
+        "404 member not found"
+      ]
+    },
+    {
+      "id": "me-upload-url",
+      "method": "GET",
+      "path": "/api/v1/me/upload-url",
+      "auth": "bearer+verified",
+      "summary": "Get a presigned R2 upload URL for direct client→R2 upload (also aliased at /api/v1/me/photos/upload-url). Client PUTs bytes to uploadUrl with the matching Content-Type, then stores mediaUrl (or key) on the target record/message. No bytes pass through the API.",
+      "query": [
+        {
+          "name": "type",
+          "type": "'photo'|'album_photo'|'chat_photo'|'voice_clip'|'video_clip'|'video'|'document'|'audio'|'room_image'",
+          "notes": "default photo. Keys: photo→profile-photos/{uid}, chat_photo→chat-photos/{uid}, video→video-clips/{uid}/*.mp4, document→documents/{uid}/*.{ext}, audio→audio/{uid}/*.m4a, room_image→room-media/{roomId}/*.jpg"
+        },
+        {
+          "name": "contentType",
+          "type": "string",
+          "nullable": true,
+          "notes": "Content-Type to sign the PUT with (must match the client's PUT header). Falls back to a per-type default."
+        },
+        {
+          "name": "ext",
+          "type": "string",
+          "nullable": true,
+          "notes": "file extension for type=document (sanitized, ≤10 chars)"
+        },
+        {
+          "name": "roomId",
+          "type": "uuid",
+          "nullable": true,
+          "notes": "required for type=room_image"
+        }
+      ],
+      "returns": "{ uploadUrl: string, key: string, mediaUrl: string, expiresAt: iso8601 }",
+      "notes": "mediaUrl = MEDIA_BASE_URL + '/' + key when configured, else the raw key (signUrl presigns it on read). External URLs (e.g. Tenor GIFs) are stored verbatim and pass through signUrl unchanged."
     }
   ],
   "models": [
@@ -3516,6 +3627,45 @@
       "room": "room:{roomId}",
       "payload": {
         "messageId": "uuid"
+      }
+    },
+    {
+      "name": "room:info_updated",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "name": "string",
+        "description": "string|null"
+      }
+    },
+    {
+      "name": "room:message_pinned",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "messageId": "uuid",
+        "isPinned": "boolean"
+      }
+    },
+    {
+      "name": "room:member_removed",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "userId": "uuid"
+      }
+    },
+    {
+      "name": "room:member_role_changed",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "userId": "uuid",
+        "role": "RoomRole"
       }
     }
   ],

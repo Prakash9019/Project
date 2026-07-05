@@ -230,10 +230,15 @@ export async function getRoomDetail(userId: string, roomId: string) {
   const room = await getRoomOrThrow(roomId);
   const member = await prisma.roomMember.findUnique({
     where: { roomId_userId: { roomId, userId } },
-    select: { id: true },
+    select: { role: true },
   });
   const onlineCount = await computeOnlineCount(roomId);
-  return serializeRoom(room, !!member, onlineCount);
+  // myRole/isCreator let the client gate admin-only affordances (pin, edit).
+  return {
+    ...serializeRoom(room, !!member, onlineCount),
+    myRole: member?.role ?? null,
+    isCreator: room.creatorId === userId,
+  };
 }
 
 // ── Join / leave ──────────────────────────────────────────────────────────────
@@ -598,6 +603,93 @@ export async function reportMessage(userId: string, roomId: string, messageId: s
     },
   });
   return { ok: true };
+}
+
+// ── Admin / creator actions ────────────────────────────────────────────────
+
+/**
+ * Authorize a room-management action. Returns the room. Passes when the caller
+ * is the room's creator OR holds the `admin` role in the room.
+ */
+async function assertRoomAdmin(userId: string, roomId: string) {
+  const room = await getRoomOrThrow(roomId);
+  if (room.creatorId === userId) return room;
+  const member = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId, userId } },
+    select: { role: true },
+  });
+  if (member?.role !== 'admin') {
+    throw Errors.forbidden('You must be a room admin to do that');
+  }
+  return room;
+}
+
+export async function updateRoom(
+  userId: string,
+  roomId: string,
+  body: { name?: string; description?: string },
+) {
+  await assertRoomAdmin(userId, roomId);
+  const data: Prisma.RoomUpdateInput = {};
+  if (body.name !== undefined) data.name = body.name;
+  if (body.description !== undefined) data.description = body.description;
+  const updated = await prisma.room.update({ where: { id: roomId }, data });
+  emitToRoom(roomId, 'room:info_updated', { name: updated.name, description: updated.description ?? null });
+  return getRoomDetail(userId, roomId);
+}
+
+export async function pinMessage(userId: string, roomId: string, messageId: string, pin: boolean) {
+  await assertRoomAdmin(userId, roomId);
+  const msg = await prisma.roomMessage.findFirst({ where: { id: messageId, roomId } });
+  if (!msg) throw Errors.notFound('Message not found');
+  await prisma.roomMessage.update({ where: { id: messageId }, data: { isPinned: pin } });
+  emitToRoom(roomId, 'room:message_pinned', { messageId, isPinned: pin });
+  return { ok: true as const, isPinned: pin };
+}
+
+export async function removeMember(userId: string, roomId: string, targetUserId: string): Promise<void> {
+  const room = await assertRoomAdmin(userId, roomId);
+  if (targetUserId === userId) {
+    throw new HttpError(400, 'cannot_remove_self', 'Use the leave endpoint to remove yourself');
+  }
+  if (room.creatorId && targetUserId === room.creatorId) {
+    throw new HttpError(400, 'cannot_remove_creator', 'The room creator cannot be removed');
+  }
+  const existing = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId, userId: targetUserId } },
+  });
+  if (!existing) throw Errors.notFound('Member not found');
+  await prisma.$transaction([
+    prisma.roomMember.delete({ where: { roomId_userId: { roomId, userId: targetUserId } } }),
+    prisma.room.update({ where: { id: roomId }, data: { memberCount: { decrement: 1 } } }),
+  ]);
+  emitToRoom(roomId, 'room:member_removed', { userId: targetUserId });
+}
+
+export async function updateMemberRole(
+  userId: string,
+  roomId: string,
+  targetUserId: string,
+  role: 'admin' | 'member',
+) {
+  const room = await getRoomOrThrow(roomId);
+  // Role changes are creator-only.
+  if (room.creatorId !== userId) {
+    throw Errors.forbidden('Only the room creator can change roles');
+  }
+  if (room.creatorId && targetUserId === room.creatorId) {
+    throw new HttpError(400, 'cannot_change_creator_role', "The creator's role cannot be changed");
+  }
+  const existing = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId, userId: targetUserId } },
+  });
+  if (!existing) throw Errors.notFound('Member not found');
+  await prisma.roomMember.update({
+    where: { roomId_userId: { roomId, userId: targetUserId } },
+    data: { role },
+  });
+  emitToRoom(roomId, 'room:member_role_changed', { userId: targetUserId, role });
+  return { ok: true as const, role };
 }
 
 export async function deleteMessage(userId: string, roomId: string, messageId: string): Promise<void> {

@@ -7,6 +7,9 @@ import type {
   SendMessageBody,
   ReactBody,
   ListMembersQuery,
+  UpdateRoomBody,
+  PinMessageBody,
+  UpdateMemberRoleBody,
 } from './rooms.schema';
 
 export async function listRooms(req: Request, res: Response): Promise<void> {
@@ -90,4 +93,27 @@ export async function reportMessage(req: Request, res: Response): Promise<void> 
 export async function deleteMessage(req: Request, res: Response): Promise<void> {
   await svc.deleteMessage(req.user!.sub, req.params.roomId, req.params.messageId);
   res.status(204).send();
+}
+
+export async function updateRoom(req: Request, res: Response): Promise<void> {
+  const body = req.body as UpdateRoomBody;
+  const room = await svc.updateRoom(req.user!.sub, req.params.roomId, body);
+  res.status(200).json({ room });
+}
+
+export async function pinMessage(req: Request, res: Response): Promise<void> {
+  const { pin } = req.body as PinMessageBody;
+  const result = await svc.pinMessage(req.user!.sub, req.params.roomId, req.params.messageId, pin);
+  res.status(200).json(result);
+}
+
+export async function removeMember(req: Request, res: Response): Promise<void> {
+  await svc.removeMember(req.user!.sub, req.params.roomId, req.params.userId);
+  res.status(204).send();
+}
+
+export async function updateMemberRole(req: Request, res: Response): Promise<void> {
+  const { role } = req.body as UpdateMemberRoleBody;
+  const result = await svc.updateMemberRole(req.user!.sub, req.params.roomId, req.params.userId, role);
+  res.status(200).json(result);
 }

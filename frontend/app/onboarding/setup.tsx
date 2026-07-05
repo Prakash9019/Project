@@ -181,7 +181,7 @@ export default function SetupScreen() {
       });
       setUser(updated);
       if (photoUri) {
-        // Real upload: GET signed upload-url → PUT bytes to GCS → POST /me/photos.
+        // Real upload: GET signed upload-url → PUT bytes to R2 → POST /me/photos.
         // This persists the photo server-side so it survives restart/relogin
         // (a raw file:// URI would not). Best-effort: don't block finishing.
         try {
