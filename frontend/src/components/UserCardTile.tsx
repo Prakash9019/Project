@@ -72,11 +72,12 @@ function UserCardTileBase({
         )}
       </View>
 
-      {/* Top-left like/shortlist state */}
-      {(card.isLiked || card.isShortlisted) && (
+      {/* Top-left like/shortlist state + "open to groups" hint */}
+      {(card.isLiked || card.isShortlisted || card.groupsAvailable) && (
         <View style={styles.topLeft}>
           {card.isLiked && <Ionicons name="heart" size={14} color={theme.brand} />}
           {card.isShortlisted && <Ionicons name="star" size={14} color={theme.planGold} />}
+          {card.groupsAvailable && <Ionicons name="people" size={14} color="#fff" />}
         </View>
       )}
 

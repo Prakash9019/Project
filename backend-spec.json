@@ -924,7 +924,8 @@
             "message": "Calls will be enabled after the other person replies to your message at least once."
           }
         }
-      }
+      },
+      "notes": "403 calls_disabled if the callee has turned off audio/video calls (audioCallAvailable/videoCallAvailable=false) — checked after the reply-gate."
     },
     {
       "id": "calls-update",
@@ -1829,6 +1830,57 @@
       "response": "204 No Content"
     },
     {
+      "id": "rooms-invite-or-add",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/invite-or-add/:userId",
+      "auth": "bearer+verified",
+      "summary": "Add a user to a room directly (if target.groupsAvailable) or send a room invite (if target not groupsAvailable but a conversation exists between requester and target). Requester must be a room member.",
+      "response": {
+        "added": "boolean",
+        "method": "'direct' | 'invite_sent' | 'already_member' | 'invite_already_sent'"
+      },
+      "notes": "201 {added:true,method:'direct'} on direct add; 201 {added:false,method:'invite_sent'} when an invite is created; 200 {added:true,method:'already_member'} if already a member; 200 {added:false,method:'invite_already_sent'} if a pending invite already exists; 403 cannot_add_user when target is not groupsAvailable and no conversation exists."
+    },
+    {
+      "id": "rooms-invites-list",
+      "method": "GET",
+      "path": "/api/rooms/invites",
+      "auth": "bearer+verified",
+      "summary": "List pending room invites addressed to the current user, newest first.",
+      "response": {
+        "invites": "[{ id, room:{ id, name, coverImageUrl, memberCount, category }, inviter:{ id, firstName, profilePhotoUrl, isVerified }, createdAt }]"
+      }
+    },
+    {
+      "id": "rooms-invite-accept",
+      "method": "POST",
+      "path": "/api/rooms/invites/:inviteId/accept",
+      "auth": "bearer+verified",
+      "summary": "Accept a pending invite (invitee only). Sets status=accepted, upserts RoomMember, increments memberCount, emits room:member_joined.",
+      "response": {
+        "ok": "boolean",
+        "roomId": "uuid"
+      }
+    },
+    {
+      "id": "rooms-invite-decline",
+      "method": "POST",
+      "path": "/api/rooms/invites/:inviteId/decline",
+      "auth": "bearer+verified",
+      "summary": "Decline a pending invite (invitee only). Sets status=declined.",
+      "response": {
+        "ok": "boolean"
+      }
+    },
+    {
+      "id": "rooms-invite-cancel",
+      "method": "DELETE",
+      "path": "/api/rooms/invites/:inviteId",
+      "auth": "bearer+verified",
+      "summary": "Cancel an outgoing invite (inviter only). Soft-deletes by setting status=declined. Returns 204.",
+      "response": null
+    },
+    {
       "id": "me-upload-url",
       "method": "GET",
       "path": "/api/v1/me/upload-url",
@@ -2235,6 +2287,21 @@
           "name": "emailVerified",
           "type": "boolean",
           "frontendVisible": true
+        },
+        {
+          "name": "groupsAvailable",
+          "type": "boolean",
+          "notes": "default false — availability toggle"
+        },
+        {
+          "name": "audioCallAvailable",
+          "type": "boolean",
+          "notes": "default true — availability toggle"
+        },
+        {
+          "name": "videoCallAvailable",
+          "type": "boolean",
+          "notes": "default true — availability toggle"
         }
       ],
       "removed": [
@@ -3198,6 +3265,43 @@
         "@@unique([messageId,userId])",
         "@@index([messageId])"
       ]
+    },
+    {
+      "name": "RoomInvite",
+      "table": "RoomInvite",
+      "notes": "Group invite. Unique (roomId,inviterId,inviteeId). Created when adding a user who is not groupsAvailable but has a conversation with the inviter.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "roomId",
+          "type": "uuid"
+        },
+        {
+          "name": "inviterId",
+          "type": "uuid"
+        },
+        {
+          "name": "inviteeId",
+          "type": "uuid"
+        },
+        {
+          "name": "status",
+          "type": "RoomInviteStatus",
+          "notes": "default pending"
+        },
+        {
+          "name": "createdAt",
+          "type": "iso8601"
+        },
+        {
+          "name": "updatedAt",
+          "type": "iso8601"
+        }
+      ]
     }
   ],
   "enums": [
@@ -3479,6 +3583,14 @@
         "text",
         "image",
         "system"
+      ]
+    },
+    {
+      "name": "RoomInviteStatus",
+      "values": [
+        "pending",
+        "accepted",
+        "declined"
       ]
     }
   ],
@@ -3785,6 +3897,19 @@
       "room": "room:{roomId}",
       "payload": {
         "roomId": "uuid"
+      }
+    },
+    {
+      "name": "room_invite:received",
+      "transport": "websocket",
+      "direction": "server→client",
+      "notes": "Emitted to user:{inviteeId} when someone sends them a room invite via invite-or-add.",
+      "payload": {
+        "inviteId": "uuid",
+        "roomId": "uuid",
+        "roomName": "string",
+        "inviterName": "string|null",
+        "inviterPhoto": "string|null"
       }
     }
   ],

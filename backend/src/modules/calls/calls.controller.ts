@@ -149,6 +149,18 @@ export async function initiateCall(req: Request, res: Response): Promise<void> {
     );
   }
 
+  // 3b. Callee availability toggle — they may have turned off audio/video calls.
+  const calleeAvailability = await prisma.user.findUnique({
+    where: { id: calleeId },
+    select: { audioCallAvailable: true, videoCallAvailable: true },
+  });
+  if (type === 'audio' && calleeAvailability?.audioCallAvailable === false) {
+    throw new HttpError(403, 'calls_disabled', 'This person is not accepting audio calls right now.');
+  }
+  if (type === 'video' && calleeAvailability?.videoCallAvailable === false) {
+    throw new HttpError(403, 'calls_disabled', 'This person is not accepting video calls right now.');
+  }
+
   // 4. Free-tier daily call minute check
   const plan = req.effectiveLimits?.plan ?? 'free';
   await checkFreeCallLimit(callerId, type, plan);

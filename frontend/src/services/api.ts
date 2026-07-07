@@ -38,6 +38,8 @@ import type {
   RoomCategory,
   RoomMessageType,
   RoomRole,
+  RoomInviteCard,
+  InviteOrAddResult,
 } from '../types/api';
 
 export interface ApiError extends Error {
@@ -163,6 +165,10 @@ export interface UpdateProfileBody {
   rightNowStatus?: string | null;
   rightNowCategory?: string | null;
   rightNowExpiresAt?: string | null;
+  // ── Availability toggles ──
+  groupsAvailable?: boolean;
+  audioCallAvailable?: boolean;
+  videoCallAvailable?: boolean;
 }
 export const updateProfile = (body: UpdateProfileBody) =>
   request<Self>('PATCH', '/api/v1/me', body);
@@ -795,5 +801,31 @@ export const transferRoomOwnership = (roomId: string, userId: string) =>
 /** Creator only: permanently delete the group. */
 export const deleteRoom = (roomId: string) =>
   request<void>('DELETE', `/api/rooms/${roomId}`);
+
+/* ─────────────────────── Room invites (Group availability) ─────────────────────── */
+
+/**
+ * Add a user to a room directly (if they're open to groups) or send them an
+ * invite (if not, but you already have a conversation). 403 cannot_add_user
+ * when neither is possible.
+ */
+export const inviteOrAddToRoom = (roomId: string, userId: string) =>
+  request<InviteOrAddResult>('POST', `/api/rooms/${roomId}/invite-or-add/${userId}`);
+
+/** Pending room invites addressed to the current user, newest first. */
+export const listRoomInvites = () =>
+  request<{ invites: RoomInviteCard[] }>('GET', '/api/rooms/invites');
+
+/** Accept a pending invite (invitee). */
+export const acceptRoomInvite = (inviteId: string) =>
+  request<{ ok: true; roomId: string }>('POST', `/api/rooms/invites/${inviteId}/accept`);
+
+/** Decline a pending invite (invitee). */
+export const declineRoomInvite = (inviteId: string) =>
+  request<{ ok: true }>('POST', `/api/rooms/invites/${inviteId}/decline`);
+
+/** Cancel an outgoing invite (inviter). */
+export const cancelRoomInvite = (inviteId: string) =>
+  request<void>('DELETE', `/api/rooms/invites/${inviteId}`);
 
 export { BASE_URL };

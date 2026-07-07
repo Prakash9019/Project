@@ -312,6 +312,14 @@ model User {
   // isOnGrid=false: manually hidden via panic-hide. 14-day inactivity is enforced via lastActiveAt filter, not this flag.
   isOnGrid Boolean @default(true)
 
+  // ── Availability toggles (20260621_group_availability) ──
+  // groupsAvailable=false: others cannot add me to a group directly (they must
+  // invite me if we already have a conversation). audio/videoCallAvailable gate
+  // whether others may call me at all, on top of the reply-based call gate.
+  groupsAvailable    Boolean @default(false)
+  audioCallAvailable Boolean @default(true)
+  videoCallAvailable Boolean @default(true)
+
   // ── NearMe v2: Gold+ privacy settings ──
   incognitoMode      Boolean @default(false)
   hideActiveStatus   Boolean @default(false)
@@ -409,6 +417,8 @@ model User {
   roomMemberships RoomMember[]
   roomMessages    RoomMessage[]
   roomReactions   RoomMessageReaction[]
+  sentRoomInvites     RoomInvite[] @relation("SentRoomInvites")
+  receivedRoomInvites RoomInvite[] @relation("ReceivedRoomInvites")
 
   @@index([lastActiveAt])
   @@index([createdAt])
@@ -1020,6 +1030,7 @@ model Room {
   messages        RoomMessage[]
   reports         RoomReport[]
   mutes           RoomMute[]
+  invites         RoomInvite[]
   creator         User?         @relation(fields: [creatorId], references: [id])
 
   @@index([category, isActive])
@@ -1109,4 +1120,28 @@ model RoomMute {
   room      Room     @relation(fields: [roomId], references: [id])
 
   @@unique([roomId, userId])
+}
+
+// ── Group availability: invites (20260621_group_availability) ──
+
+enum RoomInviteStatus {
+  pending
+  accepted
+  declined
+}
+
+model RoomInvite {
+  id         String            @id @default(uuid())
+  roomId     String
+  inviterId  String
+  inviteeId  String
+  status     RoomInviteStatus  @default(pending)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  room       Room              @relation(fields: [roomId], references: [id])
+  inviter    User              @relation("SentRoomInvites", fields: [inviterId], references: [id])
+  invitee    User              @relation("ReceivedRoomInvites", fields: [inviteeId], references: [id])
+
+  @@unique([roomId, inviterId, inviteeId])
+  @@index([inviteeId, status])
 }

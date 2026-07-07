@@ -18,7 +18,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { ExpiringPhotoViewer } from '../../src/components/ExpiringPhotoViewer';
 import { PhotoViewer } from '../../src/components/PhotoViewer';
@@ -31,6 +31,7 @@ import {
   consumeExpiringPhoto,
   listAlbums,
   getAlbum,
+  getPublicProfile,
   ApiError,
 } from '../../src/services/api';
 import { connectSocket, emitTyping } from '../../src/services/socket';
@@ -43,6 +44,8 @@ import type { Message, AlbumSummary } from '../../src/types/api';
 
 const CALL_DISABLED_TOOLTIP =
   'Calls will be enabled after the other person replies to your message at least once.';
+const AUDIO_UNAVAILABLE_TOOLTIP = 'This person is not accepting audio calls right now.';
+const VIDEO_UNAVAILABLE_TOOLTIP = 'This person is not accepting video calls right now.';
 
 type ChatRow =
   | { kind: 'date'; id: string; label: string }
@@ -80,6 +83,9 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(false);
+  // Peer's own availability toggles (default true until loaded — never over-disable).
+  const [peerAudioAvailable, setPeerAudioAvailable] = useState(true);
+  const [peerVideoAvailable, setPeerVideoAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -123,6 +129,19 @@ export default function Chat() {
         setMessages(res.messages.reverse());
         setAudioEnabled(res.audioCallEnabled);
         setVideoEnabled(res.videoCallEnabled);
+        // Load the peer's call-availability toggles. Peer id comes from the
+        // conversation summary (inbox) or, failing that, from a peer message.
+        const convo = useChatStore.getState().conversations.find((c) => c.id === conversationId);
+        const peerId = convo?.peer?.id ?? res.messages.find((m) => m.senderId !== me?.id)?.senderId;
+        if (peerId) {
+          getPublicProfile(peerId)
+            .then((p) => {
+              if (!active) return;
+              setPeerAudioAvailable(p.audioCallAvailable !== false);
+              setPeerVideoAvailable(p.videoCallAvailable !== false);
+            })
+            .catch(() => {});
+        }
       } catch (e) {
         if (active) setBanner((e as ApiError).message ?? 'Could not load messages');
       } finally {
@@ -408,10 +427,23 @@ export default function Chat() {
     }
   };
 
+  // A call button is enabled only when the reply-gate is open AND the peer is
+  // accepting that call type. Tooltip differs by which condition fails.
+  const callState = (type: 'audio' | 'video') => {
+    const replyEnabled = type === 'audio' ? audioEnabled : videoEnabled;
+    const peerAvailable = type === 'audio' ? peerAudioAvailable : peerVideoAvailable;
+    const tip = !replyEnabled
+      ? CALL_DISABLED_TOOLTIP
+      : type === 'audio'
+        ? AUDIO_UNAVAILABLE_TOOLTIP
+        : VIDEO_UNAVAILABLE_TOOLTIP;
+    return { enabled: replyEnabled && peerAvailable, tip };
+  };
+
   const startCall = async (type: 'audio' | 'video') => {
-    const enabled = type === 'audio' ? audioEnabled : videoEnabled;
+    const { enabled, tip } = callState(type);
     if (!enabled) {
-      setTooltip(CALL_DISABLED_TOOLTIP);
+      setTooltip(tip);
       setTimeout(() => setTooltip(null), 3000);
       return;
     }
@@ -429,8 +461,8 @@ export default function Chat() {
       });
     } catch (e) {
       const err = e as ApiError;
-      if (err.status === 403 && err.code === 'calls_not_yet_enabled') {
-        setTooltip(CALL_DISABLED_TOOLTIP);
+      if (err.status === 403 && (err.code === 'calls_not_yet_enabled' || err.code === 'calls_disabled')) {
+        setTooltip(err.code === 'calls_disabled' ? (err.message ?? tip) : CALL_DISABLED_TOOLTIP);
         setTimeout(() => setTooltip(null), 3000);
       } else setBanner(err.message ?? 'Could not start call');
     }
@@ -456,7 +488,7 @@ export default function Chat() {
             )}
             <View style={styles.snapLabel}>
               <Ionicons name="eye-off-outline" size={14} color={mine ? '#fff' : theme.textPrimary} />
-              <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: 13 }}>
+              <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.sm }}>
                 {opened && !mine ? 'Opened' : mine ? 'View once · Sent' : 'Tap to view'}
               </Text>
             </View>
@@ -505,7 +537,7 @@ export default function Chat() {
     }
 
     return (
-      <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: 15, fontFamily: FontFamily.regular }}>
+      <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.md, fontFamily: FontFamily.regular }}>
         {item.content}
       </Text>
     );
@@ -573,14 +605,14 @@ export default function Chat() {
   };
 
   const CallButton = ({ type }: { type: 'audio' | 'video' }) => {
-    const enabled = type === 'audio' ? audioEnabled : videoEnabled;
+    const { enabled, tip } = callState(type);
     const color = enabled ? (type === 'audio' ? theme.callAudio : theme.callVideo) : theme.callDisabled;
     return (
       <Pressable
         onPress={() => startCall(type)}
         onLongPress={() => {
           if (!enabled) {
-            setTooltip(CALL_DISABLED_TOOLTIP);
+            setTooltip(tip);
             setTimeout(() => setTooltip(null), 3000);
           }
         }}
@@ -737,22 +769,22 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
   headAvatar: { width: 36, height: 36, borderRadius: 18 },
   headProfile: { flex: 1 },
-  headName: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '700' },
-  headStatus: { fontSize: 12, fontFamily: FontFamily.medium },
+  headName: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  headStatus: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   callBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   tooltip: { marginHorizontal: 16, marginTop: 8, padding: 10, borderRadius: 10 },
   banner: { marginHorizontal: 16, marginTop: 8, padding: 10, borderRadius: 10 },
-  tooltipText: { fontSize: 12, fontFamily: FontFamily.regular, lineHeight: 17 },
+  tooltipText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, lineHeight: 17 },
   dateRow: { alignItems: 'center', marginVertical: 8 },
-  dateLabel: { fontSize: 12, fontFamily: FontFamily.medium, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' },
+  dateLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' },
   bubbleRow: { maxWidth: '82%' },
   left: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   right: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   bubble: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18 },
   mediaBubble: { borderRadius: 12, overflow: 'hidden' },
   snapBubble: { padding: 6 },
-  textMe: { color: '#fff', fontSize: 15, fontFamily: FontFamily.regular },
-  removed: { fontSize: 14, fontFamily: FontFamily.regular, fontStyle: 'italic' },
+  textMe: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.regular },
+  removed: { fontSize: FontSize.md, fontFamily: FontFamily.regular, fontStyle: 'italic' },
   mediaChip: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   snapTile: { width: 160, borderRadius: 12, overflow: 'hidden' },
   snapOpened: { opacity: 0.55 },
@@ -762,19 +794,19 @@ const styles = StyleSheet.create({
   chatPhoto: { width: 200, height: 200, borderRadius: 12 },
   photoStack: { gap: 6 },
   multiBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  multiBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  albumCaption: { fontSize: 13, fontFamily: FontFamily.medium },
+  multiBadgeText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '700' },
+  albumCaption: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, marginHorizontal: 4 },
-  time: { fontSize: 11, fontFamily: FontFamily.regular },
+  time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1 },
   attachBtn: { width: 40, height: 42, alignItems: 'center', justifyContent: 'center' },
-  input: { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, maxHeight: 120, fontSize: 15, fontFamily: FontFamily.regular },
+  input: { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, maxHeight: 120, fontSize: FontSize.md, fontFamily: FontFamily.regular },
   sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   sheetOverlay: { flex: 1, justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 20, paddingBottom: 32 },
-  sheetTitle: { fontSize: 17, fontWeight: '700', marginBottom: 12 },
+  sheetTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: 12 },
   sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
-  sheetLabel: { fontSize: 16, fontWeight: '600' },
+  sheetLabel: { fontSize: FontSize.lg, fontWeight: '600' },
   cancelSheet: { alignItems: 'center', marginTop: 8 },
-  emptyAlbums: { textAlign: 'center', paddingVertical: 20, fontSize: 14 },
+  emptyAlbums: { textAlign: 'center', paddingVertical: 20, fontSize: FontSize.md },
 });

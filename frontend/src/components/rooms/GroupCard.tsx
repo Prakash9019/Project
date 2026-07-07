@@ -9,7 +9,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
-import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../../theme';
+import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../../theme';
 import { categoryMeta, formatCount, relativeTime } from '../../lib/rooms';
 import type { RoomCard, JoinedRoomCard } from '../../types/api';
 
@@ -208,19 +208,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
   },
-  unreadBadgeText: { color: '#fff', fontSize: 11, fontFamily: FontFamily.semibold },
+  unreadBadgeText: { color: '#fff', fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  name: { fontSize: 16, fontFamily: DisplayFont.medium, flexShrink: 1 },
-  time: { fontSize: 12, fontFamily: FontFamily.regular, marginLeft: 'auto' },
+  name: { fontSize: FontSize.lg, fontFamily: DisplayFont.medium, flexShrink: 1 },
+  time: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginLeft: 'auto' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 3 },
   catChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
-  catChipText: { fontSize: 11, fontFamily: FontFamily.semibold },
-  city: { fontSize: 12, fontFamily: FontFamily.regular },
-  desc: { fontSize: 13, fontFamily: FontFamily.regular, marginTop: 3, lineHeight: 18 },
+  catChipText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
+  city: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
+  desc: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginTop: 3, lineHeight: 18 },
   statsRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: 4 },
-  stat: { fontSize: 12, fontFamily: FontFamily.regular },
+  stat: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
   onlineWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   onlineDot: { width: 8, height: 8, borderRadius: 4 },
   joinBtn: { paddingHorizontal: 20, height: 36, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
-  joinBtnText: { color: '#fff', fontSize: 14, fontFamily: FontFamily.bold },
+  joinBtnText: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.bold },
 });

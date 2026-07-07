@@ -5,7 +5,7 @@ import { Errors, HttpError } from '../../utils/httpError';
 import { moderation } from '../../adapters/moderation';
 import { signUrl } from '../../utils/signUrl';
 import { distanceLabel } from '../../utils/geo';
-import { emitToRoom } from '../../realtime/emitter';
+import { emitToRoom, emitToUser } from '../../realtime/emitter';
 import { sendPush } from '../../services/push';
 import type { SendMessageBody } from './rooms.schema';
 
@@ -283,6 +283,187 @@ export async function leaveRoom(userId: string, roomId: string): Promise<void> {
     }),
   ]);
   emitToRoom(roomId, 'room:member_left', { userId, memberCount: Math.max(0, updated.memberCount) });
+}
+
+// ── Invite / direct-add ────────────────────────────────────────────────────────
+
+/** Does a 1:1 conversation exist between two users (in either direction)? */
+async function conversationExists(userA: string, userB: string): Promise<boolean> {
+  const convo = await prisma.conversation.findFirst({
+    where: {
+      OR: [
+        { userAId: userA, userBId: userB },
+        { userAId: userB, userBId: userA },
+      ],
+    },
+    select: { id: true },
+  });
+  return !!convo;
+}
+
+/**
+ * Add a user to a room directly (if they're open to groups) or send them a room
+ * invite (if we already have a conversation). Requester must already be a member.
+ */
+export async function inviteOrAddMember(requesterId: string, roomId: string, targetUserId: string) {
+  const room = await getRoomOrThrow(roomId);
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, groupsAvailable: true },
+  });
+  if (!target) throw Errors.notFound('User not found');
+
+  // Already a member? Nothing to do.
+  const existingMember = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId, userId: targetUserId } },
+    select: { id: true },
+  });
+  if (existingMember) {
+    return { status: 200 as const, body: { added: true, method: 'already_member' as const } };
+  }
+
+  if (target.groupsAvailable) {
+    await prisma.$transaction([
+      prisma.roomMember.upsert({
+        where: { roomId_userId: { roomId, userId: targetUserId } },
+        update: {},
+        create: { roomId, userId: targetUserId, role: 'member' },
+      }),
+      prisma.room.update({ where: { id: roomId }, data: { memberCount: { increment: 1 } } }),
+    ]);
+    const addedUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { firstName: true, name: true },
+    });
+    const updated = await prisma.room.findUnique({ where: { id: roomId }, select: { memberCount: true } });
+    emitToRoom(roomId, 'room:member_joined', {
+      userId: targetUserId,
+      firstName: addedUser?.firstName ?? addedUser?.name ?? null,
+      memberCount: updated?.memberCount ?? room.memberCount + 1,
+    });
+    return { status: 201 as const, body: { added: true, method: 'direct' as const } };
+  }
+
+  // Not open to groups — only an invite is possible, and only if we already talk.
+  const hasConversation = await conversationExists(requesterId, targetUserId);
+  if (!hasConversation) {
+    throw new HttpError(
+      403,
+      'cannot_add_user',
+      'This person is not accepting group additions. Start a conversation with them first.',
+    );
+  }
+
+  // Existing pending invite from this inviter → idempotent.
+  const existingInvite = await prisma.roomInvite.findUnique({
+    where: { roomId_inviterId_inviteeId: { roomId, inviterId: requesterId, inviteeId: targetUserId } },
+    select: { id: true, status: true },
+  });
+  if (existingInvite?.status === 'pending') {
+    return { status: 200 as const, body: { added: false, method: 'invite_already_sent' as const } };
+  }
+
+  // Create or re-open (re-invite after a prior decline) the invite.
+  const invite = existingInvite
+    ? await prisma.roomInvite.update({ where: { id: existingInvite.id }, data: { status: 'pending' } })
+    : await prisma.roomInvite.create({ data: { roomId, inviterId: requesterId, inviteeId: targetUserId } });
+
+  const inviter = await prisma.user.findUnique({
+    where: { id: requesterId },
+    include: PHOTO_INCLUDE,
+  });
+  emitToUser(targetUserId, 'room_invite:received', {
+    inviteId: invite.id,
+    roomId,
+    roomName: room.name,
+    inviterName: inviter?.firstName ?? inviter?.name ?? null,
+    inviterPhoto: await signUrl(primaryPhotoPath(inviter)),
+  });
+
+  return { status: 201 as const, body: { added: false, method: 'invite_sent' as const } };
+}
+
+/** Pending invites addressed to the current user, newest first. */
+export async function listInvites(userId: string) {
+  const invites = await prisma.roomInvite.findMany({
+    where: { inviteeId: userId, status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      room: { select: { id: true, name: true, coverImageUrl: true, memberCount: true, category: true } },
+      inviter: { include: PHOTO_INCLUDE },
+    },
+  });
+
+  const serialized = await Promise.all(
+    invites.map(async (inv) => ({
+      id: inv.id,
+      room: {
+        id: inv.room.id,
+        name: inv.room.name,
+        coverImageUrl: await signUrl(inv.room.coverImageUrl),
+        memberCount: inv.room.memberCount,
+        category: inv.room.category,
+      },
+      inviter: {
+        id: inv.inviter.id,
+        firstName: inv.inviter.firstName ?? inv.inviter.name ?? null,
+        profilePhotoUrl: await signUrl(primaryPhotoPath(inv.inviter)),
+        isVerified: inv.inviter.isVerified ?? false,
+      },
+      createdAt: inv.createdAt,
+    })),
+  );
+  return { invites: serialized };
+}
+
+export async function acceptInvite(userId: string, inviteId: string) {
+  const invite = await prisma.roomInvite.findUnique({ where: { id: inviteId } });
+  if (!invite || invite.inviteeId !== userId) throw Errors.notFound('Invite not found');
+  if (invite.status !== 'pending') throw new HttpError(400, 'invite_not_pending', 'This invite is no longer pending');
+
+  const alreadyMember = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId: invite.roomId, userId } },
+    select: { id: true },
+  });
+
+  await prisma.$transaction([
+    prisma.roomInvite.update({ where: { id: inviteId }, data: { status: 'accepted' } }),
+    prisma.roomMember.upsert({
+      where: { roomId_userId: { roomId: invite.roomId, userId } },
+      update: {},
+      create: { roomId: invite.roomId, userId, role: 'member' },
+    }),
+    // Only bump the count if they weren't already a member.
+    ...(alreadyMember
+      ? []
+      : [prisma.room.update({ where: { id: invite.roomId }, data: { memberCount: { increment: 1 } } })]),
+  ]);
+
+  if (!alreadyMember) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, name: true } });
+    const updated = await prisma.room.findUnique({ where: { id: invite.roomId }, select: { memberCount: true } });
+    emitToRoom(invite.roomId, 'room:member_joined', {
+      userId,
+      firstName: user?.firstName ?? user?.name ?? null,
+      memberCount: updated?.memberCount ?? 0,
+    });
+  }
+
+  return { ok: true as const, roomId: invite.roomId };
+}
+
+export async function declineInvite(userId: string, inviteId: string) {
+  const invite = await prisma.roomInvite.findUnique({ where: { id: inviteId } });
+  if (!invite || invite.inviteeId !== userId) throw Errors.notFound('Invite not found');
+  await prisma.roomInvite.update({ where: { id: inviteId }, data: { status: 'declined' } });
+  return { ok: true as const };
+}
+
+/** Inviter cancels their own outgoing invite (soft delete → declined). */
+export async function cancelInvite(userId: string, inviteId: string): Promise<void> {
+  const invite = await prisma.roomInvite.findUnique({ where: { id: inviteId } });
+  if (!invite || invite.inviterId !== userId) throw Errors.notFound('Invite not found');
+  await prisma.roomInvite.update({ where: { id: inviteId }, data: { status: 'declined' } });
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────

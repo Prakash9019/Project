@@ -19,7 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { useTheme, FontFamily, DisplayFont, FontSize } from '../../src/theme';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import {
@@ -309,6 +309,27 @@ export default function ProfileDetail() {
             <Text style={[styles.meta, { color: theme.textSecondary }]}> {profile.distance}</Text>
           </View>
 
+          {/* Availability chips — group / audio / video */}
+          {(profile.groupsAvailable || profile.audioCallAvailable || profile.videoCallAvailable) && (
+            <View style={styles.availRow}>
+              {profile.groupsAvailable && (
+                <View style={[styles.availChip, { backgroundColor: theme.planPremium + '26', borderColor: theme.planPremium }]}>
+                  <Text style={[styles.availChipText, { color: theme.planPremium }]}>👥 Open to Groups</Text>
+                </View>
+              )}
+              {profile.audioCallAvailable && (
+                <View style={[styles.availChip, { backgroundColor: theme.callAudio + '26', borderColor: theme.callAudio }]}>
+                  <Text style={[styles.availChipText, { color: theme.callAudio }]}>📞 Audio Calls</Text>
+                </View>
+              )}
+              {profile.videoCallAvailable && (
+                <View style={[styles.availChip, { backgroundColor: theme.callVideo + '26', borderColor: theme.callVideo }]}>
+                  <Text style={[styles.availChipText, { color: theme.callVideo }]}>🎥 Video Calls</Text>
+                </View>
+              )}
+            </View>
+          )}
+
           {/* Verification badges */}
           {(profile.photoVerified || profile.isCollegeVerified) && (
             <View style={styles.verifyRow}>
@@ -550,9 +571,9 @@ function MediaPill({ theme, icon, label }: { theme: any; icon: any; label: strin
 const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  naTitle: { fontSize: 18, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  naTitle: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700' },
   naBtn: { marginTop: 8, height: 46, borderRadius: 999, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
-  naBtnText: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  naBtnText: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700' },
   noPhoto: { alignItems: 'center', justifyContent: 'center' },
   heroTopScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
   heroBottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 140 },
@@ -561,43 +582,46 @@ const styles = StyleSheet.create({
   circleBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   info: { padding: 20, gap: 6 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  name: { fontSize: 28, fontFamily: DisplayFont.heavy, fontWeight: '800' },
+  name: { fontSize: FontSize.xxxl, fontFamily: DisplayFont.heavy, fontWeight: '800' },
   age: { fontFamily: DisplayFont.regular, fontWeight: '400' },
   planBadge: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  meta: { fontSize: 14, fontFamily: FontFamily.medium },
+  meta: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  availRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  availChip: { height: 28, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  availChipText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   verifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   vBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  vBadgeText: { fontSize: 12, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  vBadgeText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   statPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
-  statText: { fontSize: 13, fontFamily: FontFamily.semibold, fontWeight: '600' },
-  sectionLabel: { fontSize: 12, fontFamily: DisplayFont.bold, fontWeight: '700', letterSpacing: 0.8, marginTop: 20 },
-  body: { fontSize: 15, fontFamily: FontFamily.regular, lineHeight: 22, marginTop: 6 },
+  statText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  sectionLabel: { fontSize: FontSize.sm, fontFamily: DisplayFont.bold, fontWeight: '700', letterSpacing: 0.8, marginTop: 20 },
+  body: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 22, marginTop: 6 },
   card: { borderRadius: 16, padding: 14, marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   chip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
-  chipText: { fontSize: 14, fontFamily: FontFamily.medium },
-  promptQ: { fontSize: 13, fontFamily: FontFamily.regular },
-  promptA: { fontSize: 16, fontFamily: DisplayFont.semibold, fontWeight: '600', marginTop: 4 },
+  chipText: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  promptQ: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
+  promptA: { fontSize: FontSize.lg, fontFamily: DisplayFont.semibold, fontWeight: '600', marginTop: 4 },
   mediaPill: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, marginTop: 8 },
-  mediaText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  mediaText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, fontWeight: '600' },
   barWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   bar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 24, paddingLeft: 16, paddingRight: 6, minHeight: 48 },
-  input: { flex: 1, fontSize: 15, fontFamily: FontFamily.regular, paddingVertical: 12, maxHeight: 110 },
+  input: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular, paddingVertical: 12, maxHeight: 110 },
   sendBtn: { marginLeft: 4, alignItems: 'center', justifyContent: 'center' },
   iconAction: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   albumGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 14, overflow: 'hidden', justifyContent: 'flex-end' },
   albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', backgroundColor: 'rgba(0,0,0,0.4)' },
   albumMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 6 },
-  albumName: { color: '#fff', fontSize: 12, fontFamily: DisplayFont.bold, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 3 },
+  albumName: { color: '#fff', fontSize: FontSize.sm, fontFamily: DisplayFont.bold, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 3 },
   albumCount: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },
-  albumCountText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.bold, fontWeight: '700' },
+  albumCountText: { color: '#fff', fontSize: FontSize.xs, fontFamily: FontFamily.bold, fontWeight: '700' },
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   menu: { width: '100%', borderRadius: 16, overflow: 'hidden' },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
-  menuText: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  menuText: { fontSize: FontSize.lg, fontFamily: FontFamily.semibold, fontWeight: '600' },
 });

@@ -26,6 +26,13 @@ router.use(requireAuth, requireVerifiedPhone);
 // Discovery / listing
 router.get('/', validate(listRoomsQuerySchema, 'query'), asyncHandler(c.listRooms));
 router.get('/joined', validate(listJoinedQuerySchema, 'query'), asyncHandler(c.listJoined));
+
+// Invites — MUST be registered before '/:roomId' so "invites" isn't matched as a roomId.
+router.get('/invites', asyncHandler(c.listInvites));
+router.post('/invites/:inviteId/accept', asyncHandler(c.acceptInvite));
+router.post('/invites/:inviteId/decline', asyncHandler(c.declineInvite));
+router.delete('/invites/:inviteId', asyncHandler(c.cancelInvite));
+
 router.get('/:roomId', asyncHandler(c.getRoom));
 
 // Admin / creator: edit room info
@@ -39,6 +46,9 @@ router.delete('/:roomId', asyncHandler(c.deleteRoom));
 // Join / leave
 router.post('/:roomId/join', asyncHandler(c.joinRoom));
 router.delete('/:roomId/join', asyncHandler(c.leaveRoom));
+
+// Invite or directly add a user to a room (must be a member to do this).
+router.post('/:roomId/invite-or-add/:userId', requireRoomMember, asyncHandler(c.inviteOrAddMember));
 
 // Messages — require membership
 router.get(

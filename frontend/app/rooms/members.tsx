@@ -101,7 +101,7 @@ export default function RoomMembers() {
         />
       )}
 
-      <MiniProfile visible={!!miniUser} member={miniUser} onClose={() => setMiniUser(null)} onBlocked={() => load()} />
+      <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} onBlocked={() => load()} />
     </SafeAreaView>
   );
 }

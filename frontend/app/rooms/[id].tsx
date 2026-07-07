@@ -32,7 +32,7 @@ import { AttachmentSheet, type AttachmentKind } from '../../src/components/rooms
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { ContextMenu } from '../../src/components/rooms/ContextMenu';
 import { VoiceRecorder } from '../../src/components/rooms/VoiceRecorder';
-import { useTheme, FontFamily, spacing, radius } from '../../src/theme';
+import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import {
   getRoom,
@@ -1015,7 +1015,7 @@ export default function RoomChat() {
         onGifSelected={sendGif}
       />
 
-      <MiniProfile visible={!!miniUser} member={miniUser} onClose={() => setMiniUser(null)} />
+      <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} />
     </SafeAreaView>
   );
 }
@@ -1090,30 +1090,30 @@ const styles = StyleSheet.create({
 
   searchHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth },
   searchInputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, borderRadius: radius.lg, paddingHorizontal: spacing.md },
-  searchInput: { flex: 1, fontSize: 15, fontFamily: FontFamily.regular },
+  searchInput: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular },
   searchNav: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  matchCount: { fontSize: 13, fontFamily: FontFamily.medium },
+  matchCount: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
 
   pinnedBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderLeftWidth: 3 },
-  pinnedLabel: { fontSize: 12, fontFamily: FontFamily.semibold },
-  pinnedText: { fontSize: 13, fontFamily: FontFamily.regular, marginTop: 1 },
+  pinnedLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
+  pinnedText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginTop: 1 },
 
   dateSepWrap: { alignItems: 'center', marginVertical: spacing.sm },
   dateSep: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: radius.pill },
-  dateSepText: { fontSize: 12, fontFamily: FontFamily.medium },
+  dateSepText: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
 
   unreadWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginVertical: spacing.sm, paddingHorizontal: spacing.xl },
   unreadLine: { flex: 1, height: StyleSheet.hairlineWidth },
-  unreadText: { fontSize: 12, fontFamily: FontFamily.semibold },
+  unreadText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
 
-  typing: { fontSize: 12, fontFamily: FontFamily.regular, paddingHorizontal: spacing.lg, paddingBottom: 4 },
+  typing: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, paddingHorizontal: spacing.lg, paddingBottom: 4 },
   uploadBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: 6 },
   uploadTrack: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
   uploadFill: { height: 4, borderRadius: 2 },
-  uploadLabel: { fontSize: 12, fontFamily: FontFamily.medium, width: 40, textAlign: 'right' },
+  uploadLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, width: 40, textAlign: 'right' },
 
   pendingWrap: { paddingHorizontal: spacing.md, paddingBottom: 6, gap: 6 },
-  pendingLabel: { fontSize: 12, fontFamily: FontFamily.medium },
+  pendingLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   pendingRow: { gap: 8 },
   pendingChip: { width: 56, height: 56, borderRadius: 10, overflow: 'hidden' },
   pendingThumb: { width: 56, height: 56 },
@@ -1123,11 +1123,11 @@ const styles = StyleSheet.create({
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth },
   iconBtn: { paddingBottom: 8, paddingHorizontal: 2 },
   inputWrap: { flex: 1, borderRadius: radius.xl, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? 10 : 4, maxHeight: 110, justifyContent: 'center' },
-  input: { fontSize: 15, fontFamily: FontFamily.regular, maxHeight: 90 },
+  input: { fontSize: FontSize.md, fontFamily: FontFamily.regular, maxHeight: 90 },
   sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
 
   menuBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   menu: { minWidth: 250, borderRadius: radius.lg, paddingVertical: spacing.sm, gap: 2 },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  menuItemText: { fontSize: 15, fontFamily: FontFamily.medium },
+  menuItemText: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
 });

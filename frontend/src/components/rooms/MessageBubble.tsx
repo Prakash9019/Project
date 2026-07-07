@@ -15,7 +15,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Avatar } from '../Avatar';
 import { MessageTick } from '../MessageTick';
-import { useTheme, FontFamily } from '../../theme';
+import { useTheme, FontFamily, FontSize } from '../../theme';
 import type { RoomMessageCard } from '../../types/api';
 
 const SWIPE_TRIGGER = 60;
@@ -433,40 +433,40 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-end', marginVertical: 4, alignSelf: 'flex-start', maxWidth: '100%' },
   rowOwn: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
   senderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
-  senderName: { fontSize: 13, fontFamily: FontFamily.semibold },
-  senderAge: { fontSize: 12, fontFamily: FontFamily.regular },
+  senderName: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
+  senderAge: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
   adminChip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999 },
-  adminChipText: { fontSize: 10, fontFamily: FontFamily.semibold },
+  adminChipText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
 
   bubble: { paddingVertical: 10, paddingHorizontal: 12 },
   bubbleOther: { borderTopLeftRadius: 0, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   bubbleOwn: { borderTopLeftRadius: 16, borderTopRightRadius: 0, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   // Bare image/GIF bubble — no padding, border or background (WhatsApp-style).
   mediaBubble: { borderRadius: 12, overflow: 'hidden' },
-  text: { fontSize: 15, fontFamily: FontFamily.regular, lineHeight: 20 },
+  text: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
   deleted: { fontStyle: 'italic' },
   imageWrap: { borderRadius: 12, overflow: 'hidden' },
   image: { width: 220, height: 220, borderRadius: 12 },
   imageRetry: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)' },
-  imageRetryText: { color: '#fff', fontSize: 12, fontFamily: FontFamily.medium },
+  imageRetryText: { color: '#fff', fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   gif: { width: 200, borderRadius: 12, marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.1)' },
   voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
   voiceBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   voiceWave: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 24 },
-  voiceTime: { fontSize: 11, fontFamily: FontFamily.medium, width: 34, textAlign: 'right' },
+  voiceTime: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, width: 34, textAlign: 'right' },
   mediaCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
   mediaIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  mediaLabel: { fontSize: 14, fontFamily: FontFamily.semibold },
-  mediaSub: { fontSize: 11, fontFamily: FontFamily.regular, marginTop: 1 },
+  mediaLabel: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
+  mediaSub: { fontSize: FontSize.xs, fontFamily: FontFamily.regular, marginTop: 1 },
 
   quote: { borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 8, borderRadius: 6, marginBottom: 4 },
-  quoteName: { fontSize: 12, fontFamily: FontFamily.semibold },
-  quoteText: { fontSize: 12, fontFamily: FontFamily.regular },
+  quoteName: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
+  quoteText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
-  time: { fontSize: 10, fontFamily: FontFamily.regular },
+  time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3 },
   reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },
-  reactionEmoji: { fontSize: 12 },
-  reactionCount: { fontSize: 11, fontFamily: FontFamily.medium },
+  reactionEmoji: { fontSize: FontSize.sm },
+  reactionCount: { fontSize: FontSize.xs, fontFamily: FontFamily.medium },
 });

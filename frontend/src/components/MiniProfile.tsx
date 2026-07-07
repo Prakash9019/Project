@@ -5,8 +5,8 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Avatar } from './Avatar';
 import { ReportSheet } from './ReportSheet';
-import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../theme';
-import { blockUser, startConversation, getPublicProfile } from '../services/api';
+import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../theme';
+import { blockUser, startConversation, getPublicProfile, inviteOrAddToRoom } from '../services/api';
 import { toastApiError, showSuccess } from '../lib/toast';
 import type { RoomUserCard } from '../types/api';
 
@@ -19,18 +19,23 @@ export function MiniProfile({
   member,
   onClose,
   onBlocked,
+  roomId,
 }: {
   visible: boolean;
   member: RoomUserCard | null;
   onClose: () => void;
   onBlocked?: (userId: string) => void;
+  /** When set, shows a smart "Add to Room" / "Invite to Room" button. */
+  roomId?: string;
 }) {
   const { theme } = useTheme();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [bio, setBio] = useState<string | null>(null);
   const [lookingFor, setLookingFor] = useState<string[]>([]);
+  const [groupsAvailable, setGroupsAvailable] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Lazy-load bio + lookingFor once the sheet opens (room cards don't carry them).
@@ -40,10 +45,32 @@ export function MiniProfile({
       const p = await getPublicProfile(userId);
       setBio(p.bio ?? null);
       setLookingFor((p.lookingFor ?? []).slice(0, 3));
+      setGroupsAvailable(p.groupsAvailable ?? false);
     } catch {
       /* non-fatal — sheet still shows the card fields */
     } finally {
       setLoadingDetail(false);
+    }
+  };
+
+  // Add the member directly (if they're open to groups) or send them an invite.
+  // The server decides; we surface the outcome. A 403 cannot_add_user means we
+  // must start a conversation with them first.
+  const handleAddToRoom = async () => {
+    if (adding || !roomId || !member) return;
+    setAdding(true);
+    try {
+      const res = await inviteOrAddToRoom(roomId, member.id);
+      if (res.added) {
+        showSuccess(res.method === 'already_member' ? `${name} is already in this group` : `Added ${name} to the group`);
+      } else {
+        showSuccess(res.method === 'invite_already_sent' ? 'Invite already sent' : `Invited ${name} to the group`);
+      }
+      onClose();
+    } catch (e) {
+      toastApiError(e, 'Could not add to group');
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -147,6 +174,22 @@ export function MiniProfile({
               </LinearGradient>
             </Pressable>
 
+            {roomId ? (
+              <Pressable
+                onPress={handleAddToRoom}
+                disabled={adding || loadingDetail}
+                style={[styles.outlineBtn, { borderColor: theme.brand }]}
+              >
+                {adding ? (
+                  <ActivityIndicator color={theme.brand} />
+                ) : (
+                  <Text style={[styles.outlineText, { color: theme.brand }]}>
+                    {groupsAvailable ? 'Add to Room' : 'Invite to Room'}
+                  </Text>
+                )}
+              </Pressable>
+            ) : null}
+
             <Pressable
               onPress={handleViewProfile}
               style={[styles.outlineBtn, { borderColor: theme.border }]}
@@ -185,22 +228,22 @@ const styles = StyleSheet.create({
   content: { alignItems: 'center', paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
   avatarWrap: { marginBottom: spacing.md },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  name: { fontSize: 22, fontFamily: DisplayFont.bold },
-  age: { fontSize: 20, fontFamily: DisplayFont.medium },
+  name: { fontSize: FontSize.xxl, fontFamily: DisplayFont.bold },
+  age: { fontSize: FontSize.xl, fontFamily: DisplayFont.medium },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 6 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
-  badgeText: { fontSize: 10, fontFamily: FontFamily.bold, letterSpacing: 0.5 },
-  distance: { fontSize: 12, fontFamily: FontFamily.regular },
-  bio: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', marginTop: spacing.md },
+  badgeText: { fontSize: FontSize.xs, fontFamily: FontFamily.bold, letterSpacing: 0.5 },
+  distance: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
+  bio: { fontSize: FontSize.md, fontFamily: FontFamily.regular, textAlign: 'center', marginTop: spacing.md },
   chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', marginTop: spacing.md },
   chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
-  chipText: { fontSize: 12, fontFamily: FontFamily.medium, textTransform: 'capitalize' },
+  chipText: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, textTransform: 'capitalize' },
   introBtn: { width: '100%', marginTop: spacing.xl },
   introGradient: { height: 52, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center' },
-  introText: { color: '#fff', fontSize: 16, fontFamily: FontFamily.bold },
+  introText: { color: '#fff', fontSize: FontSize.lg, fontFamily: FontFamily.bold },
   outlineBtn: { width: '100%', height: 50, borderRadius: radius.lg, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginTop: spacing.md },
-  outlineText: { fontSize: 15, fontFamily: FontFamily.semibold },
+  outlineText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
   dangerRow: { flexDirection: 'row', gap: spacing.xxl, marginTop: spacing.lg },
   dangerBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
-  dangerText: { fontSize: 14, fontFamily: FontFamily.semibold },
+  dangerText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
 });

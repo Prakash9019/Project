@@ -198,6 +198,10 @@ export interface User {
   pauseIncomingMessages: boolean;
   requireProfileCompletenessToMessage: boolean;
   verifiedUsersOnlyFilter: boolean;
+  // ── Availability toggles ──
+  groupsAvailable: boolean;
+  audioCallAvailable: boolean;
+  videoCallAvailable: boolean;
   aiOptInFeatures: AiOptInFeatures | null;
   // ── Right Now (frontend spec addition; see backend-spec __frontendSpecAdditions) ──
   rightNowStatus?: string | null;
@@ -261,6 +265,10 @@ export interface UserCard {
   rightNowStatus?: string | null;
   rightNowCategory?: RightNowCategory | null;
   rightNowActive?: boolean;
+  // ── Availability (grid tile shows a 👥 icon when groupsAvailable) ──
+  groupsAvailable?: boolean;
+  audioCallAvailable?: boolean;
+  videoCallAvailable?: boolean;
 }
 
 /** A nearby user with an active Right Now status (GET /discovery/right-now). */
@@ -578,4 +586,42 @@ export interface RoomMemberCard {
   isCreator: boolean;
   joinedAt: string;
   user: RoomUserCard;
+}
+
+/* ─────────────────────── Room invites (Group availability) ─────────────────────── */
+
+export type RoomInviteStatus = 'pending' | 'accepted' | 'declined';
+
+/** A pending room invite addressed to the current user (GET /api/rooms/invites). */
+export interface RoomInviteCard {
+  id: string;
+  room: {
+    id: string;
+    name: string;
+    coverImageUrl: string | null;
+    memberCount: number;
+    category: RoomCategory;
+  };
+  inviter: {
+    id: string;
+    firstName: string | null;
+    profilePhotoUrl: string | null;
+    isVerified: boolean;
+  };
+  createdAt: string;
+}
+
+/** Result of POST /api/rooms/:roomId/invite-or-add/:userId. */
+export interface InviteOrAddResult {
+  added: boolean;
+  method: 'direct' | 'invite_sent' | 'already_member' | 'invite_already_sent';
+}
+
+/** Payload of the `room_invite:received` socket event. */
+export interface RoomInviteReceivedEvent {
+  inviteId: string;
+  roomId: string;
+  roomName: string;
+  inviterName: string | null;
+  inviterPhoto: string | null;
 }

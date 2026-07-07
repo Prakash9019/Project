@@ -14,7 +14,7 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
 import { useChatStore } from '../../src/store/chatStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { connectSocket } from '../../src/services/socket';
@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  title: { fontSize: 22, fontFamily: DisplayFont.bold, fontWeight: '800' },
+  title: { fontSize: FontSize.xxl, fontFamily: DisplayFont.bold, fontWeight: '800' },
   addAlbum: { marginLeft: 'auto' },
 
   // A horizontal ScrollView stretches to fill its flex-column parent's vertical
@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
   chipsScroll: { flexGrow: 0 },
   chipsRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingBottom: 12 },
   chip: { height: 36, borderRadius: 999, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
-  chipText: { fontSize: 14, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  chipText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, fontWeight: '600' },
 
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 80 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, height: 72 },
@@ -295,22 +295,22 @@ const styles = StyleSheet.create({
   rowBody: { flex: 1, gap: 5 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   nameWrap: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  name: { fontSize: 15, fontFamily: DisplayFont.medium, fontWeight: '600', flexShrink: 1 },
-  time: { fontSize: 12, fontFamily: FontFamily.regular, flexShrink: 0 },
+  name: { fontSize: FontSize.md, fontFamily: DisplayFont.medium, fontWeight: '600', flexShrink: 1 },
+  time: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, flexShrink: 0 },
   rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  preview: { fontSize: 14, fontFamily: FontFamily.regular, flex: 1 },
+  preview: { fontSize: FontSize.md, fontFamily: FontFamily.regular, flex: 1 },
   badge: { minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  badgeText: { fontSize: 11, fontFamily: FontFamily.semibold, fontWeight: '700', color: '#fff' },
+  badgeText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold, fontWeight: '700', color: '#fff' },
 
-  emptyTitle: { fontSize: 18, fontFamily: DisplayFont.bold, fontWeight: '700', marginTop: 4 },
-  emptyBody: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700', marginTop: 4 },
+  emptyBody: { fontSize: FontSize.md, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 20 },
   cta: { marginTop: 8, height: 46, borderRadius: 999, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center' },
-  ctaText: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '700' },
+  ctaText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, fontWeight: '700' },
 
   album: { borderRadius: 14, overflow: 'hidden', justifyContent: 'flex-end' },
   albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '45%', backgroundColor: 'rgba(0,0,0,0.45)' },
   albumBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12 },
-  albumName: { color: '#fff', fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 4 },
+  albumName: { color: '#fff', fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 4 },
   countTag: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  count: { color: '#fff', fontSize: 12, fontFamily: FontFamily.semibold, fontWeight: '700' },
+  count: { color: '#fff', fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '700' },
 });

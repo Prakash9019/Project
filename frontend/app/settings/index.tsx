@@ -18,7 +18,7 @@ import { useTheme } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { Avatar } from '../../src/components/Avatar';
 import { useAuthStore } from '../../src/store/authStore';
-import { updateSettings, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
+import { updateSettings, updateProfile, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
 import { planAtLeast } from '../../src/lib/format';
 import type { Plan, UserSettings, AiOptInFeatures } from '../../src/types/api';
 
@@ -42,6 +42,8 @@ export default function Settings() {
   // Local toggle state seeded from the loaded user.
   const [toggles, setToggles] = useState<UserSettings>({});
   const [ai, setAi] = useState<AiOptInFeatures>({});
+  // Availability toggles persist via PATCH /api/v1/me (User model fields).
+  const [avail, setAvail] = useState<{ groupsAvailable?: boolean; audioCallAvailable?: boolean; videoCallAvailable?: boolean }>({});
 
   useEffect(() => {
     if (!user) {
@@ -62,6 +64,11 @@ export default function Settings() {
       showOrientationPublicly: user.showOrientationPublicly,
     });
     setAi(user.aiOptInFeatures ?? {});
+    setAvail({
+      groupsAvailable: user.groupsAvailable,
+      audioCallAvailable: user.audioCallAvailable,
+      videoCallAvailable: user.videoCallAvailable,
+    });
   }, [user, refreshUser]);
 
   const patch = async (key: SettingKey, value: boolean) => {
@@ -87,6 +94,19 @@ export default function Settings() {
       if (user) setUser({ ...user, aiOptInFeatures: nextAi });
     } catch {
       setAi((a) => ({ ...a, [key]: prev }));
+      Alert.alert('Could not update setting', 'Please try again.');
+    }
+  };
+
+  type AvailKey = 'groupsAvailable' | 'audioCallAvailable' | 'videoCallAvailable';
+  const patchAvailability = async (key: AvailKey, value: boolean) => {
+    const prev = avail[key];
+    setAvail((a) => ({ ...a, [key]: value }));
+    try {
+      await updateProfile({ [key]: value });
+      if (user) setUser({ ...user, [key]: value });
+    } catch {
+      setAvail((a) => ({ ...a, [key]: prev }));
       Alert.alert('Could not update setting', 'Please try again.');
     }
   };
@@ -153,6 +173,21 @@ export default function Settings() {
       </View>
     );
   };
+
+  const AvailRow = ({ label, subtitle, availKey }: { label: string; subtitle: string; availKey: AvailKey }) => (
+    <View style={styles.toggleRow}>
+      <View style={{ flex: 1, marginRight: 12 }}>
+        <Text style={[styles.toggleLabel, { color: theme.textPrimary }]}>{label}</Text>
+        <Text style={[styles.availSub, { color: theme.textTertiary }]}>{subtitle}</Text>
+      </View>
+      <Switch
+        value={!!avail[availKey]}
+        onValueChange={(v) => patchAvailability(availKey, v)}
+        trackColor={{ true: theme.brand, false: theme.border }}
+        thumbColor="#fff"
+      />
+    </View>
+  );
 
   const AiToggle = ({ label, aiKey }: { label: string; aiKey: AiKey }) => {
     const locked = !planAtLeast(plan, 'platinum');
@@ -226,6 +261,12 @@ export default function Settings() {
             <Toggle label="Show distance" settingKey="showDistance" />
             <Toggle label="Verified users only" settingKey="verifiedUsersOnlyFilter" requiredPlan="premium" />
             <Toggle label="Pause incoming messages" settingKey="pauseIncomingMessages" />
+          </Group>
+
+          <Group title="AVAILABILITY">
+            <AvailRow label="Open to Group Additions" subtitle="Let anyone add you to groups directly" availKey="groupsAvailable" />
+            <AvailRow label="Accept Audio Calls" subtitle="Allow others to audio call you" availKey="audioCallAvailable" />
+            <AvailRow label="Accept Video Calls" subtitle="Allow others to video call you" availKey="videoCallAvailable" />
           </Group>
 
           <Group title="PRIVACY (GOLD+)">
@@ -359,6 +400,7 @@ const styles = StyleSheet.create({
   groupCard: { borderRadius: 14, paddingHorizontal: 14 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, minHeight: 48 },
   toggleLabel: { fontSize: 15, flex: 1, marginRight: 12 },
+  availSub: { fontSize: 12, marginTop: 2 },
   lockBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   lockText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },

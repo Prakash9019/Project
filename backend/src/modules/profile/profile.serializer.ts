@@ -47,6 +47,11 @@ function profileFields(user: UserWithRelations) {
     virtualDatingBadge: user.virtualDatingBadge ?? false,
     isVerified: user.isVerified,
     photoVerified: user.photoVerified,
+    // Availability toggles — surfaced on both self and public profile so the
+    // client can render "Open to Groups / Audio / Video" chips and gate actions.
+    groupsAvailable: user.groupsAvailable ?? false,
+    audioCallAvailable: user.audioCallAvailable ?? true,
+    videoCallAvailable: user.videoCallAvailable ?? true,
   };
 }
 
@@ -180,6 +185,7 @@ export function serializeGridCard(
     activity: hideActivity ? null : activity,
     boosted,
     planBadge: user.plan !== 'free' ? user.plan : null,
+    groupsAvailable: user.groupsAvailable ?? false,
     visitingSoonBadge,
     ...(showOrientation ? { genderIdentity: user.genderIdentity, sexualOrientation: user.sexualOrientation } : {}),
     isShortlisted: viewerFavs ? viewerFavs.has(user.id) : undefined,

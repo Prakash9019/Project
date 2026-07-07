@@ -47,6 +47,31 @@ export async function leaveRoom(req: Request, res: Response): Promise<void> {
   res.status(204).send();
 }
 
+export async function inviteOrAddMember(req: Request, res: Response): Promise<void> {
+  const result = await svc.inviteOrAddMember(req.user!.sub, req.params.roomId, req.params.userId);
+  res.status(result.status).json(result.body);
+}
+
+export async function listInvites(req: Request, res: Response): Promise<void> {
+  const result = await svc.listInvites(req.user!.sub);
+  res.status(200).json(result);
+}
+
+export async function acceptInvite(req: Request, res: Response): Promise<void> {
+  const result = await svc.acceptInvite(req.user!.sub, req.params.inviteId);
+  res.status(200).json(result);
+}
+
+export async function declineInvite(req: Request, res: Response): Promise<void> {
+  const result = await svc.declineInvite(req.user!.sub, req.params.inviteId);
+  res.status(200).json(result);
+}
+
+export async function cancelInvite(req: Request, res: Response): Promise<void> {
+  await svc.cancelInvite(req.user!.sub, req.params.inviteId);
+  res.status(204).send();
+}
+
 export async function listMessages(req: Request, res: Response): Promise<void> {
   const q = req.query as unknown as ListMessagesQuery;
   const result = await svc.listMessages(req.user!.sub, req.params.roomId, { before: q.before, limit: q.limit });

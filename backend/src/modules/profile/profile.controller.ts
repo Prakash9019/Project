@@ -57,6 +57,10 @@ export const updateProfileSchema = z.object({
   rightNowStatus:     z.string().max(120).nullable().optional(),
   rightNowCategory:   z.enum(['drinks','coffee','workout','hangout','other']).nullable().optional(),
   rightNowExpiresAt:  z.string().datetime().nullable().optional(),
+  // Availability toggles (Settings → Availability).
+  groupsAvailable:    z.boolean().optional(),
+  audioCallAvailable: z.boolean().optional(),
+  videoCallAvailable: z.boolean().optional(),
 });
 
 // Accepts either a full https:// URL or a raw R2 storage key.

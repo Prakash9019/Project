@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { Avatar } from '../../src/components/Avatar';
 import { MiniProfile } from '../../src/components/MiniProfile';
-import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../../src/theme';
+import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import {
   getRoom,
@@ -598,7 +598,7 @@ export default function RoomInfo() {
         </Pressable>
       </Modal>
 
-      <MiniProfile visible={!!miniUser} member={miniUser} onClose={() => setMiniUser(null)} onBlocked={() => load()} />
+      <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} onBlocked={() => load()} />
     </SafeAreaView>
   );
 }
@@ -688,47 +688,47 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.md },
-  topTitle: { fontSize: 18, fontFamily: DisplayFont.bold },
+  topTitle: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold },
 
   hero: { alignItems: 'center', paddingVertical: spacing.lg, gap: 6 },
   heroImage: { width: 120, height: 120, borderRadius: 60, marginBottom: spacing.sm },
   heroOverlay: { position: 'absolute', top: 0, left: 0, width: 120, height: 120, borderRadius: 60, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
   heroCamera: { position: 'absolute', right: 2, bottom: spacing.sm + 2, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  name: { fontSize: 22, fontFamily: DisplayFont.bold, textAlign: 'center' },
+  name: { fontSize: FontSize.xxl, fontFamily: DisplayFont.bold, textAlign: 'center' },
   editNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, width: '100%' },
-  editNameInput: { flex: 1, fontSize: 18, fontFamily: DisplayFont.medium, borderBottomWidth: 1, paddingVertical: 4 },
-  editDescInput: { fontSize: 14, fontFamily: FontFamily.regular, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, padding: spacing.sm, minHeight: 60, textAlignVertical: 'top' },
+  editNameInput: { flex: 1, fontSize: FontSize.lg, fontFamily: DisplayFont.medium, borderBottomWidth: 1, paddingVertical: 4 },
+  editDescInput: { fontSize: FontSize.md, fontFamily: FontFamily.regular, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, padding: spacing.sm, minHeight: 60, textAlignVertical: 'top' },
   editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.xl, marginTop: spacing.sm },
-  editCancel: { fontSize: 14, fontFamily: FontFamily.semibold },
-  editSave: { fontSize: 14, fontFamily: FontFamily.bold },
-  subtitle: { fontSize: 14, fontFamily: FontFamily.regular },
-  counts: { fontSize: 13, fontFamily: FontFamily.regular },
+  editCancel: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
+  editSave: { fontSize: FontSize.md, fontFamily: FontFamily.bold },
+  subtitle: { fontSize: FontSize.md, fontFamily: FontFamily.regular },
+  counts: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
 
   section: { paddingHorizontal: spacing.xl, paddingVertical: spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
-  sectionTitle: { fontSize: 16, fontFamily: FontFamily.semibold },
-  sectionAction: { fontSize: 14, fontFamily: FontFamily.semibold },
-  body: { fontSize: 14, fontFamily: FontFamily.regular, lineHeight: 20 },
+  sectionTitle: { fontSize: FontSize.lg, fontFamily: FontFamily.semibold },
+  sectionAction: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
+  body: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
   mediaRow: { flexDirection: 'row', gap: spacing.sm },
   mediaThumb: { width: 90, height: 90, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.08)' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderTopWidth: StyleSheet.hairlineWidth },
-  rowLabel: { flex: 1, fontSize: 15, fontFamily: FontFamily.medium },
-  rowValue: { fontSize: 14, fontFamily: FontFamily.regular },
+  rowLabel: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  rowValue: { fontSize: FontSize.md, fontFamily: FontFamily.regular },
 
   addMember: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
   addIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
   memberNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  memberName: { fontSize: 15, fontFamily: FontFamily.semibold, flexShrink: 1 },
-  memberSectionLabel: { fontSize: 12, fontFamily: FontFamily.semibold, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: 4 },
+  memberName: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, flexShrink: 1 },
+  memberSectionLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: 4 },
   roleBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
-  roleBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.semibold },
+  roleBadgeText: { color: '#fff', fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
 
   pickerBackdrop: { flex: 1, justifyContent: 'flex-end' },
   pickerSheet: { borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, paddingBottom: spacing.xxl },
-  pickerTitle: { fontSize: 17, fontFamily: DisplayFont.bold, marginBottom: spacing.md },
+  pickerTitle: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, marginBottom: spacing.md },
   pickerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm },
-  pickerName: { fontSize: 15, fontFamily: FontFamily.semibold, flex: 1 },
+  pickerName: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, flex: 1 },
 });
