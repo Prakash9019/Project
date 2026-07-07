@@ -9,9 +9,11 @@ import {
   Switch,
   Alert,
   TextInput,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { Avatar } from '../../src/components/Avatar';
@@ -28,7 +30,11 @@ import {
   updateRoom,
   removeRoomMember,
   updateRoomMemberRole,
+  updateRoomPhoto,
+  transferRoomOwnership,
+  deleteRoom,
 } from '../../src/services/api';
+import { uploadToR2 } from '../../src/utils/uploadToR2';
 import { categoryMeta, formatCount } from '../../src/lib/rooms';
 import { toastApiError, showSuccess } from '../../src/lib/toast';
 import type { RoomDetail, RoomMemberCard, RoomUserCard, RoomMessageCard } from '../../src/types/api';
@@ -79,6 +85,93 @@ export default function RoomInfo() {
   );
   const isCreator = room?.isCreator === true;
   const isAdmin = isCreator || myRole === 'admin';
+
+  // Split members into Creator / Admins / Members sections (WhatsApp-style).
+  // Within each section: online first, then alphabetical by first name.
+  const memberSections = useMemo(() => {
+    const sortSection = (arr: RoomMemberCard[]) =>
+      [...arr].sort((a, b) => {
+        const ao = a.user.isOnline ? 0 : 1;
+        const bo = b.user.isOnline ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return (a.user.firstName ?? '').localeCompare(b.user.firstName ?? '');
+      });
+    return {
+      creators: sortSection(members.filter((m) => m.isCreator)),
+      admins: sortSection(members.filter((m) => !m.isCreator && m.role !== 'member')),
+      regular: sortSection(members.filter((m) => !m.isCreator && m.role === 'member')),
+    };
+  }, [members]);
+
+  // Group photo / ownership / delete (admin + creator actions)
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const changePhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+      allowsEditing: true,
+      aspect: [1, 1],
+    });
+    if (res.canceled || !res.assets[0]) return;
+    setPhotoUploading(true);
+    try {
+      const url = await uploadToR2(res.assets[0].uri, 'room_image', 'image/jpeg', { roomId: id });
+      const result = await updateRoomPhoto(id, url);
+      setRoom((prev) => (prev ? { ...prev, coverImageUrl: result.coverImageUrl } : prev));
+    } catch (e) {
+      toastApiError(e, 'Could not update group photo');
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
+  const confirmTransfer = (m: RoomMemberCard) => {
+    setTransferOpen(false);
+    Alert.alert('Transfer Ownership', `Make ${m.user.firstName ?? 'this member'} the new group creator?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Transfer',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await transferRoomOwnership(id, m.user.id);
+            // Current user is no longer the creator; refresh room + members.
+            setRoom((prev) => (prev ? { ...prev, isCreator: false, myRole: 'admin' } : prev));
+            showSuccess(`${m.user.firstName ?? 'Member'} is now the group creator`);
+            load();
+          } catch (e) {
+            toastApiError(e, 'Could not transfer ownership');
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleDelete = () => {
+    Alert.alert('Delete Group', 'Delete this group? This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setDeleting(true);
+          try {
+            await deleteRoom(id);
+            showSuccess('Group deleted');
+            router.replace('/(tabs)/groups' as Href);
+          } catch (e) {
+            setDeleting(false);
+            toastApiError(e, 'Could not delete group');
+          }
+        },
+      },
+    ]);
+  };
 
   // Inline edit (admin/creator)
   const [editingName, setEditingName] = useState(false);
@@ -230,13 +323,24 @@ export default function RoomInfo() {
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxxl }}>
         {/* Header section */}
         <View style={styles.hero}>
-          {cover ? (
-            <Image source={{ uri: cover }} style={styles.heroImage} contentFit="cover" cachePolicy="memory-disk" />
-          ) : meta ? (
-            <View style={[styles.heroImage, { backgroundColor: meta.color + '22', alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name={meta.icon} size={54} color={meta.color} />
-            </View>
-          ) : null}
+          <Pressable onPress={isAdmin ? changePhoto : undefined} disabled={!isAdmin || photoUploading}>
+            {cover ? (
+              <Image source={{ uri: cover }} style={styles.heroImage} contentFit="cover" cachePolicy="memory-disk" />
+            ) : meta ? (
+              <View style={[styles.heroImage, { backgroundColor: meta.color + '22', alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name={meta.icon} size={54} color={meta.color} />
+              </View>
+            ) : null}
+            {photoUploading ? (
+              <View style={styles.heroOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            ) : isAdmin ? (
+              <View style={[styles.heroCamera, { backgroundColor: theme.brand, borderColor: theme.background }]}>
+                <Ionicons name="camera" size={16} color="#fff" />
+              </View>
+            ) : null}
+          </Pressable>
           {editingName ? (
             <View style={styles.editNameRow}>
               <TextInput
@@ -389,15 +493,58 @@ export default function RoomInfo() {
             <Text style={[styles.rowLabel, { color: theme.brand }]}>Add Member</Text>
           </Pressable>
         ) : null}
-        {members.map((m) => (
-          <MemberRow
-            key={m.id}
-            member={m}
-            isSelf={m.user.id === me?.id}
-            onPress={() => setMiniUser(m.user)}
-            onLongPress={isAdmin && m.user.id !== me?.id ? () => onMemberLongPress(m) : undefined}
-          />
-        ))}
+        {/* Creator */}
+        {memberSections.creators.length ? (
+          <>
+            <Text style={[styles.memberSectionLabel, { color: theme.textTertiary }]}>Group Creator</Text>
+            {memberSections.creators.map((m) => (
+              <MemberRow
+                key={m.id}
+                member={m}
+                badge="creator"
+                isSelf={m.user.id === me?.id}
+                onPress={() => setMiniUser(m.user)}
+                onLongPress={isAdmin && m.user.id !== me?.id ? () => onMemberLongPress(m) : undefined}
+              />
+            ))}
+          </>
+        ) : null}
+
+        {/* Admins (only when present) */}
+        {memberSections.admins.length ? (
+          <>
+            <Text style={[styles.memberSectionLabel, { color: theme.textTertiary }]}>Admins</Text>
+            {memberSections.admins.map((m) => (
+              <MemberRow
+                key={m.id}
+                member={m}
+                badge="admin"
+                isSelf={m.user.id === me?.id}
+                onPress={() => setMiniUser(m.user)}
+                onLongPress={isAdmin && m.user.id !== me?.id ? () => onMemberLongPress(m) : undefined}
+              />
+            ))}
+          </>
+        ) : null}
+
+        {/* Members */}
+        {memberSections.regular.length ? (
+          <>
+            <Text style={[styles.memberSectionLabel, { color: theme.textTertiary }]}>
+              Members ({memberSections.regular.length})
+            </Text>
+            {memberSections.regular.map((m) => (
+              <MemberRow
+                key={m.id}
+                member={m}
+                badge={null}
+                isSelf={m.user.id === me?.id}
+                onPress={() => setMiniUser(m.user)}
+                onLongPress={isAdmin && m.user.id !== me?.id ? () => onMemberLongPress(m) : undefined}
+              />
+            ))}
+          </>
+        ) : null}
 
         {/* Danger zone */}
         <View style={{ marginTop: spacing.lg }}>
@@ -409,17 +556,47 @@ export default function RoomInfo() {
             <Ionicons name="flag-outline" size={22} color={theme.error} />
             <Text style={[styles.rowLabel, { color: theme.error }]}>Report Group</Text>
           </Pressable>
-          {myRole === 'admin' ? (
-            <Pressable
-              style={[styles.row, { borderTopColor: theme.border }]}
-              onPress={() => showSuccess('Delete group coming soon')}
-            >
-              <Ionicons name="trash-outline" size={22} color={theme.error} />
-              <Text style={[styles.rowLabel, { color: theme.error }]}>Delete Group</Text>
-            </Pressable>
+          {isCreator ? (
+            <>
+              <Pressable style={[styles.row, { borderTopColor: theme.border }]} onPress={() => setTransferOpen(true)}>
+                <Ionicons name="swap-horizontal-outline" size={22} color={theme.error} />
+                <Text style={[styles.rowLabel, { color: theme.error }]}>Transfer Ownership</Text>
+              </Pressable>
+              <Pressable style={[styles.row, { borderTopColor: theme.border }]} onPress={handleDelete} disabled={deleting}>
+                <Ionicons name="trash-outline" size={22} color={theme.error} />
+                <Text style={[styles.rowLabel, { color: theme.error }]}>Delete Group</Text>
+                {deleting ? <ActivityIndicator color={theme.error} /> : null}
+              </Pressable>
+            </>
           ) : null}
         </View>
       </ScrollView>
+
+      {/* Transfer-ownership member picker (creator only) */}
+      <Modal visible={transferOpen} transparent animationType="slide" onRequestClose={() => setTransferOpen(false)}>
+        <Pressable style={[styles.pickerBackdrop, { backgroundColor: theme.overlay }]} onPress={() => setTransferOpen(false)}>
+          <Pressable style={[styles.pickerSheet, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={[styles.pickerTitle, { color: theme.textPrimary }]}>Transfer ownership to…</Text>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {members
+                .filter((m) => !m.isCreator)
+                .map((m) => (
+                  <Pressable key={m.id} style={styles.pickerRow} onPress={() => confirmTransfer(m)}>
+                    <Avatar uri={m.user.profilePhotoUrl} size={40} online={m.user.isOnline} />
+                    <Text style={[styles.pickerName, { color: theme.textPrimary }]} numberOfLines={1}>
+                      {m.user.firstName ?? 'Someone'}
+                    </Text>
+                  </Pressable>
+                ))}
+              {members.filter((m) => !m.isCreator).length === 0 ? (
+                <Text style={[styles.body, { color: theme.textTertiary, paddingVertical: spacing.lg }]}>
+                  No other members to transfer to.
+                </Text>
+              ) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <MiniProfile visible={!!miniUser} member={miniUser} onClose={() => setMiniUser(null)} onBlocked={() => load()} />
     </SafeAreaView>
@@ -469,11 +646,13 @@ function Section({
 
 function MemberRow({
   member,
+  badge,
   isSelf,
   onPress,
   onLongPress,
 }: {
   member: RoomMemberCard;
+  badge: 'creator' | 'admin' | null;
   isSelf: boolean;
   onPress: () => void;
   onLongPress?: () => void;
@@ -490,9 +669,13 @@ function MemberRow({
             {isSelf ? ' (You)' : ''}
           </Text>
           {u.isVerified ? <Ionicons name="checkmark-circle" size={14} color={theme.info} /> : null}
-          {member.role !== 'member' ? (
-            <View style={[styles.roleChip, { backgroundColor: theme.warning + '22' }]}>
-              <Text style={[styles.roleText, { color: theme.warning }]}>{member.role}</Text>
+          {badge === 'creator' ? (
+            <View style={[styles.roleBadge, { backgroundColor: theme.planGold }]}>
+              <Text style={styles.roleBadgeText}>Creator</Text>
+            </View>
+          ) : badge === 'admin' ? (
+            <View style={[styles.roleBadge, { backgroundColor: theme.info }]}>
+              <Text style={styles.roleBadgeText}>Admin</Text>
             </View>
           ) : null}
         </View>
@@ -509,6 +692,8 @@ const styles = StyleSheet.create({
 
   hero: { alignItems: 'center', paddingVertical: spacing.lg, gap: 6 },
   heroImage: { width: 120, height: 120, borderRadius: 60, marginBottom: spacing.sm },
+  heroOverlay: { position: 'absolute', top: 0, left: 0, width: 120, height: 120, borderRadius: 60, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
+  heroCamera: { position: 'absolute', right: 2, bottom: spacing.sm + 2, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   name: { fontSize: 22, fontFamily: DisplayFont.bold, textAlign: 'center' },
   editNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, width: '100%' },
@@ -537,6 +722,13 @@ const styles = StyleSheet.create({
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.sm },
   memberNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   memberName: { fontSize: 15, fontFamily: FontFamily.semibold, flexShrink: 1 },
-  roleChip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
-  roleText: { fontSize: 10, fontFamily: FontFamily.semibold, textTransform: 'capitalize' },
+  memberSectionLabel: { fontSize: 12, fontFamily: FontFamily.semibold, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: 4 },
+  roleBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
+  roleBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.semibold },
+
+  pickerBackdrop: { flex: 1, justifyContent: 'flex-end' },
+  pickerSheet: { borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, paddingBottom: spacing.xxl },
+  pickerTitle: { fontSize: 17, fontFamily: DisplayFont.bold, marginBottom: spacing.md },
+  pickerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm },
+  pickerName: { fontSize: 15, fontFamily: FontFamily.semibold, flex: 1 },
 });

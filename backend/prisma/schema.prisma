@@ -551,6 +551,7 @@ model Message {
 
   flaggedOffensive  Boolean   @default(false)
   moderationFlagged Boolean   @default(false)
+  deliveredAt       DateTime?
   readAt            DateTime?
   deletedAt         DateTime?
 
@@ -1051,6 +1052,7 @@ model RoomMessage {
   isDeleted         Boolean               @default(false)
   isPinned          Boolean               @default(false)
   moderationFlagged Boolean               @default(false)
+  deliveredAt       DateTime?
   createdAt         DateTime              @default(now())
   editedAt          DateTime?
   room              Room                  @relation(fields: [roomId], references: [id])
@@ -1058,9 +1060,21 @@ model RoomMessage {
   replyTo           RoomMessage?          @relation("RoomMessageReply", fields: [replyToId], references: [id])
   replies           RoomMessage[]         @relation("RoomMessageReply")
   reactions         RoomMessageReaction[]
+  deliveries        RoomMessageDelivery[]
 
   @@index([roomId, createdAt])
   @@index([senderId])
+}
+
+model RoomMessageDelivery {
+  id          String      @id @default(uuid())
+  messageId   String
+  userId      String
+  deliveredAt DateTime    @default(now())
+  message     RoomMessage @relation(fields: [messageId], references: [id])
+
+  @@unique([messageId, userId])
+  @@index([messageId])
 }
 
 model RoomMessageReaction {

@@ -362,6 +362,7 @@ export interface Message {
   translatedContent: string | null;
   flaggedOffensive: boolean;
   moderationFlagged: boolean;
+  deliveredAt: string | null;
   readAt: string | null;
   deletedAt: string | null;
   createdAt: string;
@@ -564,6 +565,8 @@ export interface RoomMessageCard {
   isDeleted: boolean;
   replyTo: RoomReplyPreview | null;
   reactions: RoomReaction[];
+  /** How many OTHER members have received this message (double-grey at ≥ 1). */
+  deliveredCount: number;
   createdAt: string;
   editedAt: string | null;
 }
@@ -571,6 +574,8 @@ export interface RoomMessageCard {
 export interface RoomMemberCard {
   id: string;
   role: RoomRole;
+  /** True for the member who created the room (tracked via Room.creatorId). */
+  isCreator: boolean;
   joinedAt: string;
   user: RoomUserCard;
 }

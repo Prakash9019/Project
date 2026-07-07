@@ -110,7 +110,7 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
   });
   const planExpiresAt = userRecord?.planExpiresAt ?? null;
 
-  const { message, convo, peerId, peerPlan, peerPlanExpiresAt } = await svc.sendMessage(
+  const { message, convo, peerId, delivered, peerPlan, peerPlanExpiresAt } = await svc.sendMessage(
     conversationId, userId, plan, planExpiresAt, payload,
   );
 
@@ -122,6 +122,14 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
     viewOnce: message.viewOnce, expiresInSeconds: message.expiresInSeconds,
     expiresAfterView: message.expiresAfterView, createdAt: message.createdAt,
   });
+
+  // If the recipient was online at send time, tell the sender it's delivered
+  // (double-grey tick) immediately.
+  if (delivered) {
+    emitToUser(userId, 'message.status_update', {
+      conversationId, messageId: message.id, status: 'delivered',
+    });
+  }
 
   // Push notification (non-blocking, skip if muted)
   isMuted(peerId, userId).then((muted) => {

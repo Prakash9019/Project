@@ -4,7 +4,7 @@ import { verifyAccessToken } from '../utils/jwt';
 import { redis, RedisKeys } from '../config/redis';
 import { prisma } from '../config/prisma';
 import { env } from '../config/env';
-import { bindIo, userRoom, emitToUser, roomChannel } from './emitter';
+import { bindIo, userRoom, emitToUser, emitToRoom, roomChannel } from './emitter';
 import { getParticipantConversation, otherParty } from '../modules/chat/chat.service';
 import { activeWsConnections } from '../config/metrics';
 
@@ -42,6 +42,37 @@ export function initSocket(httpServer: HttpServer): Server {
       .catch(() => { /* rooms optional */ });
     await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
     await prisma.user.update({ where: { id: userId }, data: { lastActiveAt: new Date() } }).catch(() => {});
+
+    // ── Delivery backfill: mark any 1:1 messages this user hadn't received yet
+    // as delivered, and notify each sender (double-grey tick). ──
+    prisma.message
+      .findMany({
+        where: {
+          deliveredAt: null,
+          readAt: null,
+          isUnsent: false,
+          deletedAt: null,
+          senderId: { not: userId },
+          conversation: { OR: [{ userAId: userId }, { userBId: userId }] },
+        },
+        select: { id: true, senderId: true, conversationId: true },
+        take: 500,
+      })
+      .then(async (msgs) => {
+        if (msgs.length === 0) return;
+        await prisma.message.updateMany({
+          where: { id: { in: msgs.map((m) => m.id) } },
+          data: { deliveredAt: new Date() },
+        });
+        for (const m of msgs) {
+          emitToUser(m.senderId, 'message.status_update', {
+            conversationId: m.conversationId,
+            messageId: m.id,
+            status: 'delivered',
+          });
+        }
+      })
+      .catch(() => { /* delivery backfill is best-effort */ });
 
     // ── Live location ───────────────────────────────────────
     socket.on('location:update', async (payload: { lat: number; lng: number }) => {
@@ -94,6 +125,29 @@ export function initSocket(httpServer: HttpServer): Server {
         firstName: user?.firstName ?? user?.name ?? null,
         isTyping: !!isTyping,
       });
+    });
+
+    // ── Dating Rooms: message delivery receipt ──────────────
+    // A member's socket reports it received a room message; record it once and
+    // broadcast so the sender's client can flip to double-grey (delivered).
+    socket.on('room:message_delivered', async (payload: { roomId: string; messageId: string }) => {
+      const { roomId, messageId } = payload ?? {};
+      if (!roomId || !messageId) return;
+      const member = await prisma.roomMember
+        .findUnique({ where: { roomId_userId: { roomId, userId } }, select: { id: true } })
+        .catch(() => null);
+      if (!member) return;
+      const msg = await prisma.roomMessage
+        .findFirst({ where: { id: messageId, roomId }, select: { senderId: true } })
+        .catch(() => null);
+      // Don't record a delivery for the sender's own message.
+      if (!msg || msg.senderId === userId) return;
+      const existing = await prisma.roomMessageDelivery
+        .findUnique({ where: { messageId_userId: { messageId, userId } }, select: { id: true } })
+        .catch(() => null);
+      if (existing) return; // already recorded — avoid double-emitting
+      await prisma.roomMessageDelivery.create({ data: { messageId, userId } }).catch(() => {});
+      emitToRoom(roomId, 'room:message_delivered', { messageId });
     });
 
     // ── Heartbeat ───────────────────────────────────────────

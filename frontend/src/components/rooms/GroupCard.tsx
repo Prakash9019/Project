@@ -76,14 +76,20 @@ function GroupCardBase({
     onJoin?.();
   };
 
+  const isJoined = variant === 'joined';
+
   return (
     <Animated.View style={pulseStyle}>
       <Pressable
         onPress={onPress}
-        style={[styles.card, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}
+        style={
+          isJoined
+            ? styles.row
+            : [styles.card, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]
+        }
       >
         <View>
-          <GroupAvatar room={room} size={54} />
+          <GroupAvatar room={room} size={isJoined ? 56 : 54} />
           {joined && joined.unreadCount > 0 ? (
             <View style={[styles.unreadBadge, { backgroundColor: theme.brand, borderColor: theme.surfaceElevated }]}>
               <Text style={styles.unreadBadgeText}>{joined.unreadCount > 99 ? '99+' : joined.unreadCount}</Text>
@@ -181,6 +187,14 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  // My Groups uses a transparent chat-list row (avatar + text + divider),
+  // so it never blends into the search bar / into the next card.
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
   },
   unreadBadge: {
     position: 'absolute',

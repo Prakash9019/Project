@@ -70,6 +70,7 @@ export function serializeMessage(msg: any) {
     isEdited:   msg.isEdited ?? false,
     editedAt:   msg.editedAt ?? null,
     translatedContent: msg.translatedContent ?? null,
+    deliveredAt: msg.deliveredAt ?? null,
     readAt:     msg.readAt ?? null,
     createdAt:  msg.createdAt,
   };
@@ -389,6 +390,17 @@ export async function sendMessage(
     return msg;
   });
 
+  // Delivery: if the recipient currently has a live socket (presence heartbeat),
+  // the message is delivered the moment it's created (double-grey tick).
+  let delivered = false;
+  const peerOnline = await redis.get(RedisKeys.presence(peerId)).catch(() => null);
+  if (peerOnline) {
+    const now = new Date();
+    await prisma.message.update({ where: { id: message.id }, data: { deliveredAt: now } }).catch(() => {});
+    message.deliveredAt = now;
+    delivered = true;
+  }
+
   // Emit call.enabled to both when reply flag first becomes true
   if (wasFirstReply) {
     const updatedConvo = { ...convo, ...replyUpdate };
@@ -403,6 +415,7 @@ export async function sendMessage(
     message: await serializeMessageForViewer(message, senderId),
     convo: { ...convo, ...replyUpdate },
     peerId,
+    delivered,
     peerPlan: peer?.plan ?? 'free',
     peerPlanExpiresAt: peer?.planExpiresAt ?? null,
   };
@@ -485,6 +498,19 @@ export async function deleteThread(conversationId: string, userId: string) {
 }
 
 export async function markRead(conversationId: string, readerId: string) {
+  const now = new Date();
+  // A read message is necessarily delivered — backfill deliveredAt for any that
+  // weren't marked delivered yet (e.g. recipient was offline at send time).
+  await prisma.message.updateMany({
+    where: {
+      conversationId,
+      senderId: { not: readerId },
+      deliveredAt: null,
+      deletedAt: null,
+      isUnsent: false,
+    },
+    data: { deliveredAt: now },
+  });
   await prisma.message.updateMany({
     where: {
       conversationId,
@@ -493,7 +519,7 @@ export async function markRead(conversationId: string, readerId: string) {
       deletedAt: null,
       isUnsent: false,
     },
-    data: { readAt: new Date() },
+    data: { readAt: now },
   });
 }
 

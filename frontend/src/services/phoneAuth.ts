@@ -17,8 +17,8 @@ function getFirebaseAuth() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('@react-native-firebase/app');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { default: auth } = require('@react-native-firebase/auth');
-  return auth();
+  const { getAuth } = require('@react-native-firebase/auth');
+  return getAuth();
 }
 
 /** Send an SMS OTP to the given E.164 number and stash the confirmation. */
@@ -41,7 +41,10 @@ export function hasPendingConfirmation(): boolean {
 export async function confirmPhoneOtp(code: string): Promise<string> {
   if (!pendingConfirmation) throw new Error('No pending phone verification. Request a new code.');
   const credential = await pendingConfirmation.confirm(code);
-  return credential.user.getIdToken();
+  // Modular API (RNFB v22+): getIdToken(user) instead of user.getIdToken().
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getIdToken } = require('@react-native-firebase/auth');
+  return getIdToken(credential.user);
 }
 
 export function clearPhoneAuth(): void {

@@ -16,13 +16,6 @@ import { firebaseLogin } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 
 // Lazy-require Firebase to keep web bundle from breaking.
-function getFirebaseAuth() {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require('@react-native-firebase/app');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { default: auth } = require('@react-native-firebase/auth');
-  return auth();
-}
 function getGoogleSignin() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { GoogleSignin } = require('@react-native-google-signin/google-signin');
@@ -31,12 +24,11 @@ function getGoogleSignin() {
   });
   return GoogleSignin;
 }
-function getGoogleAuthProvider() {
+function getAuthModule() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('@react-native-firebase/app');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { default: auth } = require('@react-native-firebase/auth');
-  return auth.GoogleAuthProvider;
+  return require('@react-native-firebase/auth');
 }
 
 export default function AuthScreen() {
@@ -62,11 +54,11 @@ export default function AuthScreen() {
       await GoogleSignin.hasPlayServices();
       const { data } = await GoogleSignin.signIn();
       if (!data?.idToken) throw new Error('Google sign-in cancelled');
-      const auth = getFirebaseAuth();
-      const GoogleAuthProvider = getGoogleAuthProvider();
+      // Modular API (RNFB v22+): free functions instead of namespaced methods.
+      const { getAuth, GoogleAuthProvider, signInWithCredential, getIdToken } = getAuthModule();
       const googleCredential = GoogleAuthProvider.credential(data.idToken);
-      const userCredential = await auth.signInWithCredential(googleCredential);
-      const idToken = await userCredential.user.getIdToken();
+      const userCredential = await signInWithCredential(getAuth(), googleCredential);
+      const idToken = await getIdToken(userCredential.user);
       await handleFirebaseToken(idToken);
     } catch (e: unknown) {
       const err = e as { code?: string };

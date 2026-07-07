@@ -16,6 +16,8 @@ import {
   updateRoomSchema,
   pinMessageSchema,
   updateMemberRoleSchema,
+  updateRoomPhotoSchema,
+  transferOwnershipSchema,
 } from './rooms.schema';
 
 const router = Router();
@@ -28,6 +30,11 @@ router.get('/:roomId', asyncHandler(c.getRoom));
 
 // Admin / creator: edit room info
 router.patch('/:roomId', validate(updateRoomSchema), asyncHandler(c.updateRoom));
+// Admin / creator: change the group photo
+router.patch('/:roomId/photo', validate(updateRoomPhotoSchema), asyncHandler(c.updateRoomPhoto));
+// Creator only: transfer ownership / delete the room
+router.post('/:roomId/transfer-ownership', validate(transferOwnershipSchema), asyncHandler(c.transferOwnership));
+router.delete('/:roomId', asyncHandler(c.deleteRoom));
 
 // Join / leave
 router.post('/:roomId/join', asyncHandler(c.joinRoom));

@@ -149,8 +149,25 @@ export default function Chat() {
       };
       const onRead = (p: { conversationId: string }) => {
         if (p.conversationId !== conversationId) return;
+        const now = new Date().toISOString();
         setMessages((prev) =>
-          prev.map((m) => (m.senderId === me?.id && !m.readAt ? { ...m, readAt: new Date().toISOString() } : m))
+          prev.map((m) =>
+            m.senderId === me?.id && !m.readAt
+              ? { ...m, deliveredAt: m.deliveredAt ?? now, readAt: now }
+              : m
+          )
+        );
+      };
+      // Per-message delivery/read updates (WhatsApp-style tick progression).
+      const onStatusUpdate = (p: { conversationId: string; messageId: string; status: 'delivered' | 'read' }) => {
+        if (p.conversationId !== conversationId) return;
+        const now = new Date().toISOString();
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== p.messageId) return m;
+            if (p.status === 'read') return { ...m, deliveredAt: m.deliveredAt ?? now, readAt: m.readAt ?? now };
+            return { ...m, deliveredAt: m.deliveredAt ?? now };
+          })
         );
       };
       const onUnsend = (p: { conversationId: string; messageId: string }) => {
@@ -182,6 +199,7 @@ export default function Chat() {
 
       socket.on('message.created', onCreated);
       socket.on('message.read', onRead);
+      socket.on('message.status_update', onStatusUpdate);
       socket.on('message.unsend', onUnsend);
       socket.on('message.edited', onEdited);
       socket.on('message.viewed', onViewed);
@@ -191,6 +209,7 @@ export default function Chat() {
       cleanup = () => {
         socket.off('message.created', onCreated);
         socket.off('message.read', onRead);
+        socket.off('message.status_update', onStatusUpdate);
         socket.off('message.unsend', onUnsend);
         socket.off('message.edited', onEdited);
         socket.off('message.viewed', onViewed);
@@ -268,6 +287,7 @@ export default function Chat() {
         translatedContent: null,
         flaggedOffensive: false,
         moderationFlagged: false,
+        deliveredAt: null,
         readAt: null,
         deletedAt: null,
         createdAt: new Date().toISOString(),
@@ -302,6 +322,7 @@ export default function Chat() {
       quality: 0.85,
       allowsMultipleSelection: true,
       orderedSelection: true,
+      selectionLimit: 10,
     });
     if (res.canceled || res.assets.length === 0) return;
 
@@ -505,9 +526,20 @@ export default function Chat() {
     const mine = item.senderId === me?.id;
     const body = renderMessageBody(item, mine);
 
+    // Bare photo (no album caption, not view-once) renders edge-to-edge with just
+    // rounded corners — no bubble padding, border or background (WhatsApp-style).
+    const mediaOnly =
+      !item.isUnsent &&
+      !isViewOnce(item) &&
+      item.type === 'photo' &&
+      item.mediaUrls.length > 0 &&
+      !item.content?.startsWith('📁 ');
+
     return (
       <View style={[styles.bubbleRow, mine ? styles.right : styles.left]}>
-        {mine ? (
+        {mediaOnly ? (
+          <View style={styles.mediaBubble}>{body}</View>
+        ) : mine ? (
           <LinearGradient colors={theme.gradientWarm} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { borderBottomRightRadius: 4 }]}>
             {body}
           </LinearGradient>
@@ -522,7 +554,18 @@ export default function Chat() {
             <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
           )}
           {mine && !item.isUnsent && (
-            <MessageTick status={item.readAt ? 'read' : 'delivered'} isPremium={canReadReceipts} />
+            <MessageTick
+              status={
+                item.id.startsWith('tmp-')
+                  ? 'sending'
+                  : !item.deliveredAt
+                    ? 'sent'
+                    : !item.readAt
+                      ? 'delivered'
+                      : 'read'
+              }
+              isPremium={canReadReceipts}
+            />
           )}
         </View>
       </View>
@@ -706,6 +749,7 @@ const styles = StyleSheet.create({
   left: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   right: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   bubble: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18 },
+  mediaBubble: { borderRadius: 12, overflow: 'hidden' },
   snapBubble: { padding: 6 },
   textMe: { color: '#fff', fontSize: 15, fontFamily: FontFamily.regular },
   removed: { fontSize: 14, fontFamily: FontFamily.regular, fontStyle: 'italic' },

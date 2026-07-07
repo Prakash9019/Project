@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'r
 import { Image, type ImageLoadEventData } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Audio, type AVPlaybackStatus } from 'expo-av';
+import { createAudioPlayer, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -14,6 +14,7 @@ import Animated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import { Avatar } from '../Avatar';
+import { MessageTick } from '../MessageTick';
 import { useTheme, FontFamily } from '../../theme';
 import type { RoomMessageCard } from '../../types/api';
 
@@ -27,6 +28,7 @@ function MessageBubbleBase({
   message,
   isOwn,
   isAdmin,
+  deliveryStatus,
   highlight,
   onLongPress,
   onSwipeReply,
@@ -38,6 +40,8 @@ function MessageBubbleBase({
   message: RoomMessageCard;
   isOwn: boolean;
   isAdmin?: boolean;
+  /** Sender-side tick state for own messages (groups never show read/blue). */
+  deliveryStatus?: 'sending' | 'sent' | 'delivered';
   highlight?: boolean;
   onLongPress: () => void;
   onSwipeReply: () => void;
@@ -66,11 +70,19 @@ function MessageBubbleBase({
   const isDoc = message.type === 'text' && !!media && message.content.startsWith('📄');
   const isAudioFile = message.type === 'text' && !!media && message.content.startsWith('🎵');
 
+  // Bare media (image/GIF with no caption or reply quote) renders edge-to-edge —
+  // no bubble padding, border or background, WhatsApp-style.
+  const bareMedia = !deleted && (isImage || isGif) && !message.content && !message.replyTo;
+
   const [gifAspect, setGifAspect] = useState<number | null>(null);
   const onGifLoad = (e: ImageLoadEventData) => {
     const src = e.source;
     if (src?.width && src?.height) setGifAspect(src.width / src.height);
   };
+
+  // Image-load failure → show a tappable retry overlay that forces a reload.
+  const [imgError, setImgError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const openMedia = () => {
     if (media) Linking.openURL(media).catch(() => {});
@@ -152,18 +164,33 @@ function MessageBubbleBase({
           style={[styles.gif, { height: gifAspect ? 200 / gifAspect : 200 }]}
           contentFit="contain"
           transition={120}
-          cachePolicy="memory-disk"
           onLoad={onGifLoad}
         />
       ) : null}
       {!deleted && isImage ? (
-        <Image
-          source={{ uri: media }}
-          style={styles.image}
-          contentFit="cover"
-          transition={120}
-          cachePolicy="memory-disk"
-        />
+        <View style={styles.imageWrap}>
+          <Image
+            key={reloadKey}
+            source={{ uri: media }}
+            style={styles.image}
+            contentFit="cover"
+            transition={120}
+            onError={() => setImgError(true)}
+            onLoad={() => setImgError(false)}
+          />
+          {imgError ? (
+            <Pressable
+              style={styles.imageRetry}
+              onPress={() => {
+                setImgError(false);
+                setReloadKey((k) => k + 1);
+              }}
+            >
+              <Ionicons name="reload" size={26} color="#fff" />
+              <Text style={styles.imageRetryText}>Tap to retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
       {!deleted && isVideo ? renderMediaCard('videocam', 'Video', 'Tap to play') : null}
       {!deleted && isVoice ? <VoicePlayer uri={media} seed={message.id} isOwn={isOwn} /> : null}
@@ -211,7 +238,16 @@ function MessageBubbleBase({
             ) : null}
 
             <Pressable onLongPress={onLongPress} delayLongPress={220}>
-              {isOwn ? (
+              {bareMedia ? (
+                <View
+                  style={[
+                    styles.mediaBubble,
+                    highlight && { borderWidth: 1.5, borderColor: theme.brandSecondary },
+                  ]}
+                >
+                  {bubbleInner}
+                </View>
+              ) : isOwn ? (
                 <LinearGradient
                   colors={theme.gradientWarm}
                   start={{ x: 0, y: 0 }}
@@ -241,7 +277,9 @@ function MessageBubbleBase({
             {/* Timestamp + delivery */}
             <View style={[styles.metaRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
               <Text style={[styles.time, { color: theme.textTertiary }]}>{timeLabel(message.createdAt)}</Text>
-              {isOwn ? <Ionicons name="checkmark-done" size={13} color={theme.info} /> : null}
+              {isOwn && !deleted ? (
+                <MessageTick status={deliveryStatus ?? 'sent'} isPremium={false} />
+              ) : null}
             </View>
 
             {/* Reactions */}
@@ -283,13 +321,15 @@ export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
     a.isPinned === b.isPinned &&
     a.mediaUrl === b.mediaUrl &&
     a.reactions === b.reactions &&
+    a.deliveredCount === b.deliveredCount &&
     prev.isOwn === next.isOwn &&
     prev.isAdmin === next.isAdmin &&
+    prev.deliveryStatus === next.deliveryStatus &&
     prev.highlight === next.highlight
   );
 });
 
-/* ── Voice message player (expo-av) ── */
+/* ── Voice message player (expo-audio) ── */
 const WAVE_BARS = 26;
 
 function seededBars(seed: string): number[] {
@@ -312,7 +352,7 @@ function fmt(ms: number): string {
 
 function VoicePlayer({ uri, seed, isOwn }: { uri: string; seed: string; isOwn: boolean }) {
   const { theme } = useTheme();
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const playerRef = useRef<AudioPlayer | null>(null);
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
@@ -321,33 +361,35 @@ function VoicePlayer({ uri, seed, isOwn }: { uri: string; seed: string; isOwn: b
 
   useEffect(() => {
     return () => {
-      soundRef.current?.unloadAsync().catch(() => {});
-      soundRef.current = null;
+      playerRef.current?.remove();
+      playerRef.current = null;
     };
   }, []);
 
-  const onStatus = (status: AVPlaybackStatus) => {
+  const onStatus = (status: AudioStatus) => {
     if (!status.isLoaded) return;
-    setDurationMs(status.durationMillis ?? 0);
-    setPositionMs(status.positionMillis ?? 0);
-    setPlaying(status.isPlaying);
+    setDurationMs(status.duration * 1000);
+    setPositionMs(status.currentTime * 1000);
+    setPlaying(status.playing);
     if (status.didJustFinish) {
       setPlaying(false);
-      soundRef.current?.setPositionAsync(0).catch(() => {});
+      playerRef.current?.seekTo(0).catch(() => {});
     }
   };
 
   const toggle = async () => {
     try {
-      if (!soundRef.current) {
+      if (!playerRef.current) {
         setLoading(true);
-        const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, onStatus);
-        soundRef.current = sound;
+        const player = createAudioPlayer(uri);
+        player.addListener('playbackStatusUpdate', onStatus);
+        playerRef.current = player;
+        player.play();
         setLoading(false);
         return;
       }
-      if (playing) await soundRef.current.pauseAsync();
-      else await soundRef.current.playAsync();
+      if (playing) playerRef.current.pause();
+      else playerRef.current.play();
     } catch {
       setLoading(false);
     }
@@ -399,9 +441,14 @@ const styles = StyleSheet.create({
   bubble: { paddingVertical: 10, paddingHorizontal: 12 },
   bubbleOther: { borderTopLeftRadius: 0, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   bubbleOwn: { borderTopLeftRadius: 16, borderTopRightRadius: 0, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
+  // Bare image/GIF bubble — no padding, border or background (WhatsApp-style).
+  mediaBubble: { borderRadius: 12, overflow: 'hidden' },
   text: { fontSize: 15, fontFamily: FontFamily.regular, lineHeight: 20 },
   deleted: { fontStyle: 'italic' },
-  image: { width: 220, height: 220, borderRadius: 12, marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.1)' },
+  imageWrap: { borderRadius: 12, overflow: 'hidden' },
+  image: { width: 220, height: 220, borderRadius: 12 },
+  imageRetry: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)' },
+  imageRetryText: { color: '#fff', fontSize: 12, fontFamily: FontFamily.medium },
   gif: { width: 200, borderRadius: 12, marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.1)' },
   voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
   voiceBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },

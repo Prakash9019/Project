@@ -74,10 +74,14 @@
         {
           "android": {
             "usesCleartextTraffic": true
+          },
+          "ios": {
+            "useFrameworks": "static"
           }
         }
       ],
-      "expo-splash-screen"
+      "expo-splash-screen",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true

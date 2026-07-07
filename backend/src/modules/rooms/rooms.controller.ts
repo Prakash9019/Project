@@ -10,6 +10,8 @@ import type {
   UpdateRoomBody,
   PinMessageBody,
   UpdateMemberRoleBody,
+  UpdateRoomPhotoBody,
+  TransferOwnershipBody,
 } from './rooms.schema';
 
 export async function listRooms(req: Request, res: Response): Promise<void> {
@@ -116,4 +118,21 @@ export async function updateMemberRole(req: Request, res: Response): Promise<voi
   const { role } = req.body as UpdateMemberRoleBody;
   const result = await svc.updateMemberRole(req.user!.sub, req.params.roomId, req.params.userId, role);
   res.status(200).json(result);
+}
+
+export async function updateRoomPhoto(req: Request, res: Response): Promise<void> {
+  const { photoUrl } = req.body as UpdateRoomPhotoBody;
+  const result = await svc.updateRoomPhoto(req.user!.sub, req.params.roomId, photoUrl);
+  res.status(200).json(result);
+}
+
+export async function transferOwnership(req: Request, res: Response): Promise<void> {
+  const { userId } = req.body as TransferOwnershipBody;
+  const result = await svc.transferOwnership(req.user!.sub, req.params.roomId, userId);
+  res.status(200).json(result);
+}
+
+export async function deleteRoom(req: Request, res: Response): Promise<void> {
+  await svc.deleteRoom(req.user!.sub, req.params.roomId);
+  res.status(204).send();
 }

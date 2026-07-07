@@ -68,3 +68,8 @@ export function emitRoomLeave(roomId: string): void {
 export function emitRoomTyping(roomId: string, isTyping: boolean): void {
   socket?.emit('room:typing', { roomId, isTyping });
 }
+
+/** Report that this device received a room message (delivery receipt). */
+export function emitRoomMessageDelivered(roomId: string, messageId: string): void {
+  socket?.emit('room:message_delivered', { roomId, messageId });
+}

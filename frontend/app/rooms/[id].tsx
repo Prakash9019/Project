@@ -9,9 +9,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  ScrollView,
 } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
@@ -19,7 +21,7 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Location from 'expo-location';
-import { Audio } from 'expo-av';
+import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { RoomHeader } from '../../src/components/rooms/RoomHeader';
@@ -42,15 +44,23 @@ import {
   muteRoom,
   reportRoom,
   leaveRoom,
-  uploadChatPhoto,
   pinRoomMessage,
 } from '../../src/services/api';
-import { connectSocket, getSocket, emitRoomJoin, emitRoomLeave, emitRoomTyping } from '../../src/services/socket';
+import {
+  connectSocket,
+  getSocket,
+  emitRoomJoin,
+  emitRoomLeave,
+  emitRoomTyping,
+  emitRoomMessageDelivered,
+} from '../../src/services/socket';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
 import { toastApiError, showSuccess, showError } from '../../src/lib/toast';
 import type { RoomDetail, RoomMessageCard, RoomReaction, RoomUserCard } from '../../src/types/api';
 
 const PAGE = 30;
+
+type PendingImage = { id: string; uri: string; status: 'queued' | 'uploading' | 'failed' };
 
 function dayKey(iso: string): string {
   return new Date(iso).toDateString();
@@ -95,6 +105,11 @@ export default function RoomChat() {
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
+  // Image sending — supports multi-select with sequential upload + per-image retry.
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [uploadingInfo, setUploadingInfo] = useState<{ current: number; total: number } | null>(null);
+  const imageSeq = useRef(0);
+
   // Search-in-chat
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -105,7 +120,7 @@ export default function RoomChat() {
   const lastTypingSent = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recordCancelled = useRef(false);
   const holdingRef = useRef(false);
 
@@ -142,7 +157,14 @@ export default function RoomChat() {
 
       const onMessage = (msg: RoomMessageCard) => {
         if (msg.roomId !== roomId) return;
+        // Report delivery for other members' messages so their tick goes double-grey.
+        if (msg.senderId !== me?.id) emitRoomMessageDelivered(roomId, msg.id);
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+      };
+      const onDelivered = (p: { messageId: string }) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === p.messageId ? { ...m, deliveredCount: m.deliveredCount + 1 } : m)),
+        );
       };
       const onReaction = (p: { messageId: string; emoji: string; count: number; userId: string; added: boolean }) => {
         setMessages((prev) =>
@@ -179,8 +201,17 @@ export default function RoomChat() {
         });
       };
 
-      const onInfoUpdated = (p: { name: string; description: string | null }) => {
-        setRoom((prev) => (prev ? { ...prev, name: p.name, description: p.description } : prev));
+      const onInfoUpdated = (p: { name?: string; description?: string | null; coverImageUrl?: string }) => {
+        setRoom((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...(p.name !== undefined ? { name: p.name } : {}),
+                ...(p.description !== undefined ? { description: p.description } : {}),
+                ...(p.coverImageUrl !== undefined ? { coverImageUrl: p.coverImageUrl } : {}),
+              }
+            : prev,
+        );
       };
       const onPinned = (p: { messageId: string; isPinned: boolean }) => {
         setPinnedDismissed(false);
@@ -196,8 +227,18 @@ export default function RoomChat() {
         // If my own role changed, refresh admin affordances (pin, etc.).
         if (p.userId === me?.id) setRoom((prev) => (prev ? { ...prev, myRole: p.role } : prev));
       };
+      const onRoomDeleted = (p: { roomId: string }) => {
+        if (p.roomId !== roomId) return;
+        showError('This group has been deleted');
+        router.replace('/(tabs)/groups' as Href);
+      };
+      const onOwnershipTransferred = (p: { newCreatorId: string }) => {
+        // Creator status is derived from the new creatorId; update my affordances.
+        setRoom((prev) => (prev ? { ...prev, isCreator: p.newCreatorId === me?.id } : prev));
+      };
 
       socket.on('room:message', onMessage);
+      socket.on('room:message_delivered', onDelivered);
       socket.on('room:message_reaction', onReaction);
       socket.on('room:message_deleted', onDeleted);
       socket.on('room:typing', onTyping);
@@ -205,9 +246,12 @@ export default function RoomChat() {
       socket.on('room:message_pinned', onPinned);
       socket.on('room:member_removed', onMemberRemoved);
       socket.on('room:member_role_changed', onRoleChanged);
+      socket.on('room:deleted', onRoomDeleted);
+      socket.on('room:ownership_transferred', onOwnershipTransferred);
 
       cleanupRef.current = () => {
         socket.off('room:message', onMessage);
+        socket.off('room:message_delivered', onDelivered);
         socket.off('room:message_reaction', onReaction);
         socket.off('room:message_deleted', onDeleted);
         socket.off('room:typing', onTyping);
@@ -215,6 +259,8 @@ export default function RoomChat() {
         socket.off('room:message_pinned', onPinned);
         socket.off('room:member_removed', onMemberRemoved);
         socket.off('room:member_role_changed', onRoleChanged);
+        socket.off('room:deleted', onRoomDeleted);
+        socket.off('room:ownership_transferred', onOwnershipTransferred);
         emitRoomLeave(roomId);
       };
     })();
@@ -277,19 +323,57 @@ export default function RoomChat() {
     }
   };
 
-  // ── Send image (direct-to-R2 photo upload) ──
-  const sendImage = async (localUri: string) => {
-    setSending(true);
-    try {
-      const key = await uploadChatPhoto(localUri);
-      const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: key, replyToId: replyTo?.id });
-      setReplyTo(null);
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
-    } catch (e) {
-      toastApiError(e, 'Could not send photo');
-    } finally {
-      setSending(false);
-    }
+  // ── Send image(s) — direct-to-R2 room_image upload, one message per image ──
+  // Uploads happen sequentially (avoids rate-limiting); each image gets its own
+  // preview chip that shows progress and, on failure, an individual retry button.
+  const uploadOneImage = async (uri: string) => {
+    const url = await uploadToR2(uri, 'room_image', 'image/jpeg', { roomId });
+    const msg = await sendRoomMessage(roomId, {
+      content: '',
+      type: 'image',
+      mediaUrl: url,
+      replyToId: replyTo?.id,
+    });
+    appendMessage(msg);
+  };
+
+  const processImages = useCallback(
+    async (items: PendingImage[]) => {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        setUploadingInfo({ current: i + 1, total: items.length });
+        setPendingImages((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading' } : p)));
+        try {
+          await uploadOneImage(item.uri);
+          setPendingImages((prev) => prev.filter((p) => p.id !== item.id));
+        } catch (e) {
+          setPendingImages((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: 'failed' } : p)));
+          toastApiError(e, 'Could not send photo');
+        }
+      }
+      setUploadingInfo(null);
+    },
+    // uploadOneImage closes over roomId/replyTo which are stable enough here
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [roomId, replyTo?.id],
+  );
+
+  const queueImages = (uris: string[]) => {
+    const items: PendingImage[] = uris.map((uri) => ({
+      id: `img-${imageSeq.current++}`,
+      uri,
+      status: 'queued',
+    }));
+    setPendingImages((prev) => [...prev, ...items]);
+    processImages(items);
+  };
+
+  const retryImage = (item: PendingImage) => {
+    processImages([item]);
+  };
+
+  const removePendingImage = (id: string) => {
+    setPendingImages((prev) => prev.filter((p) => p.id !== id));
   };
 
   // Run an R2 upload with a visible progress bar, then reset.
@@ -311,7 +395,7 @@ export default function RoomChat() {
 
   const sendVideo = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: ['videos'],
       quality: 0.7,
     });
     if (res.canceled || !res.assets[0]) return;
@@ -468,13 +552,15 @@ export default function RoomChat() {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) return showError('Camera permission needed');
       const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
-      if (!res.canceled && res.assets[0]) sendImage(res.assets[0].uri);
+      if (!res.canceled && res.assets[0]) queueImages([res.assets[0].uri]);
     } else if (kind === 'gallery') {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        selectionLimit: 10,
         quality: 0.8,
       });
-      if (!res.canceled && res.assets[0]) sendImage(res.assets[0].uri);
+      if (!res.canceled && res.assets.length) queueImages(res.assets.map((a) => a.uri));
     } else if (kind === 'location') {
       try {
         const perm = await Location.requestForegroundPermissionsAsync();
@@ -502,27 +588,25 @@ export default function RoomChat() {
     }
   };
 
-  // ── Voice recording (expo-av → R2 → { type:'voice' }) ──
+  // ── Voice recording (expo-audio → R2 → { type:'voice' }) ──
   const startRecording = async () => {
     holdingRef.current = true;
     try {
-      const perm = await Audio.requestPermissionsAsync();
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
         showError('Microphone permission needed');
         holdingRef.current = false;
         return;
       }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-      );
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
       // User already released before init finished — discard immediately.
       if (!holdingRef.current) {
-        await recording.stopAndUnloadAsync().catch(() => {});
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+        await audioRecorder.stop().catch(() => {});
+        await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
         return;
       }
-      recordingRef.current = recording;
+      audioRecorder.record();
       recordCancelled.current = false;
       setRecording(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -534,20 +618,19 @@ export default function RoomChat() {
 
   const stopRecording = async () => {
     holdingRef.current = false;
-    const rec = recordingRef.current;
-    if (!rec) return;
-    recordingRef.current = null;
+    if (!audioRecorder.isRecording) return;
     setRecording(false);
     let uri: string | null = null;
     let durationMs = 0;
     try {
-      const status = await rec.stopAndUnloadAsync();
+      await audioRecorder.stop();
+      const status = audioRecorder.getStatus();
       durationMs = status.durationMillis ?? 0;
-      uri = rec.getURI();
+      uri = audioRecorder.uri;
     } catch {
       /* already stopped */
     }
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+    await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
 
     // Discard cancelled or too-short (< 1s) recordings.
     if (recordCancelled.current || !uri || durationMs < 1000) {
@@ -630,11 +713,19 @@ export default function RoomChat() {
       const showDateSep = !older || dayKey(older.createdAt) !== dayKey(item.createdAt);
       const showUnread = initialUnread > 0 && index === initialUnread - 1;
       const isOwn = item.senderId === me?.id;
+      // Group ticks: single grey until ≥1 other member received it (double grey).
+      // Never blue/read — WhatsApp shows no read receipts in groups.
+      const deliveryStatus: 'sent' | 'delivered' = item.deliveredCount >= 1 ? 'delivered' : 'sent';
       return (
         <View style={styles.invertRow}>
+          {/* Day/unread dividers render BEFORE the bubble so they sit ABOVE the
+              day's oldest message (in this list within-row order == visual order). */}
+          {showDateSep ? <DateSeparator label={dayLabel(item.createdAt)} /> : null}
+          {showUnread ? <UnreadDivider /> : null}
           <MessageBubble
             message={item}
             isOwn={isOwn}
+            deliveryStatus={deliveryStatus}
             highlight={highlightId === item.id || searchHighlightId === item.id}
             onAvatarPress={() => setMiniUser(item.sender)}
             onLongPress={() => {
@@ -645,8 +736,6 @@ export default function RoomChat() {
             onReactionPress={(emoji) => toggleReaction(item, emoji)}
             onReplyPress={() => item.replyTo && scrollToMessage(item.replyTo.id)}
           />
-          {showUnread ? <UnreadDivider /> : null}
-          {showDateSep ? <DateSeparator label={dayLabel(item.createdAt)} /> : null}
         </View>
       );
     },
@@ -719,8 +808,8 @@ export default function RoomChat() {
       ) : null}
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         style={{ flex: 1 }}
       >
         {loading ? (
@@ -745,6 +834,7 @@ export default function RoomChat() {
               ) : null
             }
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
           />
         )}
 
@@ -765,6 +855,39 @@ export default function RoomChat() {
             <Text style={[styles.uploadLabel, { color: theme.textSecondary }]}>
               {Math.round(uploadProgress * 100)}%
             </Text>
+          </View>
+        ) : null}
+
+        {/* Pending-image strip (multi-select upload) */}
+        {pendingImages.length ? (
+          <View style={styles.pendingWrap}>
+            {uploadingInfo ? (
+              <Text style={[styles.pendingLabel, { color: theme.textSecondary }]}>
+                Uploading {uploadingInfo.current} of {uploadingInfo.total}…
+              </Text>
+            ) : null}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingRow}>
+              {pendingImages.map((p) => (
+                <View key={p.id} style={styles.pendingChip}>
+                  <Image source={{ uri: p.uri }} style={styles.pendingThumb} contentFit="cover" />
+                  {p.status === 'uploading' ? (
+                    <View style={styles.pendingOverlay}>
+                      <ActivityIndicator size="small" color="#fff" />
+                    </View>
+                  ) : null}
+                  {p.status === 'failed' ? (
+                    <Pressable style={[styles.pendingOverlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]} onPress={() => retryImage(p)}>
+                      <Ionicons name="reload" size={20} color="#fff" />
+                    </Pressable>
+                  ) : null}
+                  {p.status === 'failed' ? (
+                    <Pressable style={styles.pendingRemove} onPress={() => removePendingImage(p.id)} hitSlop={6}>
+                      <Ionicons name="close-circle" size={18} color="#fff" />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))}
+            </ScrollView>
           </View>
         ) : null}
 
@@ -988,6 +1111,14 @@ const styles = StyleSheet.create({
   uploadTrack: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
   uploadFill: { height: 4, borderRadius: 2 },
   uploadLabel: { fontSize: 12, fontFamily: FontFamily.medium, width: 40, textAlign: 'right' },
+
+  pendingWrap: { paddingHorizontal: spacing.md, paddingBottom: 6, gap: 6 },
+  pendingLabel: { fontSize: 12, fontFamily: FontFamily.medium },
+  pendingRow: { gap: 8 },
+  pendingChip: { width: 56, height: 56, borderRadius: 10, overflow: 'hidden' },
+  pendingThumb: { width: 56, height: 56 },
+  pendingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+  pendingRemove: { position: 'absolute', top: 2, right: 2 },
 
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth },
   iconBtn: { paddingBottom: 8, paddingHorizontal: 2 },

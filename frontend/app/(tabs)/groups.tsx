@@ -199,7 +199,7 @@ export default function Groups() {
 
   const SearchRow = (
     <View style={styles.searchRow}>
-      <View style={[styles.searchBar, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+      <View style={[styles.searchBar, { backgroundColor: theme.backgroundSecondary, borderColor: theme.border }]}>
         <Ionicons name="search" size={18} color={theme.textTertiary} />
         <TextInput
           value={query}
@@ -220,7 +220,7 @@ export default function Groups() {
           onPress={() => setFilterOpen(true)}
           style={[
             styles.filterBtn,
-            { backgroundColor: filtersActive ? theme.brand : theme.surfaceElevated, borderColor: theme.border },
+            { backgroundColor: filtersActive ? theme.brand : theme.backgroundSecondary, borderColor: theme.border },
           ]}
         >
           <Ionicons name="options-outline" size={20} color={filtersActive ? '#fff' : theme.textSecondary} />
@@ -308,8 +308,18 @@ export default function Groups() {
               onJoin={() => handleJoin(item as RoomCard)}
             />
           )}
-          contentContainerStyle={{ paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl }}
-          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          contentContainerStyle={{
+            paddingHorizontal: spacing.xl,
+            paddingTop: tab === 'mine' ? spacing.xs : 0,
+            paddingBottom: spacing.xxxl,
+          }}
+          ItemSeparatorComponent={() =>
+            tab === 'mine' ? (
+              <View style={[styles.rowDivider, { backgroundColor: theme.border }]} />
+            ) : (
+              <View style={{ height: spacing.md }} />
+            )
+          }
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.brand} />}
@@ -350,6 +360,8 @@ const styles = StyleSheet.create({
   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, height: 44, borderRadius: radius.lg, paddingHorizontal: spacing.md, borderWidth: StyleSheet.hairlineWidth },
   searchInput: { flex: 1, fontSize: 15, fontFamily: FontFamily.regular },
   filterBtn: { width: 44, height: 44, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth },
+  // Indent the My Groups divider past the 56px avatar + row gap so it reads as a list.
+  rowDivider: { height: StyleSheet.hairlineWidth, marginLeft: 56 + spacing.md },
 
   chipsRow: { gap: spacing.sm, paddingVertical: spacing.md },
   filterChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth },

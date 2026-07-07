@@ -128,7 +128,12 @@ export async function listRooms(
   userId: string,
   opts: { category?: RoomCategory; city?: string; search?: string; limit: number; offset: number },
 ) {
-  const where: Prisma.RoomWhereInput = { isActive: true };
+  const where: Prisma.RoomWhereInput = {
+    isActive: true,
+    // WhatsApp-style Discover: never surface rooms the user has already joined —
+    // they live in "My Groups", so they must not appear here or offer "Join" again.
+    members: { none: { userId } },
+  };
   if (opts.category) where.category = opts.category;
   if (opts.city) where.city = { equals: opts.city, mode: 'insensitive' };
   if (opts.search) {
@@ -146,8 +151,8 @@ export async function listRooms(
   });
 
   const ranked = await rankByRecommendation(userId, rooms);
-  const joinedIds = await joinedRoomIds(userId, ranked.map((r) => r.id));
-  return ranked.map((r) => serializeRoom(r, joinedIds.has(r.id)));
+  // Joined rooms are already excluded above, so every Discover card is un-joined.
+  return ranked.map((r) => serializeRoom(r, false));
 }
 
 /**
@@ -175,15 +180,6 @@ async function rankByRecommendation(userId: string, rooms: any[]): Promise<any[]
     .map((r, i) => ({ r, i }))
     .sort((a, b) => score(a.r) - score(b.r) || a.i - b.i)
     .map((x) => x.r);
-}
-
-async function joinedRoomIds(userId: string, roomIds: string[]): Promise<Set<string>> {
-  if (roomIds.length === 0) return new Set();
-  const memberships = await prisma.roomMember.findMany({
-    where: { userId, roomId: { in: roomIds } },
-    select: { roomId: true },
-  });
-  return new Set(memberships.map((m) => m.roomId));
 }
 
 export async function listJoinedRooms(userId: string, opts: { limit: number; offset: number }) {
@@ -317,6 +313,19 @@ async function reactionsByMessage(messageIds: string[], viewerId: string) {
   return map;
 }
 
+/** Count delivery receipts per message (how many members received each). */
+async function deliveriesByMessage(messageIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (messageIds.length === 0) return map;
+  const grouped = await prisma.roomMessageDelivery.groupBy({
+    by: ['messageId'],
+    where: { messageId: { in: messageIds } },
+    _count: { id: true },
+  });
+  for (const g of grouped) map.set(g.messageId, g._count.id);
+  return map;
+}
+
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
@@ -326,6 +335,8 @@ interface SerializeMsgCtx {
   online: Set<string>;
   distances: Map<string, number>;
   reactions: Map<string, { emoji: string; count: number; userReacted: boolean }[]>;
+  /** messageId → number of OTHER members who have received the message. */
+  deliveries: Map<string, number>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -352,6 +363,9 @@ async function serializeMessage(msg: any, ctx: SerializeMsgCtx) {
         }
       : null,
     reactions: ctx.reactions.get(msg.id) ?? [],
+    // Group delivery: how many OTHER members have received this. The sender's
+    // tick shows double-grey once this is ≥ 1. Groups never show blue (read).
+    deliveredCount: ctx.deliveries.get(msg.id) ?? 0,
     createdAt: msg.createdAt,
     editedAt: msg.editedAt ?? null,
   };
@@ -379,12 +393,13 @@ export async function listMessages(
   const page = hasMore ? messages.slice(0, opts.limit) : messages;
 
   const senderIds = [...new Set(page.map((m) => m.senderId))];
-  const [online, distances, reactions] = await Promise.all([
+  const [online, distances, reactions, deliveries] = await Promise.all([
     presenceSet(senderIds),
     distanceMap(userId, senderIds),
     reactionsByMessage(page.map((m) => m.id), userId),
+    deliveriesByMessage(page.map((m) => m.id)),
   ]);
-  const ctx: SerializeMsgCtx = { viewerId: userId, online, distances, reactions };
+  const ctx: SerializeMsgCtx = { viewerId: userId, online, distances, reactions, deliveries };
 
   const serialized = await Promise.all(page.map((m) => serializeMessage(m, ctx)));
   const nextCursor = hasMore ? page[page.length - 1].createdAt.toISOString() : null;
@@ -462,6 +477,7 @@ export async function sendMessage(userId: string, roomId: string, body: SendMess
     online,
     distances,
     reactions: new Map(),
+    deliveries: new Map(),
   });
 
   emitToRoom(roomId, 'room:message', card);
@@ -524,6 +540,7 @@ export async function listMembers(
   roomId: string,
   opts: { limit: number; offset: number; online?: boolean },
 ) {
+  const room = await getRoomOrThrow(roomId);
   const members = await prisma.roomMember.findMany({
     where: { roomId },
     include: { user: { include: PHOTO_INCLUDE } },
@@ -551,6 +568,9 @@ export async function listMembers(
     page.map(async (m) => ({
       id: m.id,
       role: m.role,
+      // True for the member who created the room (tracked via Room.creatorId,
+      // separate from the RoomRole enum). Lets the client render a Creator section.
+      isCreator: room.creatorId === m.userId,
       joinedAt: m.joinedAt,
       user: await buildUserCard(m.user, {
         online: onlineIds.has(m.userId),
@@ -690,6 +710,75 @@ export async function updateMemberRole(
   });
   emitToRoom(roomId, 'room:member_role_changed', { userId: targetUserId, role });
   return { ok: true as const, role };
+}
+
+export async function updateRoomPhoto(userId: string, roomId: string, photoUrl: string) {
+  await assertRoomAdmin(userId, roomId);
+  await prisma.room.update({ where: { id: roomId }, data: { coverImageUrl: photoUrl } });
+  const signed = await signUrl(photoUrl);
+  emitToRoom(roomId, 'room:info_updated', { coverImageUrl: signed });
+  return { coverImageUrl: signed };
+}
+
+/**
+ * Transfer room ownership (creator-only). The outgoing creator is demoted to
+ * admin, the target member is promoted to admin, and Room.creatorId is switched
+ * (creator status is derived from creatorId, so no RoomRole 'creator' is needed).
+ */
+export async function transferOwnership(userId: string, roomId: string, targetUserId: string) {
+  const room = await getRoomOrThrow(roomId);
+  if (room.creatorId !== userId) {
+    throw Errors.forbidden('Only the room creator can transfer ownership');
+  }
+  if (targetUserId === userId) {
+    throw new HttpError(400, 'already_creator', 'You are already the creator');
+  }
+  const target = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId, userId: targetUserId } },
+    select: { id: true },
+  });
+  if (!target) throw Errors.notFound('Target user is not a member of this room');
+
+  await prisma.$transaction([
+    prisma.roomMember.update({
+      where: { roomId_userId: { roomId, userId } },
+      data: { role: 'admin' },
+    }),
+    prisma.roomMember.update({
+      where: { roomId_userId: { roomId, userId: targetUserId } },
+      data: { role: 'admin' },
+    }),
+    prisma.room.update({ where: { id: roomId }, data: { creatorId: targetUserId } }),
+  ]);
+
+  emitToRoom(roomId, 'room:ownership_transferred', { newCreatorId: targetUserId });
+  return { ok: true as const, newCreatorId: targetUserId };
+}
+
+/** Delete a room and all of its child records (creator-only). */
+export async function deleteRoom(userId: string, roomId: string): Promise<void> {
+  const room = await getRoomOrThrow(roomId);
+  if (room.creatorId !== userId) {
+    throw Errors.forbidden('Only the room creator can delete the room');
+  }
+  const messageIds = await prisma.roomMessage.findMany({
+    where: { roomId },
+    select: { id: true },
+  });
+  const ids = messageIds.map((m) => m.id);
+  await prisma.$transaction([
+    prisma.roomMessageReaction.deleteMany({ where: { messageId: { in: ids } } }),
+    prisma.roomMessageDelivery.deleteMany({ where: { messageId: { in: ids } } }),
+    // Clear self-referential reply links before deleting the messages themselves,
+    // so the replyToId FK can't block the bulk delete.
+    prisma.roomMessage.updateMany({ where: { roomId }, data: { replyToId: null } }),
+    prisma.roomMessage.deleteMany({ where: { roomId } }),
+    prisma.roomMember.deleteMany({ where: { roomId } }),
+    prisma.roomReport.deleteMany({ where: { roomId } }),
+    prisma.roomMute.deleteMany({ where: { roomId } }),
+    prisma.room.delete({ where: { id: roomId } }),
+  ]);
+  emitToRoom(roomId, 'room:deleted', { roomId });
 }
 
 export async function deleteMessage(userId: string, roomId: string, messageId: string): Promise<void> {

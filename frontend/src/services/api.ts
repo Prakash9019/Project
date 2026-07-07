@@ -784,4 +784,16 @@ export const removeRoomMember = (roomId: string, userId: string) =>
 export const updateRoomMemberRole = (roomId: string, userId: string, role: RoomRole) =>
   request<{ ok: true; role: RoomRole }>('PATCH', `/api/rooms/${roomId}/members/${userId}`, { role });
 
+/** Admin/creator: change the group photo (photoUrl = R2 key or hosted URL). */
+export const updateRoomPhoto = (roomId: string, photoUrl: string) =>
+  request<{ coverImageUrl: string }>('PATCH', `/api/rooms/${roomId}/photo`, { photoUrl });
+
+/** Creator only: transfer ownership to another member. */
+export const transferRoomOwnership = (roomId: string, userId: string) =>
+  request<{ ok: true; newCreatorId: string }>('POST', `/api/rooms/${roomId}/transfer-ownership`, { userId });
+
+/** Creator only: permanently delete the group. */
+export const deleteRoom = (roomId: string) =>
+  request<void>('DELETE', `/api/rooms/${roomId}`);
+
 export { BASE_URL };

@@ -1534,7 +1534,7 @@
       "method": "POST",
       "path": "/api/rooms/:roomId/messages",
       "auth": "bearer+verified+member",
-      "summary": "Post a message. Text messages require non-empty content (max 1000); image/GIF messages require mediaUrl and may send empty content. Tenor GIF URLs are stored verbatim (no R2 upload; external http(s) URLs pass through signUrl unchanged). Runs AI text moderation on content; flagged -> 451 message_flagged. Updates room.lastActivityAt, emits room:message, batch push to non-muted members.",
+      "summary": "Post a message. Text messages require non-empty content (max 1000); image/GIF messages require mediaUrl and may send empty content. Tenor GIF URLs are stored verbatim (no R2 upload; external http(s) URLs pass through signUrl unchanged). Runs AI text moderation on content; flagged -> 451 message_flagged. Updates room.lastActivityAt, emits room:message, batch push to non-muted members. mediaUrl accepts an R2 key or hosted URL (image/voice/gif).",
       "requestBody": {
         "required": [],
         "fields": [
@@ -1795,6 +1795,38 @@
         "400 cannot_change_creator_role",
         "404 member not found"
       ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/rooms/:roomId/photo",
+      "auth": "bearer+verified",
+      "summary": "Change the group photo. Admin or creator only. Body {photoUrl} (R2 key or hosted URL). Updates Room.coverImageUrl, emits room:info_updated {coverImageUrl}.",
+      "body": {
+        "photoUrl": "string"
+      },
+      "response": {
+        "coverImageUrl": "string (signed)"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/rooms/:roomId/transfer-ownership",
+      "auth": "bearer+verified",
+      "summary": "Transfer ownership to another member. Creator only. Demotes current creator to admin, promotes target to admin, sets Room.creatorId=target. Emits room:ownership_transferred {newCreatorId}.",
+      "body": {
+        "userId": "uuid"
+      },
+      "response": {
+        "ok": true,
+        "newCreatorId": "uuid"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/rooms/:roomId",
+      "auth": "bearer+verified",
+      "summary": "Delete the group and all child records (RoomMessage, RoomMember, RoomMessageReaction, RoomMessageDelivery, RoomReport, RoomMute). Creator only. Emits room:deleted {roomId}. Returns 204.",
+      "response": "204 No Content"
     },
     {
       "id": "me-upload-url",
@@ -2546,6 +2578,12 @@
           "type": "boolean"
         },
         {
+          "name": "deliveredAt",
+          "type": "timestamp",
+          "nullable": true,
+          "notes": "set when recipient's device receives it (online at send, on reconnect, or on read)"
+        },
+        {
           "name": "readAt",
           "type": "timestamp",
           "nullable": true
@@ -2962,6 +3000,12 @@
           "type": "boolean"
         },
         {
+          "name": "deliveredAt",
+          "type": "timestamp",
+          "nullable": true,
+          "notes": "parity field; group delivery tracked in RoomMessageDelivery"
+        },
+        {
           "name": "createdAt",
           "type": "iso8601"
         },
@@ -3117,7 +3161,42 @@
         {
           "name": "editedAt",
           "type": "iso8601|null"
+        },
+        {
+          "name": "deliveredCount",
+          "type": "number",
+          "notes": "count of OTHER members who received it; sender tick = double-grey when >=1. Groups never show read/blue."
         }
+      ]
+    },
+    {
+      "name": "RoomMessageDelivery",
+      "table": "RoomMessageDelivery",
+      "notes": "Per-member delivery receipt for room messages. A room message is 'delivered' (double grey) once >=1 OTHER member has a row.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "messageId",
+          "type": "uuid",
+          "notes": "FK RoomMessage"
+        },
+        {
+          "name": "userId",
+          "type": "uuid"
+        },
+        {
+          "name": "deliveredAt",
+          "type": "iso8601",
+          "notes": "default now()"
+        }
+      ],
+      "indexes": [
+        "@@unique([messageId,userId])",
+        "@@index([messageId])"
       ]
     }
   ],
@@ -3666,6 +3745,46 @@
       "payload": {
         "userId": "uuid",
         "role": "RoomRole"
+      }
+    },
+    {
+      "name": "message.status_update",
+      "transport": "websocket",
+      "direction": "server→client",
+      "payload": {
+        "conversationId": "uuid",
+        "messageId": "uuid",
+        "status": "'delivered'|'read'"
+      },
+      "notes": "1:1 chat per-message tick progression. Emitted to the SENDER when recipient's device receives (delivered) it. Read still also emitted via message.read (Premium-gated)."
+    },
+    {
+      "name": "room:message_delivered",
+      "transport": "websocket",
+      "direction": "client↔server",
+      "room": "room:{roomId}",
+      "payload": {
+        "roomId": "uuid",
+        "messageId": "uuid"
+      },
+      "notes": "client→server: a member reports it received a room message. server→room: broadcast (only on a newly-recorded delivery) so the sender increments deliveredCount (double-grey)."
+    },
+    {
+      "name": "room:ownership_transferred",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "newCreatorId": "uuid"
+      }
+    },
+    {
+      "name": "room:deleted",
+      "transport": "websocket",
+      "direction": "server→client",
+      "room": "room:{roomId}",
+      "payload": {
+        "roomId": "uuid"
       }
     }
   ],
