@@ -426,10 +426,10 @@ A quick "reduce everything a bit" is not a 2-line change here; it's a per-screen
 ---
 TL;DR — what to change where
 
-1. Email: fix RESEND_FROM_EMAIL (backend/.env:114) to a bracketed, verified-domain sender + surface Resend errors (backend/src/adapters/resend.ts:17).
-2. EAS auth: set EXPO_PUBLIC_API_URL to the public HTTPS URL in eas.json (not the git-ignored .env), and register the EAS keystore SHA-1/SHA-256 in Firebase.
+
+
 3. Maps key: add expo.android.config.googleMaps.apiKey in frontend/app.json, then rebuild.
-4. Fonts: tokens in frontend/src/theme/typography.ts exist but are ignored (5/373); a real change means editing the token + a per-screen sweep of hardcoded sizes.
+
 
 Want me to go ahead and actually implement any of these? #1 (email from-address + error handling) and #3 (maps key placeholder in app.json) are quick, safe changes; #2 is mostly config/dashboard work; #4 is the big one and I'd want to confirm exact target sizes with your friend first.
 
