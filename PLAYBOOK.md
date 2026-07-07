@@ -235,3 +235,14 @@ Re-run `npm run db:seed` any time to reset demo data (wipes and recreates seed u
 3. **Full verified badge** — `isVerified = true` when `(phoneVerified OR emailVerified) AND faceVerified`. Photo verification sets `photoVerified` separately.
 
 Production TODO: wire AWS Rekognition / Azure Face / FaceTec for liveness + face-match against profile photos.
+
+
+| Result  | UPI ID             |
+| ------- | ------------------ |
+| Success | `success@razorpay` |
+| Failure | `failure@razorpay` |
+
+Card: 4100 2800 0000 1007
+CVV: 123
+Expiry: 12/30
+OTP: 1234
