@@ -13,16 +13,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { useTheme } from '../../src/theme';
 import { T } from '../../src/components/ui';
-import { updateProfile, uploadProfilePhoto, ApiError } from '../../src/services/api';
+import { updateProfile, uploadProfilePhoto, updateLocation, ApiError } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 import type {
   Gender,
   GenderIdentity,
   SexualOrientation,
   WantToSee,
-  RelationshipIntent,
+  LookingForOption,
 } from '../../src/types/api';
 
 const GENDERS: { v: Gender; label: string }[] = [
@@ -51,7 +52,16 @@ const ORIENTATIONS: SexualOrientation[] = [
   'other',
 ];
 const WANT_TO_SEE: WantToSee[] = ['men', 'women', 'everyone', 'non_binary_people'];
-const INTENTS: RelationshipIntent[] = ['dating', 'friendship', 'networking', 'open_to_anything'];
+// "What are you looking for?" — multi-select. Values are the LookingForOption
+// enum accepted by PATCH /api/v1/me { lookingFor: [...] }; labels are friendly.
+const LOOKING_FOR: { v: LookingForOption; label: string }[] = [
+  { v: 'long_term', label: 'Long-term relationship' },
+  { v: 'short_term', label: 'Short-term' },
+  { v: 'casual', label: 'Casual' },
+  { v: 'friendship', label: 'Friendship' },
+  { v: 'fwb', label: 'Friends with benefits' },
+  { v: 'one_night', label: 'One night' },
+];
 
 const labelize = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -70,7 +80,7 @@ type Draft = {
   genderIdentity: GenderIdentity | null;
   orientation: SexualOrientation | null;
   wantToSee: WantToSee[];
-  intent: RelationshipIntent | null;
+  lookingFor: LookingForOption[];
   photoUri: string | null;
 };
 
@@ -90,7 +100,7 @@ export default function SetupScreen() {
   const [genderIdentity, setGenderIdentity] = useState<GenderIdentity | null>(null);
   const [orientation, setOrientation] = useState<SexualOrientation | null>(null);
   const [wantToSee, setWantToSee] = useState<WantToSee[]>([]);
-  const [intent, setIntent] = useState<RelationshipIntent | null>(null);
+  const [lookingFor, setLookingFor] = useState<LookingForOption[]>([]);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   // Block draft-saving until the saved draft (if any) has been loaded, so we
   // never overwrite stored progress with the initial empty state on mount.
@@ -113,7 +123,7 @@ export default function SetupScreen() {
           if (d.genderIdentity) setGenderIdentity(d.genderIdentity);
           if (d.orientation) setOrientation(d.orientation);
           if (Array.isArray(d.wantToSee)) setWantToSee(d.wantToSee);
-          if (d.intent) setIntent(d.intent);
+          if (Array.isArray(d.lookingFor)) setLookingFor(d.lookingFor);
           if (d.photoUri) setPhotoUri(d.photoUri);
         }
       } catch {
@@ -138,21 +148,24 @@ export default function SetupScreen() {
       genderIdentity,
       orientation,
       wantToSee,
-      intent,
+      lookingFor,
       photoUri,
     };
     AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draft)).catch(() => {});
-  }, [hydrated, step, firstName, age, gender, genderIdentity, orientation, wantToSee, intent, photoUri]);
+  }, [hydrated, step, firstName, age, gender, genderIdentity, orientation, wantToSee, lookingFor, photoUri]);
 
   const canNext = (() => {
     if (step === 0) return firstName.trim().length > 0 && Number(age) >= 18 && !!gender;
     if (step === 1) return !!genderIdentity && wantToSee.length > 0;
-    if (step === 2) return !!intent;
+    if (step === 2) return lookingFor.length > 0; // multi-select: at least one
     return true;
   })();
 
   const toggleWantToSee = (w: WantToSee) =>
     setWantToSee((prev) => (prev.includes(w) ? prev.filter((x) => x !== w) : [...prev, w]));
+
+  const toggleLookingFor = (l: LookingForOption) =>
+    setLookingFor((prev) => (prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]));
 
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -177,7 +190,7 @@ export default function SetupScreen() {
         genderIdentity: genderIdentity ?? undefined,
         sexualOrientation: orientation ?? undefined,
         wantToSee,
-        relationshipIntent: intent ?? undefined,
+        lookingFor,
       });
       setUser(updated);
       if (photoUri) {
@@ -190,6 +203,18 @@ export default function SetupScreen() {
         } catch {
           /* ignore — user can add a photo later from Edit Profile */
         }
+      }
+      // Sync location at the end of onboarding so new users are discoverable
+      // immediately (appear in others' grids) without waiting to open Browse.
+      // Best-effort: permission denial or GPS failure must not block finishing.
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (perm.granted) {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          await updateLocation(pos.coords.latitude, pos.coords.longitude).catch(() => {});
+        }
+      } catch {
+        /* ignore — Browse tab will sync location on first load */
       }
       // Onboarding complete — discard the saved draft so it doesn't resurface.
       AsyncStorage.removeItem(DRAFT_KEY).catch(() => {});
@@ -208,15 +233,20 @@ export default function SetupScreen() {
     else finish();
   };
 
+  // Selected → brand fill + inverse text; unselected → elevated surface +
+  // secondary text. Scales to 0.95 while pressed (tap feedback).
   const Chip = ({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) => (
     <Pressable
       onPress={onPress}
-      style={[
+      style={({ pressed }) => [
         styles.chip,
-        { backgroundColor: active ? theme.brand : theme.inputBackground },
+        {
+          backgroundColor: active ? theme.brand : theme.surfaceElevated,
+          transform: [{ scale: pressed ? 0.95 : 1 }],
+        },
       ]}
     >
-      <T style={{ color: active ? theme.textInverse : theme.textPrimary, fontWeight: '600' }}>
+      <T style={{ color: active ? theme.textInverse : theme.textSecondary, fontWeight: '600' }}>
         {label}
       </T>
     </Pressable>
@@ -302,10 +332,16 @@ export default function SetupScreen() {
 
         {step === 2 && (
           <>
-            <T style={[styles.title, { color: theme.textPrimary }]}>What are you here for?</T>
+            <T style={[styles.title, { color: theme.textPrimary }]}>What are you looking for?</T>
+            <T style={[styles.sub, { color: theme.textSecondary }]}>Pick all that apply.</T>
             <View style={styles.chips}>
-              {INTENTS.map((it) => (
-                <Chip key={it} label={labelize(it)} active={intent === it} onPress={() => setIntent(it)} />
+              {LOOKING_FOR.map((it) => (
+                <Chip
+                  key={it.v}
+                  label={it.label}
+                  active={lookingFor.includes(it.v)}
+                  onPress={() => toggleLookingFor(it.v)}
+                />
               ))}
             </View>
           </>

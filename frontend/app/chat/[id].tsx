@@ -32,6 +32,8 @@ import {
   listAlbums,
   getAlbum,
   getPublicProfile,
+  unsendMessage,
+  editMessage,
   ApiError,
 } from '../../src/services/api';
 import { connectSocket, emitTyping } from '../../src/services/socket';
@@ -78,6 +80,10 @@ export default function Chat() {
   const markRead = useChatStore((s) => s.markRead);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
   const canReadReceipts = planAtLeast(me?.plan, 'premium');
+  const canUnsendAnytime = planAtLeast(me?.plan, 'gold');
+  const canUnsend = planAtLeast(me?.plan, 'premium');
+  const canEdit = planAtLeast(me?.plan, 'gold');
+  const EDIT_WINDOW_MS = 5 * 60 * 1000;
   const listRef = useRef<FlatList<ChatRow>>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -99,6 +105,7 @@ export default function Chat() {
   const [albumsLoading, setAlbumsLoading] = useState(false);
   const [expiringView, setExpiringView] = useState<{ url: string | null; seconds: number; loading: boolean } | null>(null);
   const [photoViewUrl, setPhotoViewUrl] = useState<string | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rows = useMemo(() => buildRows(messages), [messages]);
@@ -274,8 +281,80 @@ export default function Chat() {
   const send = async () => {
     const content = draft.trim();
     if (!content) return;
+    if (editingMessage) {
+      await saveEdit(editingMessage.id, content);
+      return;
+    }
     await postMessage({ type: 'text', content });
     setDraft('');
+  };
+
+  const saveEdit = async (messageId: string, content: string) => {
+    setSending(true);
+    try {
+      const res = await editMessage(conversationId, messageId, content);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, content: res.content, isEdited: res.isEdited } : m))
+      );
+      setEditingMessage(null);
+      setDraft('');
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.status === 403 && err.code === 'edit_window_expired') {
+        Alert.alert('Edit window expired', 'Messages can only be edited within 5 minutes.');
+        setEditingMessage(null);
+        setDraft('');
+      } else {
+        Alert.alert('Could not save edit', err.message ?? 'Please try again.');
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const startEditing = (item: Message) => {
+    setEditingMessage(item);
+    setDraft(item.content ?? '');
+  };
+
+  const cancelEditing = () => {
+    setEditingMessage(null);
+    setDraft('');
+  };
+
+  const runUnsend = async (item: Message) => {
+    try {
+      await unsendMessage(conversationId, item.id);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === item.id ? { ...m, isUnsent: true, content: null } : m))
+      );
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.status === 403 && err.code === 'already_read') {
+        Alert.alert('Upgrade to Gold to unsend read messages');
+      } else {
+        Alert.alert('Could not unsend', err.message ?? 'Please try again.');
+      }
+    }
+  };
+
+  const onLongPressMessage = (item: Message) => {
+    const mine = item.senderId === me?.id;
+    if (!mine || item.isUnsent || item.id.startsWith('tmp-')) return;
+
+    const withinEditWindow = Date.now() - new Date(item.createdAt).getTime() < EDIT_WINDOW_MS;
+    const options: { text: string; onPress?: () => void; style?: 'destructive' | 'cancel' }[] = [];
+
+    if (item.type === 'text' && canEdit && withinEditWindow) {
+      options.push({ text: 'Edit', onPress: () => startEditing(item) });
+    }
+    if (canUnsend && (canUnsendAnytime || !item.readAt)) {
+      options.push({ text: 'Unsend', style: 'destructive', onPress: () => runUnsend(item) });
+    }
+    if (options.length === 0) return;
+    options.push({ text: 'Cancel', style: 'cancel' });
+
+    Alert.alert('Message options', undefined, options);
   };
 
   // Upload + send a single photo as its own message. Adds an optimistic bubble
@@ -568,7 +647,10 @@ export default function Chat() {
       !item.content?.startsWith('📁 ');
 
     return (
-      <View style={[styles.bubbleRow, mine ? styles.right : styles.left]}>
+      <Pressable
+        style={[styles.bubbleRow, mine ? styles.right : styles.left]}
+        onLongPress={() => onLongPressMessage(item)}
+      >
         {mediaOnly ? (
           <View style={styles.mediaBubble}>{body}</View>
         ) : mine ? (
@@ -600,7 +682,7 @@ export default function Chat() {
             />
           )}
         </View>
-      </View>
+      </Pressable>
     );
   };
 
@@ -673,8 +755,20 @@ export default function Chat() {
           />
         )}
 
+        {editingMessage && (
+          <View style={[styles.editingBar, { backgroundColor: theme.surfaceElevated, borderTopColor: theme.border }]}>
+            <Ionicons name="create-outline" size={16} color={theme.brand} />
+            <Text style={[styles.editingText, { color: theme.textSecondary }]} numberOfLines={1}>
+              Editing message
+            </Text>
+            <Pressable onPress={cancelEditing} hitSlop={8}>
+              <Ionicons name="close" size={18} color={theme.textSecondary} />
+            </Pressable>
+          </View>
+        )}
+
         <View style={[styles.composer, { borderTopColor: theme.border }]}>
-          <Pressable onPress={() => setAttachOpen(true)} style={styles.attachBtn} disabled={sending}>
+          <Pressable onPress={() => setAttachOpen(true)} style={styles.attachBtn} disabled={sending || !!editingMessage}>
             <Ionicons name="image-outline" size={24} color={theme.brand} />
           </Pressable>
           <TextInput
@@ -798,6 +892,8 @@ const styles = StyleSheet.create({
   albumCaption: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, marginHorizontal: 4 },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
+  editingBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1 },
+  editingText: { flex: 1, fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1 },
   attachBtn: { width: 40, height: 42, alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, maxHeight: 120, fontSize: FontSize.md, fontFamily: FontFamily.regular },

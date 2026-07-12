@@ -4,7 +4,7 @@ import { prisma } from '../../config/prisma';
 import { env } from '../../config/env';
 import { isValidLat, isValidLng } from '../../utils/geo';
 import { serializeGridCard, signUserPhotos } from '../profile/profile.serializer';
-import { getGrid } from './grid.service';
+import { getGrid, getSpotlight } from './grid.service';
 
 export const gridQuerySchema = z.object({
   lat:              z.coerce.number().refine(isValidLat, 'Invalid latitude'),
@@ -23,6 +23,9 @@ export const gridQuerySchema = z.object({
   tags:             z.string().optional(), // comma-separated
   lookingFor:       z.string().optional(), // comma-separated
   sort:             z.enum(['distance', 'fresh']).optional(),
+  gender:           z.string().optional(), // comma-separated
+  relationshipIntent: z.string().optional(), // comma-separated
+  advancedFilters:  z.string().optional(), // JSON-encoded AdvancedFilters (education/occupation/... — not yet on the User model)
   // plan-gated filters (silently ignored if plan insufficient)
   verifiedOnly:     z.coerce.boolean().optional(),
   activeLast5Min:   z.coerce.boolean().optional(),
@@ -39,10 +42,11 @@ export async function grid(req: Request, res: Response): Promise<void> {
 
   const settings = await prisma.userSettings.findUnique({ where: { userId: viewerId } });
   const showDistance = settings?.showDistance ?? true;
-  const maxRadius = settings?.proximityShrink ? env.grid.shrinkRadiusM : env.grid.defaultRadiusM;
-  // Free users capped at 25 km radius
-  const planMaxRadius = plan === 'free' ? 25_000 : maxRadius;
-  const radiusM = Math.min(q.radius ?? planMaxRadius, planMaxRadius);
+  // Radius ceiling per plan: free/premium capped at 25km, gold/platinum up to 100km.
+  // proximityShrink overrides everything down to a 500m "nearby only" radius.
+  const planMaxRadius = limits?.maxRadiusM ?? 25_000;
+  const effectiveMaxRadius = settings?.proximityShrink ? env.grid.shrinkRadiusM : planMaxRadius;
+  const radiusM = Math.min(q.radius ?? effectiveMaxRadius, effectiveMaxRadius);
   const nationwideMode = settings?.nationwideMode ?? false;
   const planLimit = limits?.gridProfiles ?? null;
 
@@ -60,6 +64,9 @@ export async function grid(req: Request, res: Response): Promise<void> {
     tribes:     q.tribes    ? q.tribes.split(',').map((s) => s.trim()).filter(Boolean)     : undefined,
     tags:       q.tags      ? q.tags.split(',').map((s) => s.trim()).filter(Boolean)       : undefined,
     lookingFor: q.lookingFor ? q.lookingFor.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    gender:             q.gender             ? q.gender.split(',').map((s) => s.trim()).filter(Boolean)             : undefined,
+    relationshipIntent: q.relationshipIntent ? q.relationshipIntent.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    advancedFilters: q.advancedFilters,
     sort: q.sort,
     nationwideMode,
     // plan-gated filters — silently omit if plan is insufficient
@@ -81,5 +88,23 @@ export async function grid(req: Request, res: Response): Promise<void> {
       new Set(page.filter((x) => x.isShortlisted).map((x) => x.user.id)),
       new Set(page.filter((x) => x.isLiked).map((x) => x.user.id)),
     ))),
+  });
+}
+
+export const spotlightQuerySchema = z.object({
+  lat: z.coerce.number().refine(isValidLat, 'Invalid latitude'),
+  lng: z.coerce.number().refine(isValidLng, 'Invalid longitude'),
+});
+
+/** GET /api/v1/grid/spotlight — "Featured Nearby" carousel (active spotlight add-ons). */
+export async function spotlight(req: Request, res: Response): Promise<void> {
+  const { lat, lng } = req.query as unknown as z.infer<typeof spotlightQuerySchema>;
+  const viewerId = req.user!.sub;
+  const limits = req.effectiveLimits;
+  const radiusM = limits?.maxRadiusM ?? 25_000;
+
+  const { users } = await getSpotlight(viewerId, lat, lng, radiusM);
+  res.status(200).json({
+    users: await Promise.all(users.map(async (u) => serializeGridCard(await signUserPhotos(u), null, true, false))),
   });
 }

@@ -183,7 +183,10 @@ export async function rightNowFeed(req: Request, res: Response): Promise<void> {
       isOnGrid: true,
       incognitoMode: false,
       lastActiveAt: { gte: new Date(Date.now() - FOURTEEN_DAYS_MS) },
-      settings: { discoverable: true, stealthMode: false },
+      // A candidate with no UserSettings row (legacy/never-saved) defaults to
+      // discoverable — mirrors the grid query below, otherwise every brand-new
+      // user (no settings row yet) is silently excluded from Right Now.
+      OR: [{ settings: { discoverable: true, stealthMode: false } }, { settings: { is: null } }],
     },
     include: {
       photos: { where: { isPrimary: true, isPrivate: false }, take: 1 },

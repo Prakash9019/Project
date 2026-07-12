@@ -16,8 +16,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
 import { useChatStore } from '../../src/store/chatStore';
-import { useAuthStore } from '../../src/store/authStore';
-import { connectSocket } from '../../src/services/socket';
 import { inboxDateLabel, formatLastMessagePreview } from '../../src/lib/format';
 import { ListSkeleton } from '../../src/components/Skeleton';
 import { listAlbums } from '../../src/services/api';
@@ -54,11 +52,9 @@ export default function Inbox() {
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
   const tile = (width - 44) / 2;
-  const me = useAuthStore((s) => s.user);
   const [seg, setSeg] = useState<'inbox' | 'albums'>('inbox');
   const [filter, setFilter] = useState<InboxFilter>('all');
-  const { conversations, loading, refreshing, error, fetchConversations, applyIncomingMessage } =
-    useChatStore();
+  const { conversations, loading, refreshing, error, fetchConversations } = useChatStore();
 
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
@@ -86,20 +82,10 @@ export default function Inbox() {
     if (seg === 'albums') loadAlbums();
   }, [seg, loadAlbums]);
 
-  useEffect(() => {
-    let cleanup = () => {};
-    (async () => {
-      const socket = await connectSocket();
-      if (!socket) return;
-      const onCreated = (p: { conversationId: string; senderId: string; content?: string; type?: string }) => {
-        const preview = p.content ?? (p.type ? `[${p.type}]` : 'New message');
-        applyIncomingMessage(p.conversationId, preview, p.senderId === me?.id);
-      };
-      socket.on('message.created', onCreated);
-      cleanup = () => socket.off('message.created', onCreated);
-    })();
-    return () => cleanup();
-  }, [me?.id, applyIncomingMessage]);
+  // Note: live message.created → unread updates are handled centrally in the
+  // tabs layout (app/(tabs)/_layout.tsx) so the Inbox tab badge stays accurate
+  // on every tab and messages are never double-counted. This screen renders
+  // straight from the shared chat store, so it reflects those updates live.
 
   const filtered = useMemo(() => {
     switch (filter) {

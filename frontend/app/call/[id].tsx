@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, BackHandler } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,22 +40,46 @@ export default function CallScreen() {
   const [speakerOn, setSpeakerOn] = useState(isVideo);
   const [limitReached, setLimitReached] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  // Set true when the Agora channel can't be joined (bad/expired token, network,
+  // missing credentials) so the user gets a way out instead of a stuck screen.
+  const [connectError, setConnectError] = useState(false);
+  // Bumped by "Try Again" to re-run the join effect from scratch.
+  const [attempt, setAttempt] = useState(0);
   const ended = useRef(false);
 
-  // Agora engine lifecycle.
+  const missingConfig = !params.token || !params.channel;
+
+  // Agora engine lifecycle. Re-runs on retry (attempt).
   useEffect(() => {
-    if (!isAgoraAvailable || !params.token || !params.channel) return;
+    if (!isAgoraAvailable || missingConfig) return;
     const engine = createCallEngine(isVideo, {
       onJoinSuccess: () => setJoined(true),
       onUserJoined: (uid) => setRemoteUid(uid),
       onUserOffline: () => setRemoteUid(null),
     });
     if (engine) {
-      joinChannel(params.token, params.channel, isVideo);
+      joinChannel(params.token!, params.channel!, isVideo);
       if (isVideo) setSpeaker(true);
     }
     return () => leaveAndDestroy();
-  }, [params.token, params.channel, isVideo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.token, params.channel, isVideo, attempt]);
+
+  // Connect timeout: if the channel isn't joined within 15s, surface an error
+  // state (Try Again / End Call) rather than leaving the user on "Connecting…".
+  useEffect(() => {
+    if (joined || connectError || ended.current) return;
+    // Missing token/channel can never connect — fail fast.
+    if (missingConfig) {
+      setConnectError(true);
+      return;
+    }
+    if (!isAgoraAvailable) return; // distinct "unavailable" copy already shown
+    const t = setTimeout(() => {
+      if (!ended.current) setConnectError(true);
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [joined, connectError, missingConfig, attempt]);
 
   // Elapsed timer.
   useEffect(() => {
@@ -112,6 +136,26 @@ export default function CallScreen() {
     if (goBack && !limitReached) router.back();
   };
 
+  // Retry a failed connection: tear down, reset state, re-run the join effect.
+  const retryConnect = () => {
+    leaveAndDestroy();
+    setConnectError(false);
+    setJoined(false);
+    setRemoteUid(null);
+    setElapsed(0);
+    setAttempt((a) => a + 1);
+  };
+
+  // Android hardware back must always exit the call — never trap the user.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      finish('normal');
+      return true;
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
   const toggleMute = () => {
@@ -159,11 +203,13 @@ export default function CallScreen() {
         <Text style={styles.status}>
           {limitReached
             ? 'Daily call limit reached'
-            : !isAgoraAvailable
-              ? 'Calls unavailable on this device'
-              : joined
-                ? (remoteUid != null ? fmt(elapsed) : 'Ringing…')
-                : 'Connecting…'}
+            : connectError
+              ? 'Call failed to connect'
+              : !isAgoraAvailable
+                ? 'Calls unavailable on this device'
+                : joined
+                  ? (remoteUid != null ? fmt(elapsed) : 'Ringing…')
+                  : 'Connecting…'}
         </Text>
         {remainingSec != null && !limitReached && (
           <Text style={styles.freeNote}>{fmt(remainingSec)} remaining</Text>
@@ -185,6 +231,21 @@ export default function CallScreen() {
           </Pressable>
           <Pressable style={styles.limitClose} onPress={() => router.back()}>
             <Text style={styles.limitCloseText}>Close</Text>
+          </Pressable>
+        </View>
+      ) : connectError ? (
+        <View style={styles.limitCard}>
+          <Text style={styles.limitTitle}>Call failed to connect</Text>
+          <Text style={styles.limitBody}>
+            {missingConfig
+              ? 'This call is missing its connection details.'
+              : 'Check your connection and try again.'}
+          </Text>
+          <Pressable style={[styles.limitCta, { backgroundColor: theme.brand }]} onPress={retryConnect}>
+            <Text style={styles.limitCtaText}>Try Again</Text>
+          </Pressable>
+          <Pressable style={styles.limitClose} onPress={() => finish('error')}>
+            <Text style={styles.limitCloseText}>End Call</Text>
           </Pressable>
         </View>
       ) : (

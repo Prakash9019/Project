@@ -32,7 +32,12 @@ router.post('/:conversationId/pin', asyncHandler(c.pinConversation));
 router.delete('/:conversationId/pin', asyncHandler(c.unpinConversation));
 
 // Per-message
-router.patch('/:conversationId/messages/:messageId', validate(c.editMessageSchema), asyncHandler(c.editMessage));
+router.patch(
+  '/:conversationId/messages/:messageId',
+  requirePlan('gold', 'platinum'),
+  validate(c.editMessageSchema),
+  asyncHandler(c.editMessage),
+);
 router.post('/:conversationId/messages/:messageId/unsend', asyncHandler(c.unsendMessage));
 router.delete('/:conversationId/messages/:messageId', asyncHandler(c.deleteMessageHandler));
 router.post('/:conversationId/messages/:messageId/view', asyncHandler(c.consumeExpiringPhoto));

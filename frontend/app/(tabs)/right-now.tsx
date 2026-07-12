@@ -212,6 +212,7 @@ export default function RightNow() {
     const online = item.activity?.online ?? item.lastActiveAt?.toLowerCase() === 'online';
     const joinedAgo = minutesAgoLabel(item.rightNowJoinedAt ?? null);
     const showHostBadge = isHostingStatus(item.rightNowStatus, item.rightNowCategory);
+    const myExpiresLabel = isMe ? expiresInLabel(item.rightNowExpiresAt ?? null) : null;
 
     return (
       <Pressable
@@ -235,10 +236,23 @@ export default function RightNow() {
 
         <View style={styles.rowBody}>
           {isMe ? (
+            // Right Now status is a plain user field with no moderation gate —
+            // it's live the instant PATCH /me returns. Show it immediately;
+            // no "under review" state (there is no backend review queue).
             <>
-              <Text style={styles.statusLine} numberOfLines={1}>{item.firstName ?? 'You'}</Text>
-              <View style={styles.reviewPill}>
-                <Text style={styles.reviewText}>POST UNDER REVIEW, CHECK BACK SOON</Text>
+              <Text style={styles.statusLine} numberOfLines={2}>{item.rightNowStatus ?? 'Right now'}</Text>
+              <View style={styles.metaRow}>
+                <View style={styles.metaItem}>
+                  <Ionicons name="radio-button-on" size={12} color={theme.rightNow} />
+                  <Text style={[styles.metaText, { color: theme.rightNow }]}>
+                    Live{myExpiresLabel ? ` · ${myExpiresLabel}` : ''}
+                  </Text>
+                </View>
+                {showHostBadge && (
+                  <View style={styles.hostBadge}>
+                    <Ionicons name="home" size={10} color="#fff" />
+                  </View>
+                )}
               </View>
             </>
           ) : (
@@ -599,8 +613,6 @@ function makeStyles(theme: AppTheme) {
     onlineInner: { width: 11, height: 11, borderRadius: 6, backgroundColor: theme.online },
     rowBody: { flex: 1, gap: 6, paddingRight: 4 },
     statusLine: { fontSize: 16, fontFamily: FontFamily.bold, fontWeight: '700', color: theme.textPrimary, lineHeight: 21 },
-    reviewPill: { alignSelf: 'flex-start', backgroundColor: theme.rightNow, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-    reviewText: { fontSize: 12, fontFamily: FontFamily.bold, fontWeight: '700', color: '#fff', letterSpacing: 0.2 },
     metaRow: { flexDirection: 'row', alignItems: 'center' },
     metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     metaSpaced: { marginLeft: 12 },

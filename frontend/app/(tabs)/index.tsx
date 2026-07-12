@@ -28,7 +28,8 @@ import { ViewsList } from '../../src/components/interest/ViewsList';
 import { TapsList } from '../../src/components/interest/TapsList';
 import { planAtLeast } from '../../src/lib/format';
 import { markInterestSeen, hasUnreadInterest } from '../../src/utils/interestUnread';
-import { updateLocation, GridQuery } from '../../src/services/api';
+import { updateLocation, getSpotlight, GridQuery } from '../../src/services/api';
+import { showError } from '../../src/lib/toast';
 import type { UserCard } from '../../src/types/api';
 
 const COLS = 3;
@@ -74,7 +75,9 @@ export default function Browse() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [spotlightUsers, setSpotlightUsers] = useState<UserCard[]>([]);
   const lastRefresh = useRef(0);
+  const locationSyncWarned = useRef(false);
 
   const filterVersion = useFilterStore((s) => s.version);
   const toQuery = useFilterStore((s) => s.toQuery);
@@ -92,6 +95,22 @@ export default function Browse() {
     return { ...toQuery(), ...(quick ? quick.patch : {}) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter, filterVersion]);
+
+  // Pushes our current coords into the server's geo index so other users can
+  // discover us. A failure here leaves us invisible in everyone else's grid
+  // with no visible symptom on our own screen (our own grid still loads fine
+  // from local coords) — so failures must never be swallowed silently.
+  const syncLocation = useCallback((lat: number, lng: number) => {
+    updateLocation(lat, lng)
+      .then(() => { locationSyncWarned.current = false; })
+      .catch((e) => {
+        console.warn('[grid] updateLocation failed — you will be invisible to others until this succeeds', e);
+        if (!locationSyncWarned.current) {
+          locationSyncWarned.current = true;
+          showError("Couldn't update your location. You may not appear to others nearby.");
+        }
+      });
+  }, []);
 
   const acquireAndLoad = useCallback(
     async (refreshingFlag = false) => {
@@ -115,14 +134,14 @@ export default function Browse() {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setCoords(c);
-        await updateLocation(c.lat, c.lng).catch(() => {});
+        syncLocation(c.lat, c.lng);
         await fetchGrid({ ...c, ...query }, refreshingFlag);
         lastRefresh.current = Date.now();
       } catch {
         setPermDenied(true);
       }
     },
-    [fetchGrid, query, exploreLocation]
+    [fetchGrid, query, exploreLocation, syncLocation]
   );
 
   // Hydrate cached grid immediately for instant content / offline support.
@@ -145,13 +164,22 @@ export default function Browse() {
       }
       const id = setInterval(() => {
         if (coords) {
+          if (!exploreLocation) syncLocation(coords.lat, coords.lng);
           fetchGrid({ ...coords, ...query }, true);
           lastRefresh.current = Date.now();
         }
       }, REFRESH_MS);
       return () => clearInterval(id);
-    }, [coords, query, fetchGrid])
+    }, [coords, query, fetchGrid, exploreLocation, syncLocation])
   );
+
+  // Featured Nearby — active "spotlight" add-on holders near the viewer.
+  useEffect(() => {
+    if (!coords) return;
+    getSpotlight(coords.lat, coords.lng)
+      .then((res) => setSpotlightUsers(res.users))
+      .catch(() => setSpotlightUsers([]));
+  }, [coords]);
 
   // Keep interest data fresh so the unread indicator is accurate — on mount,
   // when the plan changes, and whenever the Browse screen regains focus.
@@ -210,6 +238,17 @@ export default function Browse() {
         >
           <Ionicons name="search" size={18} color={theme.textTertiary} />
           <Text style={[styles.searchText, { color: theme.textTertiary }]}>Explore more profiles</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]}
+          onPress={() =>
+            router.push({
+              pathname: '/map-explore',
+              params: coords ? { lat: String(coords.lat), lng: String(coords.lng) } : undefined,
+            })
+          }
+        >
+          <Ionicons name="map-outline" size={18} color={theme.textPrimary} />
         </Pressable>
         <Pressable style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]} onPress={() => router.push('/filters')}>
           <Ionicons name="options-outline" size={18} color={theme.textPrimary} />
@@ -350,6 +389,29 @@ export default function Browse() {
           getItemLayout={(_, index) => ({ length: rowHeight, offset: rowHeight * index, index })}
           contentContainerStyle={{ paddingBottom: 16 }}
           showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            spotlightUsers.length > 0 ? (
+              <View style={styles.spotlightSection}>
+                <Text style={[styles.spotlightTitle, { color: theme.textPrimary }]}>Featured Nearby</Text>
+                <FlatList
+                  data={spotlightUsers}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(c) => c.id}
+                  contentContainerStyle={{ paddingHorizontal: PAD, gap: GAP }}
+                  renderItem={({ item }) => (
+                    <View style={{ width: tile }}>
+                      <UserCardTile card={item} size={tile} onPress={() => openProfile(item)} />
+                      <View style={[styles.featuredBadge, { backgroundColor: theme.brand }]}>
+                        <Ionicons name="star" size={10} color="#fff" />
+                        <Text style={styles.featuredBadgeText}>Featured</Text>
+                      </View>
+                    </View>
+                  )}
+                />
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -421,4 +483,8 @@ const styles = StyleSheet.create({
   emptyBody: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', lineHeight: 20 },
   retry: { marginTop: 8, height: 46, borderRadius: 999, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
   retryText: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  spotlightSection: { marginBottom: 12 },
+  spotlightTitle: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700', paddingHorizontal: PAD, marginBottom: 8 },
+  featuredBadge: { position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },
+  featuredBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.bold, fontWeight: '700' },
 });

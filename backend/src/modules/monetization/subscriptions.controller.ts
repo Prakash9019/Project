@@ -9,6 +9,7 @@ import { razorpay } from '../../adapters/razorpay';
 import { stripe } from '../../adapters/stripe';
 import { env } from '../../config/env';
 import { PLAN_PRICES, PERIOD_DAYS } from './billingPlans';
+import { issueTokenPair } from '../auth/auth.service';
 
 const PENDING_ORDER_TTL = 1800; // 30 min — time to complete payment
 
@@ -96,7 +97,10 @@ export async function verifySubscription(req: Request, res: Response): Promise<v
   const { plan, billingCycle, amount } = JSON.parse(raw) as { plan: string; billingCycle: string; amount: number; userId: string };
 
   // Verify signature
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { phone: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { phone: true, phoneVerified: true, emailVerified: true, tier: true },
+  });
   const provider = detectProvider(user?.phone, reqProvider);
 
   if (provider === 'razorpay') {
@@ -149,7 +153,34 @@ export async function verifySubscription(req: Request, res: Response): Promise<v
   // Clean up pending order key
   redis.del(pendingOrderKey(orderId)).catch(() => {});
 
-  res.status(200).json({ plan: subscription.plan, planExpiresAt: subscription.expiresAt, ok: true });
+  // Gold/Platinum subscribers get the verified badge included — earned, not rented,
+  // so it's never revoked automatically on downgrade/expiry.
+  if (plan === 'gold' || plan === 'platinum') {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { verifiedBadge: true, isVerified: true },
+    });
+  }
+
+  // Issue a fresh token pair so the new plan's entitlements (radius, incognito,
+  // hideExactDistance, exploreAccess, ...) take effect immediately instead of
+  // waiting for the old JWT to expire.
+  const tokens = await issueTokenPair(
+    userId,
+    user?.phoneVerified ?? false,
+    user?.emailVerified ?? false,
+    user?.tier ?? 'free',
+    plan,
+    subscription.expiresAt,
+  );
+
+  res.status(200).json({
+    plan: subscription.plan,
+    planExpiresAt: subscription.expiresAt,
+    ok: true,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+  });
 }
 
 /** GET /api/subscriptions/current */

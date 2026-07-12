@@ -200,6 +200,22 @@ export async function deletePhoto(req: Request, res: Response): Promise<void> {
   res.status(204).send();
 }
 
+// Keys in settingsSchema that live on the User model, not UserSettings — the
+// two models were extended independently and drifted (User gained these
+// privacy/safety fields; UserSettings never did). Routing them through
+// userSettings.upsert() threw "Unknown argument" PrismaClientValidationErrors,
+// surfaced to the client as a generic "Something went wrong" 500.
+const USER_MODEL_SETTINGS_KEYS = [
+  'hideActiveStatus',
+  'hideLastSeen',
+  'hideExactDistance',
+  'showOrientationPublicly',
+  'disceetMode',
+  'pauseIncomingMessages',
+  'requireProfileCompletenessToMessage',
+  'verifiedUsersOnlyFilter',
+] as const;
+
 export async function updateSettings(req: Request, res: Response): Promise<void> {
   const data = req.body as z.infer<typeof settingsSchema>;
   const limits = req.effectiveLimits;
@@ -208,13 +224,38 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
   if (data.incognito && !limits?.incognitoMode) {
     throw Errors.forbidden('Incognito mode requires Gold or Platinum plan');
   }
+  if (data.hideExactDistance && !limits?.hideExactDistance) {
+    throw Errors.forbidden('Hiding your exact distance requires Gold or Platinum plan');
+  }
 
-  const settings = await prisma.userSettings.upsert({
-    where: { userId: req.user!.sub },
-    update: data,
-    create: { userId: req.user!.sub, ...data },
-  });
-  res.status(200).json(serializeSettings(settings));
+  const userData: Record<string, unknown> = {};
+  const settingsData: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) continue;
+    if ((USER_MODEL_SETTINGS_KEYS as readonly string[]).includes(key)) {
+      userData[key] = value;
+    } else {
+      settingsData[key] = value;
+    }
+  }
+
+  const [settings, user] = await Promise.all([
+    Object.keys(settingsData).length
+      ? prisma.userSettings.upsert({
+          where: { userId: req.user!.sub },
+          update: settingsData,
+          create: { userId: req.user!.sub, ...settingsData },
+        })
+      : prisma.userSettings.findUnique({ where: { userId: req.user!.sub } }),
+    Object.keys(userData).length
+      ? prisma.user.update({ where: { id: req.user!.sub }, data: userData })
+      : null,
+  ]);
+
+  const userExtras = user
+    ? Object.fromEntries(USER_MODEL_SETTINGS_KEYS.map((k) => [k, (user as Record<string, unknown>)[k]]))
+    : {};
+  res.status(200).json({ ...serializeSettings(settings ?? {}), ...userExtras });
 }
 
 export async function updateLocation(req: Request, res: Response): Promise<void> {
@@ -236,6 +277,13 @@ export async function updateLocation(req: Request, res: Response): Promise<void>
 
   // Fuzz to ±500m grid before storing — exact coordinates are NEVER persisted
   const { lat: fuzzyLat, lng: fuzzyLng } = fuzzyCoordinates(lat, lng);
+  // Durable source of truth: persist the fuzzed coords so location survives a
+  // Redis flush/restart and downstream features (grid rehydration, geohash for
+  // add-ons) can read it. The Redis geo index below is the fast query layer.
+  await prisma.user.update({
+    where: { id: userId },
+    data: { locationLat: fuzzyLat, locationLng: fuzzyLng, locationUpdatedAt: new Date() },
+  });
   await redis.geoadd(RedisKeys.geoUsers, fuzzyLng, fuzzyLat, userId);
   await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
   res.status(200).json({ ok: true });

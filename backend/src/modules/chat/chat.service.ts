@@ -94,6 +94,21 @@ export async function serializeMessageForViewer(msg: any, viewerId: string) {
   return { ...base, mediaUrls: signed, mediaUrl };
 }
 
+/** Free-tier lifetime interaction cap, plus any active chat-pack bonuses. */
+async function getEffectiveInteractionLimit(userId: string): Promise<number> {
+  const activePacks = await prisma.addOnPurchase.findMany({
+    where: {
+      userId,
+      addOnType: { in: ['chat_pack_s', 'chat_pack_m', 'chat_pack_l'] },
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    select: { chatSlotsAdded: true },
+  });
+  const bonus = activePacks.reduce((sum, p) => sum + (p.chatSlotsAdded ?? 0), 0);
+  return FREE_TIER_INTERACTION_LIMIT + bonus;
+}
+
 /** Record a unique interaction for the free-tier lifetime cap. No-op for paid users. */
 async function recordInteraction(actorId: string, targetId: string, type: 'message' | 'like'): Promise<void> {
   const user = await prisma.user.findUnique({ where: { id: actorId }, select: { plan: true, planExpiresAt: true } });
@@ -105,11 +120,12 @@ async function recordInteraction(actorId: string, targetId: string, type: 'messa
   });
   if (existing) return;
 
+  const effectiveLimit = await getEffectiveInteractionLimit(actorId);
   const count = await prisma.userInteraction.count({ where: { actorId } });
-  if (count >= FREE_TIER_INTERACTION_LIMIT) {
+  if (count >= effectiveLimit) {
     throw new HttpError(403, 'interaction_limit_reached',
-      'Free plan allows interactions with up to 20 people. Upgrade to connect with more.',
-      { limit: FREE_TIER_INTERACTION_LIMIT });
+      `You've reached your limit of ${effectiveLimit} people. Purchase a chat pack or upgrade to connect with more.`,
+      { limit: effectiveLimit });
   }
 
   await prisma.userInteraction.create({ data: { actorId, targetId, interactionType: type } });
@@ -459,7 +475,7 @@ export async function unsendMessage(messageId: string, senderId: string, plan: s
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
   if (!msg) throw Errors.notFound('Message not found');
   if (msg.senderId !== senderId) throw Errors.forbidden('You can only unsend your own messages');
-  if (msg.isUnsent) throw Errors.conflict('Message already unsent');
+  if (msg.isUnsent) throw new HttpError(409, 'already_unsent', 'Message already unsent');
 
   const paidPlan = isActivePlan(plan, planExpiresAt);
   const isGoldPlus = paidPlan && (plan === 'gold' || plan === 'platinum');
@@ -477,7 +493,7 @@ export async function unsendMessage(messageId: string, senderId: string, plan: s
 
   return prisma.message.update({
     where: { id: messageId },
-    data: { isUnsent: true, unsentAt: new Date() },
+    data: { isUnsent: true, unsentAt: new Date(), content: null },
   });
 }
 

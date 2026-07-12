@@ -8,7 +8,7 @@ try {
   console.warn('[Firebase] Native module not available — rebuild the app with `npx expo run:android` or `npx expo run:ios`:', e);
 }
 import { useCallback, useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useNavigationContainerRef } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
@@ -32,15 +32,51 @@ import {
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { setOnAuthFailure } from '../src/services/auth';
+import { connectSocket } from '../src/services/socket';
 import { useAuthStore } from '../src/store/authStore';
-import { IncomingCallSheet } from '../src/components/IncomingCallSheet';
+import { useChatStore } from '../src/store/chatStore';
+import { useGroupsStore } from '../src/store/groupsStore';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { OfflineBanner } from '../src/components/OfflineBanner';
+import { ToastConfig } from '../src/components/notifications/ToastConfig';
+import { setNavigationRef } from '../src/utils/navigationRef';
+import {
+  showMessageToast,
+  showTapToast,
+  showCallToast,
+  showRoomMessageToast,
+} from '../src/lib/toast';
+import type { UserCard, RoomMessageCard } from '../src/types/api';
+
+/** Human-friendly one-line preview for a message toast, by message type. */
+function messagePreviewFor(type: string | undefined, content: string | undefined): string {
+  switch (type) {
+    case 'photo':
+    case 'expiring_photo':
+      return '📷 Photo';
+    case 'voice':
+    case 'voice_note':
+      return '🎤 Voice message';
+    case 'video':
+      return '🎥 Video';
+    default:
+      return (content ?? '').slice(0, 60) || 'New message';
+  }
+}
 
 function RootStack() {
   const { theme, isDark } = useTheme();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
+  const authedUserId = useAuthStore((s) => s.user?.id);
+  const navContainerRef = useNavigationContainerRef();
+
+  // Expose the router's navigation container so toast logic can read the
+  // focused route/params and suppress notifications for the screen you're on.
+  useEffect(() => {
+    setNavigationRef(navContainerRef);
+    return () => setNavigationRef(null);
+  }, [navContainerRef]);
 
   useEffect(() => {
     // When a token refresh fails, clear session and bounce to onboarding.
@@ -50,6 +86,96 @@ function RootStack() {
     });
     return () => setOnAuthFailure(null);
   }, [router, logout]);
+
+  // Establish the realtime socket ONCE the user is authenticated — at the root,
+  // so every screen (Browse, Right Now, chats, rooms, incoming calls) receives
+  // live events without each having to bootstrap the connection itself. The
+  // socket is a singleton; connecting here after login/rehydrate means messages,
+  // taps, and call invites arrive even before the user opens Inbox. logout()
+  // disconnects it. Keyed on user id so it re-establishes on account switch.
+  useEffect(() => {
+    if (authedUserId) connectSocket().catch(() => {});
+  }, [authedUserId]);
+
+  // Global notification toasts. One always-mounted place turns realtime socket
+  // events into rich toasts (message / tap / incoming call / room message).
+  // Each helper self-suppresses when you're already viewing that content.
+  useEffect(() => {
+    if (!authedUserId) return;
+    let cleanup = () => {};
+    (async () => {
+      const socket = await connectSocket();
+      if (!socket) return;
+
+      const onMessage = (p: { conversationId: string; senderId: string; content?: string; type?: string }) => {
+        if (p.senderId === authedUserId) return; // never toast your own message
+        const convo = useChatStore.getState().conversations.find((c) => c.id === p.conversationId);
+        const peer = convo?.peer;
+        showMessageToast({
+          conversationId: p.conversationId,
+          senderName: peer?.firstName ?? 'Someone',
+          senderPhoto: peer?.profilePhoto ?? null,
+          messagePreview: messagePreviewFor(p.type, p.content),
+          timeAgo: 'now',
+          isOnline: peer?.activity?.online ?? true,
+        });
+      };
+
+      const onTap = (p: { senderId: string; senderCard?: UserCard | null }) => {
+        const card = p.senderCard;
+        if (!card) return;
+        showTapToast({
+          senderId: card.id ?? p.senderId,
+          firstName: card.firstName ?? 'Someone',
+          senderPhoto: card.profilePhoto ?? null,
+          age: card.age ?? 0,
+          distanceLabel: card.distanceLabel ?? card.distance ?? '',
+        });
+      };
+
+      const onCallInvite = (p: {
+        callId: string;
+        callerId: string;
+        callerName?: string;
+        callerPhoto?: string | null;
+        type: 'audio' | 'video';
+        agoraChannelName: string;
+        agoraToken: string;
+      }) => {
+        showCallToast({
+          callId: p.callId,
+          callerId: p.callerId,
+          callerName: p.callerName ?? 'Someone',
+          callerPhoto: p.callerPhoto ?? null,
+          type: p.type,
+          agoraChannelName: p.agoraChannelName,
+          agoraToken: p.agoraToken,
+        });
+      };
+
+      const onRoomMessage = (msg: RoomMessageCard) => {
+        if (msg.senderId === authedUserId) return;
+        showRoomMessageToast({
+          roomId: msg.roomId,
+          roomName: useGroupsStore.getState().roomName(msg.roomId),
+          senderName: msg.sender?.firstName ?? 'Someone',
+          messagePreview: (msg.content ?? '').slice(0, 60),
+        });
+      };
+
+      socket.on('message.created', onMessage);
+      socket.on('tap.received', onTap);
+      socket.on('call:invite', onCallInvite);
+      socket.on('room:message', onRoomMessage);
+      cleanup = () => {
+        socket.off('message.created', onMessage);
+        socket.off('tap.received', onTap);
+        socket.off('call:invite', onCallInvite);
+        socket.off('room:message', onRoomMessage);
+      };
+    })();
+    return () => cleanup();
+  }, [authedUserId]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.background }}>
@@ -83,9 +209,10 @@ function RootStack() {
           <Stack.Screen name="rooms/info" />
           <Stack.Screen name="rooms/media" />
         </Stack>
-        <IncomingCallSheet />
+        {/* Incoming calls now surface as a 'call_incoming' toast (with
+            Accept/Decline) via the socket listener above — no separate sheet. */}
         <OfflineBanner />
-        <Toast />
+        <Toast config={ToastConfig} position="top" topOffset={50} visibilityTime={4000} />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

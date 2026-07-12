@@ -13,34 +13,54 @@ export const PLANS: PlanInfo[] = [
     plan: 'free',
     name: 'Free',
     priceInr: { monthly: 0, three_month: 0, six_month: 0, annual: 0 },
-    perks: ['20 unique people (lifetime)', '150-char bio', '5 min audio / 2 min video daily', '100 grid profiles'],
+    perks: ['20 unique people (lifetime)', '150-char bio', '5 min audio / 2 min video daily', '100 grid profiles', '1 Album (10 photos)'],
   },
   {
     plan: 'premium',
     name: 'Premium',
     priceInr: { monthly: 399, three_month: 999, six_month: 1799, annual: 2999 },
-    perks: ['Unlimited people', '400-char bio', 'Voice & video clips', '600 grid profiles', 'Read receipts'],
+    perks: ['Unlimited people', '400-char bio', 'Voice & video clips', '600 grid profiles', 'Read receipts', '3 Albums (30 photos each)'],
   },
   {
     plan: 'gold',
     name: 'Gold',
     priceInr: { monthly: 799, three_month: 1999, six_month: 3499, annual: 5999 },
-    perks: ['Everything in Premium', '600-char bio', 'Incognito mode', 'Travel mode', 'Who viewed me', 'Verified badge'],
+    perks: ['Everything in Premium', '600-char bio', 'Incognito mode', 'Travel mode', 'Who viewed me', 'Verified badge', '5 Albums (50 photos each)'],
   },
   {
     plan: 'platinum',
     name: 'Platinum',
     priceInr: { monthly: 1499, three_month: 3799, six_month: 6799, annual: 11499 },
-    perks: ['Everything in Gold', 'AI features', '5× algorithm boost', 'Unlimited albums', '10 pinned chats'],
+    perks: ['Everything in Gold', 'AI features', '5× algorithm boost', 'Unlimited Albums (100 photos each)', '10 pinned chats'],
   },
 ];
 
-export const BILLING_CYCLES: { value: BillingCycle; label: string }[] = [
+export const BILLING_CYCLES: { value: BillingCycle; label: string; tag?: 'Most Popular' | 'Best Value' }[] = [
   { value: 'monthly', label: 'Monthly' },
-  { value: 'three_month', label: '3 Month' },
+  { value: 'three_month', label: '3 Month', tag: 'Most Popular' },
   { value: 'six_month', label: '6 Month' },
-  { value: 'annual', label: 'Annual' },
+  { value: 'annual', label: 'Annual', tag: 'Best Value' },
 ];
+
+/** % saved vs. paying the monthly price every month for the cycle's duration. */
+export function calcSavings(monthlyPrice: number, totalPrice: number, months: number): number {
+  if (monthlyPrice <= 0 || months <= 0) return 0;
+  const fullPrice = monthlyPrice * months;
+  return Math.round(((fullPrice - totalPrice) / fullPrice) * 100);
+}
+
+const CYCLE_MONTHS: Record<BillingCycle, number> = {
+  monthly: 1,
+  three_month: 3,
+  six_month: 6,
+  annual: 12,
+};
+
+/** Savings % for a plan's given billing cycle vs. its monthly price. 0 for monthly itself. */
+export function planCycleSavings(plan: PlanInfo, cycle: BillingCycle): number {
+  if (cycle === 'monthly') return 0;
+  return calcSavings(plan.priceInr.monthly, plan.priceInr[cycle], CYCLE_MONTHS[cycle]);
+}
 
 export interface AddOnInfo {
   id: AddOnType;

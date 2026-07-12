@@ -351,6 +351,14 @@ export const getGrid = (query: GridQuery) =>
     query: query as unknown as Record<string, unknown>,
   });
 
+export interface SpotlightResponse {
+  users: UserCard[];
+}
+export const getSpotlight = (lat: number, lng: number) =>
+  request<SpotlightResponse>('GET', '/api/v1/grid/spotlight', undefined, {
+    query: { lat, lng },
+  });
+
 /* ────────────────────────── Conversations ─────────────────────────── */
 
 export interface StartConversationResponse {
@@ -416,6 +424,30 @@ export const consumeExpiringPhoto = (conversationId: string, messageId: string) 
   request<ConsumeExpiringPhotoResponse>(
     'POST',
     `/api/v1/conversations/${conversationId}/messages/${messageId}/view`
+  );
+
+export interface UnsendMessageResponse {
+  id: string;
+  isUnsent: boolean;
+  unsentAt: string | null;
+}
+export const unsendMessage = (conversationId: string, messageId: string) =>
+  request<UnsendMessageResponse>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/unsend`
+  );
+
+export interface EditMessageResponse {
+  id: string;
+  content: string | null;
+  isEdited: boolean;
+  editedAt: string | null;
+}
+export const editMessage = (conversationId: string, messageId: string, content: string) =>
+  request<EditMessageResponse>(
+    'PATCH',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}`,
+    { content }
   );
 
 export interface ChatPhotoUploadUrl {
@@ -666,12 +698,19 @@ export const createSubscription = (body: {
   paymentProvider: 'razorpay' | 'stripe';
 }) => request<CreateSubscriptionResponse>('POST', '/api/v1/billing/subscriptions', body);
 
+export interface SubscriptionVerifyResponse {
+  plan: string;
+  planExpiresAt: string;
+  ok: true;
+  accessToken?: string;
+  refreshToken?: string;
+}
 export const verifySubscription = (body: {
   orderId: string;
   paymentId: string;
   signature: string;
 }) =>
-  request<{ plan: string; planExpiresAt: string; ok: true }>(
+  request<SubscriptionVerifyResponse>(
     'POST',
     '/api/v1/billing/subscriptions/verify',
     body
@@ -688,6 +727,13 @@ export interface CurrentSubscription {
 export const getCurrentSubscription = () =>
   request<CurrentSubscription>('GET', '/api/v1/billing/subscriptions/current');
 
+export interface CancelSubscriptionResponse {
+  cancelledAt: string;
+  effectiveAt: string;
+}
+export const cancelSubscription = () =>
+  request<CancelSubscriptionResponse>('DELETE', '/api/v1/billing/subscriptions/current');
+
 export const createAddOnOrder = (addonType: AddOnType) =>
   request<CreateSubscriptionResponse>('POST', '/api/v1/billing/addons/purchase', {
     addonType,
@@ -699,6 +745,18 @@ export const verifyAddOnPurchase = (body: {
   signature: string;
   addonType: AddOnType;
 }) => request<{ ok: true }>('POST', '/api/v1/billing/addons/verify', body);
+
+export interface ActiveAddon {
+  id: string;
+  addOnType: AddOnType;
+  activatedAt: string;
+  expiresAt: string | null;
+  chatSlotsAdded?: number | null;
+  audioMinutesAdded?: number | null;
+  videoMinutesAdded?: number | null;
+}
+export const getActiveAddons = () =>
+  request<{ active: ActiveAddon[] }>('GET', '/api/v1/billing/addons/active');
 
 /* ──────────────────────────────── AI ──────────────────────────────── */
 

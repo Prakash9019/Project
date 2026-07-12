@@ -25,6 +25,10 @@ export interface EffectiveLimits {
   exploreAccess: boolean;
   callHistoryAccess: boolean;
   profileViewsAccess: boolean;
+  /** Grid discovery radius ceiling in meters — free/premium=25km, gold/platinum=100km. */
+  maxRadiusM: number;
+  /** Gold+ only: candidate may hide their exact distance behind a "Near you" label. */
+  hideExactDistance: boolean;
 }
 
 type PlanLimitsMap = Record<EffectivePlan, Omit<EffectiveLimits, 'plan'>>;
@@ -51,6 +55,8 @@ const PLAN_LIMITS: PlanLimitsMap = {
     exploreAccess: false,
     callHistoryAccess: false,
     profileViewsAccess: false,
+    maxRadiusM: 25_000,
+    hideExactDistance: false,
   },
   premium: {
     bioChars: 400,
@@ -71,8 +77,10 @@ const PLAN_LIMITS: PlanLimitsMap = {
     whoViewedMe: false,
     aiFeatures: false,
     exploreAccess: true,
-    callHistoryAccess: false,
+    callHistoryAccess: true,   // PDF matrix says Premium gets call history
     profileViewsAccess: false,
+    maxRadiusM: 25_000,
+    hideExactDistance: false,
   },
   gold: {
     bioChars: 600,
@@ -95,6 +103,8 @@ const PLAN_LIMITS: PlanLimitsMap = {
     exploreAccess: true,
     callHistoryAccess: true,
     profileViewsAccess: true,
+    maxRadiusM: 100_000,
+    hideExactDistance: true,
   },
   platinum: {
     bioChars: 600,
@@ -117,6 +127,8 @@ const PLAN_LIMITS: PlanLimitsMap = {
     exploreAccess: true,
     callHistoryAccess: true,
     profileViewsAccess: true,
+    maxRadiusM: 100_000,
+    hideExactDistance: true,
   },
 };
 
@@ -141,19 +153,6 @@ export function maybePersistExpiry(userId: string, jwtPlan: string, planExpiresA
     where: { id: userId },
     data: { plan: 'free', planExpiresAt: null },
   }).catch(() => {});
-}
-
-/** Attaches req.effectiveLimits after requireAuth. Reads plan from JWT claim; lazily evaluates expiry. */
-export function attachEffectiveLimits(req: Request, _res: Response, next: NextFunction): void {
-  if (req.user) {
-    const claims = req.user as { plan?: string; planExpiresAt?: number | null; sub?: string };
-    req.effectiveLimits = computeEffectiveLimits(claims.plan ?? 'free', claims.planExpiresAt);
-    // If the plan expired per JWT timestamp, persist the downgrade in the background
-    if (claims.sub && claims.plan && claims.planExpiresAt) {
-      maybePersistExpiry(claims.sub, claims.plan, claims.planExpiresAt);
-    }
-  }
-  next();
 }
 
 /** Throws 403 if user's effective plan is below required tier. */

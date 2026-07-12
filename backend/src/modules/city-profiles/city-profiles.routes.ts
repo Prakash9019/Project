@@ -2,11 +2,11 @@ import { Router } from 'express';
 import { asyncHandler } from '../../middleware/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireVerifiedPhone } from '../../middleware/auth';
-import { requirePlan } from '../../middleware/subscription';
+import { requireTravelAccess } from '../../middleware/travelAccess';
 import * as c from './city-profiles.controller';
 
 const router = Router();
-router.use(requireAuth, requireVerifiedPhone, requirePlan('gold', 'platinum'));
+router.use(requireAuth, requireVerifiedPhone, requireTravelAccess);
 
 router.get('/', asyncHandler(c.listCityProfiles));
 router.post('/', validate(c.createCityProfileSchema), asyncHandler(c.createCityProfile));

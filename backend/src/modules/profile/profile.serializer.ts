@@ -1,5 +1,14 @@
-import { activityStatus, distanceLabel } from '../../utils/geo';
+import { activityStatus } from '../../utils/geo';
 import { signUrl } from '../../utils/signUrl';
+
+/** Gold+ users can hide their exact distance behind a generic "Near you" label. */
+function formatDistance(distanceM: number | null, hideExactDistance: boolean): string | null {
+  if (hideExactDistance) return 'Near you';
+  if (distanceM === null) return null;
+  const km = distanceM / 1000;
+  if (km < 1) return '< 1 km away';
+  return `${km.toFixed(1)} km away`;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type UserWithRelations = any;
@@ -127,7 +136,7 @@ export function serializePublicProfile(
  */
 export function serializeGridCard(
   user: UserWithRelations,
-  distanceMeters: number,
+  distanceMeters: number | null,
   boosted: boolean,
   showDistance = true,
   viewerFavs?: Set<string>,
@@ -180,9 +189,14 @@ export function serializeGridCard(
     interests: user.interests ?? [],
     tribes: user.tribes ?? [],
     tags: user.tags ?? [],
-    distanceLabel: showDistance ? distanceLabel(distanceMeters) : null,
+    distanceLabel: showDistance ? formatDistance(distanceMeters, user.hideExactDistance ?? false) : null,
     lastActiveAt: hideLastSeen ? null : activity.label,
     activity: hideActivity ? null : activity,
+    isOnline: hideActivity ? false : 'online' in activity && activity.online,
+    // true when this candidate was found via the Redis geo index (not the DB
+    // fallback pass) — the client uses this to decide whether a map marker
+    // can be placed at all, without ever receiving real coordinates.
+    hasLocation: distanceMeters !== null,
     boosted,
     planBadge: user.plan !== 'free' ? user.plan : null,
     groupsAvailable: user.groupsAvailable ?? false,

@@ -153,7 +153,7 @@ export async function verifyAddon(req: Request, res: Response): Promise<void> {
 
   } else if (addonType === 'chat_pack_s' || addonType === 'chat_pack_m' || addonType === 'chat_pack_l') {
     // Legacy — v3 uses lifetime interaction cap; record but take no other action
-    const slots = addonType === 'chat_pack_s' ? 10 : addonType === 'chat_pack_m' ? 25 : 50;
+    const slots = addonType === 'chat_pack_s' ? 5 : addonType === 'chat_pack_m' ? 15 : 35;
     extraFields = { chatSlotsAdded: slots };
     expiresAt = null;
     responseExtra = { note: 'Chat packs are legacy — v3 uses lifetime interaction cap.' };

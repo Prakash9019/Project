@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../theme';
 import { connectSocket } from '../services/socket';
+import { useAuthStore } from '../store/authStore';
 import { updateCall, getPublicProfile } from '../services/api';
 
 interface Invite {
@@ -25,6 +26,11 @@ export function IncomingCallSheet() {
   const { theme } = useTheme();
   const router = useRouter();
   const [invite, setInvite] = useState<Invite | null>(null);
+  // Re-run when the authenticated user changes: this component mounts once at
+  // the root (before login, when connectSocket() returns null), so keying the
+  // subscription on the user id makes it attach the call:invite listener the
+  // moment a session exists — otherwise incoming calls are silently missed.
+  const authedUserId = useAuthStore((s) => s.user?.id);
 
   useEffect(() => {
     let cleanup = () => {};
@@ -56,7 +62,7 @@ export function IncomingCallSheet() {
       cleanup = () => socket.off('call:invite', onInvite);
     })();
     return () => cleanup();
-  }, []);
+  }, [authedUserId]);
 
   const accept = async () => {
     if (!invite) return;

@@ -34,6 +34,7 @@ import { ContextMenu } from '../../src/components/rooms/ContextMenu';
 import { VoiceRecorder } from '../../src/components/rooms/VoiceRecorder';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
+import { useGroupsStore } from '../../src/store/groupsStore';
 import {
   getRoom,
   listRoomMessages,
@@ -133,6 +134,9 @@ export default function RoomChat() {
       setMessages(m.messages);
       setHasMore(m.hasMore);
       setCursor(m.nextCursor);
+      // Opening the room marks it read server-side (listRoomMessages) — mirror
+      // that locally so the Groups tab badge clears immediately.
+      useGroupsStore.getState().markRoomRead(roomId);
     } catch (e) {
       toastApiError(e, 'Could not open room');
       router.back();

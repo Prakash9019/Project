@@ -243,6 +243,10 @@ export interface UserCard {
   lastActiveAt: string; // human-readable label ("Active Now") on cards; raw ISO on profiles
   /** Server activity status — `activity.online` is the source of truth for the green dot. */
   activity?: { online: boolean; label: string | null } | null;
+  /** Top-level online flag (mirrors activity.online; false when the user hides active status). */
+  isOnline?: boolean;
+  /** True when the server placed this candidate via the Redis geo index (not the DB fallback pass). Real lat/lng is never sent — used only to decide whether a map marker can be shown. */
+  hasLocation?: boolean;
   isVerified: boolean;
   planBadge?: Plan | null;
   height: number | null;

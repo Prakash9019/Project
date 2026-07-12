@@ -49,6 +49,8 @@ npm run dev                     # API with hot reload → http://localhost:4000
 ## Frontend (Expo)
 
 cd frontend
+npx expo prebuild --clean
+
 npx expo run:android   # first time: builds + installs
 # subsequent runs:
 npx expo start         # metro bundler only, uses the installed native shell

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NearMe — Subscription System Report</title>
+<style>
+  :root {
+    --bg: #FFFBF6;
+    --surface: #FFFFFF;
+    --surface-alt: #FFF3E9;
+    --border: #EAD9C7;
+    --ink: #2A1C14;
+    --ink-soft: #6B574A;
+    --ink-faint: #A08C7C;
+    --brand: #F0613B;
+    --brand-2: #E89A2E;
+    --live: #1E9E5E;
+    --live-bg: #E7F7EE;
+    --partial: #B8790F;
+    --partial-bg: #FBF0DA;
+    --planned: #8A7A6C;
+    --planned-bg: #F1E9E0;
+    --shadow: 0 1px 2px rgba(42,28,20,0.04), 0 8px 24px rgba(42,28,20,0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17110D;
+      --surface: #201811;
+      --surface-alt: #271D16;
+      --border: #3A2C22;
+      --ink: #F7EFE9;
+      --ink-soft: #C7B6A8;
+      --ink-faint: #8B7A6C;
+      --brand: #FF7A59;
+      --brand-2: #FFB14E;
+      --live: #38C182;
+      --live-bg: #16281F;
+      --partial: #E0A845;
+      --partial-bg: #2E2515;
+      --planned: #9C8C7E;
+      --planned-bg: #241C16;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17110D; --surface: #201811; --surface-alt: #271D16; --border: #3A2C22;
+    --ink: #F7EFE9; --ink-soft: #C7B6A8; --ink-faint: #8B7A6C;
+    --brand: #FF7A59; --brand-2: #FFB14E;
+    --live: #38C182; --live-bg: #16281F;
+    --partial: #E0A845; --partial-bg: #2E2515;
+    --planned: #9C8C7E; --planned-bg: #241C16;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --bg: #FFFBF6; --surface: #FFFFFF; --surface-alt: #FFF3E9; --border: #EAD9C7;
+    --ink: #2A1C14; --ink-soft: #6B574A; --ink-faint: #A08C7C;
+    --brand: #F0613B; --brand-2: #E89A2E;
+    --live: #1E9E5E; --live-bg: #E7F7EE;
+    --partial: #B8790F; --partial-bg: #FBF0DA;
+    --planned: #8A7A6C; --planned-bg: #F1E9E0;
+    --shadow: 0 1px 2px rgba(42,28,20,0.04), 0 8px 24px rgba(42,28,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Plus Jakarta Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 {
+    font-family: "Outfit", "Avenir Next", "Century Gothic", ui-rounded, -apple-system, sans-serif;
+    font-weight: 700;
+    color: var(--ink);
+    text-wrap: balance;
+    margin: 0;
+  }
+  a { color: var(--brand); }
+  ::selection { background: var(--brand); color: #fff; }
+
+  .page { max-width: 900px; margin: 0 auto; padding: 56px 24px 90px; }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .masthead { display: flex; flex-direction: column; gap: 14px; margin-bottom: 44px; }
+  .eyebrow {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--brand); display: flex; align-items: center; gap: 8px;
+  }
+  .eyebrow::before { content: ""; width: 18px; height: 2px; background: var(--brand); display: inline-block; }
+  h1 { font-size: 40px; letter-spacing: -0.01em; }
+  .dek { color: var(--ink-soft); font-size: 17px; max-width: 62ch; margin-top: 2px; }
+  .meta-row { display: flex; gap: 18px; flex-wrap: wrap; color: var(--ink-faint); font-size: 13px; margin-top: 6px; }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ── Stat strip ──────────────────────────────────────── */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border);
+    border: 1px solid var(--border); border-radius: 14px; overflow: hidden; margin-bottom: 52px; }
+  .stat { background: var(--surface); padding: 20px 18px; }
+  .stat .num { font-family: "Outfit", "Avenir Next", ui-rounded, sans-serif; font-size: 30px; font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .stat .label { font-size: 12.5px; color: var(--ink-faint); margin-top: 3px; }
+  .stat.accent .num { color: var(--brand); }
+
+  section { margin-bottom: 56px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 22px; }
+  .section-head h2 { font-size: 22px; }
+  .section-head .hint { font-size: 13px; color: var(--ink-faint); }
+
+  /* ── Plan cards ──────────────────────────────────────── */
+  .plans { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .plan-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow); }
+  .plan-card.hi { border-color: var(--brand); border-width: 1.5px; }
+  .plan-tier { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+  .plan-tier.free { color: var(--ink-faint); }
+  .plan-tier.premium { color: #6D8CC7; }
+  .plan-tier.gold { color: var(--brand-2); }
+  .plan-tier.platinum { color: var(--brand); }
+  .plan-name { font-size: 20px; font-family: "Outfit", "Avenir Next", ui-rounded, sans-serif; font-weight: 700; }
+  .plan-price { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums;
+    font-family: "Outfit", "Avenir Next", ui-rounded, sans-serif; }
+  .plan-price small { font-size: 13px; font-weight: 500; color: var(--ink-faint); }
+  .plan-blurb { font-size: 13px; color: var(--ink-soft); min-height: 34px; }
+  .plan-cap { font-size: 12.5px; color: var(--ink-faint); border-top: 1px solid var(--border); padding-top: 10px; }
+  .plan-cap b { color: var(--ink); font-weight: 600; }
+
+  /* ── Billing / savings ───────────────────────────────── */
+  .savings-table { width: 100%; border-collapse: collapse; }
+  .savings-table th, .savings-table td { text-align: left; padding: 10px 12px; font-size: 13.5px; }
+  .savings-table thead th { color: var(--ink-faint); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); }
+  .savings-table td { border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .savings-table tbody tr:last-child td { border-bottom: none; }
+  .bar-cell { display: flex; align-items: center; gap: 8px; min-width: 160px; }
+  .bar-track { flex: 1; height: 7px; border-radius: 4px; background: var(--surface-alt); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--brand-2), var(--brand)); }
+  .bar-pct { font-weight: 700; font-size: 13px; color: var(--brand); width: 34px; text-align: right; }
+
+  /* ── Matrix table ────────────────────────────────────── */
+  .matrix-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; }
+  table.matrix { width: 100%; border-collapse: collapse; min-width: 640px; }
+  table.matrix th, table.matrix td { padding: 10px 14px; font-size: 13.5px; text-align: center; white-space: nowrap; }
+  table.matrix th.feature-col, table.matrix td.feature-col { text-align: left; white-space: normal; min-width: 190px; }
+  table.matrix thead th { background: var(--surface-alt); color: var(--ink); font-weight: 700;
+    font-family: "Outfit", "Avenir Next", ui-rounded, sans-serif; font-size: 14.5px; position: sticky; top: 0; }
+  table.matrix thead th.hi-col { color: var(--brand); }
+  table.matrix .cat-row td { background: var(--surface-alt); font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--brand); text-align: left; padding: 8px 14px; }
+  table.matrix tbody tr.data:nth-child(odd) td { background: var(--surface); }
+  table.matrix tbody tr.data:nth-child(even) td { background: var(--surface-alt); }
+  table.matrix td { color: var(--ink-soft); border-bottom: 1px solid var(--border); }
+  table.matrix td.feature-col { color: var(--ink); font-weight: 500; }
+  table.matrix .yes { color: var(--live); font-weight: 700; }
+  table.matrix .no { color: var(--ink-faint); }
+
+  /* ── Add-ons ─────────────────────────────────────────── */
+  .addons { display: flex; flex-direction: column; gap: 10px; }
+  .addon-row { display: grid; grid-template-columns: 1.4fr 0.6fr 1.6fr 0.9fr; gap: 14px; align-items: center;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .addon-name { font-weight: 700; font-size: 14px; }
+  .addon-meta { font-size: 12px; color: var(--ink-faint); margin-top: 2px; }
+  .addon-price { font-family: "Outfit", "Avenir Next", ui-rounded, sans-serif; font-weight: 700; font-size: 15px;
+    font-variant-numeric: tabular-nums; }
+  .addon-effect { font-size: 13px; color: var(--ink-soft); }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700;
+    padding: 4px 10px; border-radius: 999px; justify-self: end; white-space: nowrap; }
+  .pill.live { background: var(--live-bg); color: var(--live); }
+  .pill.partial { background: var(--partial-bg); color: var(--partial); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* ── Status lists ────────────────────────────────────── */
+  .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .status-col h3 { font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .status-col ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .status-col li { font-size: 13.5px; color: var(--ink-soft); padding-left: 20px; position: relative; }
+  .status-col.live li::before { content: "✓"; position: absolute; left: 0; color: var(--live); font-weight: 700; }
+  .status-col.gap li::before { content: "–"; position: absolute; left: 0; color: var(--planned); font-weight: 700; }
+  .status-col li b { color: var(--ink); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.live { background: var(--live); }
+  .dot.gap { background: var(--planned); }
+
+  footer { border-top: 1px solid var(--border); padding-top: 22px; color: var(--ink-faint); font-size: 12.5px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+
+  @media (max-width: 720px) {
+    .plans { grid-template-columns: repeat(2, 1fr); }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .status-grid { grid-template-columns: 1fr; }
+    .addon-row { grid-template-columns: 1fr; gap: 6px; }
+    .pill { justify-self: start; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="eyebrow">Product &amp; Engineering Report</div>
+    <h1>NearMe Subscription System</h1>
+    <p class="dek">A verified breakdown of every plan, price and add-on in NearMe's monetization system — what's live in the app today, confirmed by reading the shipped code, not the original spec.</p>
+    <div class="meta-row">
+      <span><b>Plans:</b> Free · Premium · Gold · Platinum</span>
+      <span><b>Add-ons:</b> 13 SKUs</span>
+      <span><b>Payments:</b> Razorpay + Stripe</span>
+      <span><b>Verified:</b> against live backend &amp; app code</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat accent"><div class="num">4</div><div class="label">Subscription tiers</div></div>
+    <div class="stat accent"><div class="num">13</div><div class="label">Purchasable add-ons</div></div>
+    <div class="stat"><div class="num">12</div><div class="label">Verified price points</div></div>
+    <div class="stat"><div class="num">37%</div><div class="label">Top annual savings</div></div>
+  </div>
+
+  <!-- ── Plans overview ─────────────────────────────────── -->
+  <section>
+    <div class="section-head">
+      <h2>The four plans</h2>
+      <span class="hint">Monthly price shown · full matrix below</span>
+    </div>
+    <div class="plans">
+      <div class="plan-card">
+        <div class="plan-tier free">Free</div>
+        <div class="plan-name">Free</div>
+        <div class="plan-price">₹0</div>
+        <div class="plan-blurb">Enough to meet people and get a feel for NearMe.</div>
+        <div class="plan-cap"><b>20</b> unique chats (lifetime) · <b>100</b> grid profiles</div>
+      </div>
+      <div class="plan-card">
+        <div class="plan-tier premium">Premium</div>
+        <div class="plan-name">Premium</div>
+        <div class="plan-price">₹399<small>/mo</small></div>
+        <div class="plan-blurb">Unlimited chats, read receipts, and expanded discovery.</div>
+        <div class="plan-cap"><b>Unlimited</b> chats · <b>600</b> grid profiles</div>
+      </div>
+      <div class="plan-card hi">
+        <div class="plan-tier gold">Gold</div>
+        <div class="plan-name">Gold</div>
+        <div class="plan-price">₹799<small>/mo</small></div>
+        <div class="plan-blurb">Privacy controls, travel mode, and a verified badge.</div>
+        <div class="plan-cap"><b>Unlimited</b> grid · <b>100 km</b> radius</div>
+      </div>
+      <div class="plan-card">
+        <div class="plan-tier platinum">Platinum</div>
+        <div class="plan-name">Platinum</div>
+        <div class="plan-price">₹1,499<small>/mo</small></div>
+        <div class="plan-blurb">Everything, plus AI tools and top ranking priority.</div>
+        <div class="plan-cap"><b>5×</b> ranking boost · full AI suite</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Billing cycles / savings ───────────────────────── -->
+  <section>
+    <div class="section-head">
+      <h2>Billing cycles &amp; savings</h2>
+      <span class="hint">Longer commitments cost less per month</span>
+    </div>
+    <table class="savings-table">
+      <thead>
+        <tr><th>Plan</th><th>Monthly</th><th>3 Month</th><th>6 Month</th><th>Annual</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>Premium</b></td>
+          <td>₹399</td>
+          <td>₹999 <span style="color:var(--ink-faint)">(17% off)</span></td>
+          <td>₹1,799 <span style="color:var(--ink-faint)">(25% off)</span></td>
+          <td>
+            <div class="bar-cell">₹2,999<div class="bar-track"><div class="bar-fill" style="width:37%"></div></div><span class="bar-pct">37%</span></div>
+          </td>
+        </tr>
+        <tr>
+          <td><b>Gold</b></td>
+          <td>₹799</td>
+          <td>₹1,999 <span style="color:var(--ink-faint)">(17% off)</span></td>
+          <td>₹3,499 <span style="color:var(--ink-faint)">(27% off)</span></td>
+          <td>
+            <div class="bar-cell">₹5,999<div class="bar-track"><div class="bar-fill" style="width:37%"></div></div><span class="bar-pct">37%</span></div>
+          </td>
+        </tr>
+        <tr>
+          <td><b>Platinum</b></td>
+          <td>₹1,499</td>
+          <td>₹3,799 <span style="color:var(--ink-faint)">(16% off)</span></td>
+          <td>₹6,799 <span style="color:var(--ink-faint)">(24% off)</span></td>
+          <td>
+            <div class="bar-cell">₹11,499<div class="bar-track"><div class="bar-fill" style="width:36%"></div></div><span class="bar-pct">36%</span></div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── Full feature matrix ────────────────────────────── -->
+  <section>
+    <div class="section-head">
+      <h2>Full feature comparison</h2>
+      <span class="hint">Same matrix shown in-app under “Compare All Features”</span>
+    </div>
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th class="feature-col">Feature</th>
+            <th>Free</th><th>Premium</th><th class="hi-col">Gold</th><th>Platinum</th>
+          </tr>
+        </thead>
+        <tbody id="matrix-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Add-ons ─────────────────────────────────────────── -->
+  <section>
+    <div class="section-head">
+      <h2>Add-ons</h2>
+      <span class="hint">One-off purchases, available on top of any plan unless noted</span>
+    </div>
+    <div class="addons" id="addons-list"></div>
+  </section>
+
+  <!-- ── Status ──────────────────────────────────────────── -->
+  <section>
+    <div class="section-head">
+      <h2>Build status</h2>
+      <span class="hint">Confirmed by reading the shipped code, not assumed from the spec</span>
+    </div>
+    <div class="status-grid">
+      <div class="status-col live">
+        <h3><span class="dot live"></span>Live &amp; verified</h3>
+        <ul>
+          <li><b>Chat Packs</b> correctly add 5 / 15 / 35 slots on top of the free lifetime cap.</li>
+          <li><b>Travel Pass</b> unlocks travel mode for every plan, not just Gold+.</li>
+          <li>New plan permissions apply <b>instantly</b> after checkout — no wait for entitlements to refresh.</li>
+          <li><b>Unsend</b> (Premium: before read · Gold+: anytime) and <b>Edit message</b> (Gold+, 5-min window).</li>
+          <li><b>Call history</b> included from Premium up, matching the published pricing.</li>
+          <li><b>Verified badge</b> auto-granted on Gold/Platinum activation, retained after downgrade.</li>
+          <li><b>Boost &amp; Spotlight</b> now rank by tier strength instead of all five acting identically.</li>
+          <li><b>Featured Nearby</b> carousel on Browse for active Spotlight holders.</li>
+          <li>Self-serve <b>Cancel Subscription</b> in the Store, with a plain-language confirmation step.</li>
+          <li>In-app <b>feature comparison matrix</b> and annual <b>savings badges</b>.</li>
+          <li>Platinum <b>AI suite</b> — icebreakers, reply suggestions, compatibility, Daily Top 10, profile optimizer — all live and correctly gated.</li>
+          <li><b>In-chat translation</b> — live for Premium and up.</li>
+        </ul>
+      </div>
+      <div class="status-col gap">
+        <h3><span class="dot gap"></span>Known gaps</h3>
+        <ul>
+          <li>Boost tiers differ in ranking strength, not yet in radius or targeting reach.</li>
+          <li><b>Verified Badge</b> add-on still requires a manual document-review step to activate.</li>
+          <li><b>Scheduled calls</b> work end-to-end but aren't yet restricted to Gold+ specifically.</li>
+          <li>Advanced filters (education, occupation, etc.) are accepted by the API but don't yet affect results.</li>
+          <li>Free-tier photo caps and grid advertising, both mentioned in the original brief, are not yet built.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>NearMe · Subscription System Report</span>
+    <span>Verified against shipped backend &amp; app code, not the design spec</span>
+  </footer>
+
+</div>
+
+<script>
+  var MATRIX = [
+    { cat: "Messaging", rows: [
+      ["New chats (people)", "20 unique", "Unlimited", "Unlimited", "Unlimited"],
+      ["Read receipts", 0, 1, 1, 1],
+      ["Typing indicator", 0, 1, 1, 1],
+      ["Unsend (before read)", 0, 1, 1, 1],
+      ["Unsend (after read)", 0, 0, 1, 1],
+      ["Edit messages", 0, 0, 1, 1],
+      ["In-chat translation", 0, 1, 1, 1],
+      ["Expiring photos", 0, "10/day", "Unlimited", "Unlimited"],
+      ["Message templates", "0", "5", "5", "10"],
+      ["Pin chats", "0", "0", "5", "10"],
+      ["AI icebreakers", 0, 0, 0, 1],
+      ["AI reply suggestions", 0, 0, 0, 1],
+    ]},
+    { cat: "Calls", rows: [
+      ["Audio call", "5 min/day", "Unlimited", "Unlimited", "Unlimited"],
+      ["Video call", "2 min/day", "Unlimited", "Unlimited", "Unlimited"],
+      ["Call history", 0, 1, 1, 1],
+      ["Schedule calls", 0, 0, 1, 1],
+    ]},
+    { cat: "Grid & Discovery", rows: [
+      ["Profiles visible", "100", "600", "Unlimited", "Unlimited"],
+      ["Search radius", "25 km", "25 km", "100 km", "100 km"],
+      ["Verified filter", 0, 1, 1, 1],
+      ["Active in last 30 min", 0, 1, 1, 1],
+      ["Active in last 5 min", 0, 0, 1, 1],
+      ["Recently joined", 0, 0, 1, 1],
+      ["High reply rate", 0, 0, 1, 1],
+      ["Travel mode", 0, 0, 1, 1],
+      ["AI compatibility score", 0, 0, 0, 1],
+      ["AI Daily Top 10", 0, 0, 0, 1],
+      ["5× algorithm boost", 0, 0, 0, 1],
+    ]},
+    { cat: "Privacy", rows: [
+      ["Incognito mode", 0, 0, 1, 1],
+      ["Hide active status", 0, 0, 1, 1],
+      ["Hide last seen", 0, 0, 1, 1],
+      ["Hide exact distance", 0, 0, 1, 1],
+      ["Who viewed me", 0, 0, 1, 1],
+    ]},
+    { cat: "Profile", rows: [
+      ["Bio length", "150 chars", "400 chars", "600 chars", "600 chars"],
+      ["Verified badge", 0, 0, "Included", "Included"],
+      ["Voice intro clip", 0, "30 sec", "60 sec", "60 sec"],
+      ["Video intro clip", 0, "15 sec", "30 sec", "30 sec"],
+      ["Albums", "1 (10 photos)", "3 (30 each)", "5 (50 each)", "Unlimited"],
+      ["AI profile optimizer", 0, 0, 0, 1],
+    ]},
+  ];
+
+  function cell(v) {
+    if (v === 1) return '<span class="yes">✓</span>';
+    if (v === 0) return '<span class="no">—</span>';
+    return v;
+  }
+
+  var body = document.getElementById("matrix-body");
+  var html = "";
+  MATRIX.forEach(function (group) {
+    html += '<tr class="cat-row"><td colspan="5">' + group.cat + '</td></tr>';
+    group.rows.forEach(function (r) {
+      html += '<tr class="data"><td class="feature-col">' + r[0] + '</td>' +
+        '<td>' + cell(r[1]) + '</td><td>' + cell(r[2]) + '</td><td>' + cell(r[3]) + '</td><td>' + cell(r[4]) + '</td></tr>';
+    });
+  });
+  body.innerHTML = html;
+
+  var ADDONS = [
+    { name: "Local Boost", meta: "30 min", price: 49, effect: "Ranking boost — base tier", status: "live" },
+    { name: "Extended Boost", meta: "30 min", price: 99, effect: "Ranking boost — mid tier", status: "live" },
+    { name: "City-Wide Boost", meta: "30 min", price: 199, effect: "Ranking boost — high tier", status: "live" },
+    { name: "Mega Boost", meta: "60 min", price: 499, effect: "Ranking boost — top tier, longest duration", status: "live" },
+    { name: "Spotlight", meta: "24 hours", price: 199, effect: "Featured Nearby carousel + top ranking", status: "live" },
+    { name: "Chat Pack S", meta: "Permanent", price: 79, effect: "+5 interaction slots, stacks with base 20", status: "live" },
+    { name: "Chat Pack M", meta: "Permanent", price: 149, effect: "+15 interaction slots, stacks with base 20", status: "live" },
+    { name: "Chat Pack L", meta: "Permanent", price: 249, effect: "+35 interaction slots, stacks with base 20", status: "live" },
+    { name: "Travel Pass", meta: "24 hours", price: 99, effect: "Travel mode — any plan", status: "live" },
+    { name: "Travel Pass Week", meta: "7 days", price: 299, effect: "Travel mode — any plan", status: "live" },
+    { name: "Verified Badge", meta: "Permanent", price: 199, effect: "Requires document review after purchase", status: "partial" },
+    { name: "Audio Call Top-up", meta: "Free tier only", price: 49, effect: "+30 audio minutes for the day", status: "live" },
+    { name: "Video Call Top-up", meta: "Free tier only", price: 79, effect: "+30 video minutes for the day", status: "live" },
+  ];
+
+  var list = document.getElementById("addons-list");
+  list.innerHTML = ADDONS.map(function (a) {
+    var pillLabel = a.status === "live" ? "Fully working" : "Needs review step";
+    return '<div class="addon-row">' +
+      '<div><div class="addon-name">' + a.name + '</div><div class="addon-meta">' + a.meta + '</div></div>' +
+      '<div class="addon-price">₹' + a.price + '</div>' +
+      '<div class="addon-effect">' + a.effect + '</div>' +
+      '<span class="pill ' + a.status + '">' + pillLabel + '</span>' +
+      '</div>';
+  }).join("");
+</script>
+</body>
+</html>
