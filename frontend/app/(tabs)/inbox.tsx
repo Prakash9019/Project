@@ -111,7 +111,7 @@ export default function Inbox() {
           {item.peer.profilePhoto ? (
             <Image source={{ uri: item.peer.profilePhoto }} style={[styles.avatar, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} cachePolicy="memory-disk" />
           ) : (
-            <View style={[styles.avatar, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
+            <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: theme.backgroundTertiary }]}>
               <Ionicons name="person" size={26} color={theme.textTertiary} />
             </View>
           )}
@@ -277,6 +277,7 @@ const styles = StyleSheet.create({
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 80 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, height: 72 },
   avatar: { width: 52, height: 52, borderRadius: 26 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
   onlineDot: { position: 'absolute', right: 0, bottom: 0, width: 14, height: 14, borderRadius: 7, borderWidth: 2 },
   rowBody: { flex: 1, gap: 5 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },

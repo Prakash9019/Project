@@ -88,14 +88,7 @@ function GroupCardBase({
             : [styles.card, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]
         }
       >
-        <View>
-          <GroupAvatar room={room} size={isJoined ? 56 : 54} />
-          {joined && joined.unreadCount > 0 ? (
-            <View style={[styles.unreadBadge, { backgroundColor: theme.brand, borderColor: theme.surfaceElevated }]}>
-              <Text style={styles.unreadBadgeText}>{joined.unreadCount > 99 ? '99+' : joined.unreadCount}</Text>
-            </View>
-          ) : null}
-        </View>
+        <GroupAvatar room={room} size={isJoined ? 56 : 54} />
 
         <View style={{ flex: 1 }}>
           {/* Title row */}
@@ -136,6 +129,11 @@ function GroupCardBase({
               <View style={styles.onlineWrap}>
                 <View style={[styles.onlineDot, { backgroundColor: theme.online }]} />
                 <Text style={[styles.stat, { color: theme.success }]}>{formatCount(room.onlineCount)} online</Text>
+              </View>
+            ) : null}
+            {joined && joined.unreadCount > 0 ? (
+              <View style={[styles.unreadBadge, { backgroundColor: theme.brand }]}>
+                <Text style={styles.unreadBadgeText}>{joined.unreadCount > 99 ? '99+' : joined.unreadCount}</Text>
               </View>
             ) : null}
           </View>
@@ -197,16 +195,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   unreadBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
     minWidth: 20,
     height: 20,
     borderRadius: 10,
-    paddingHorizontal: 5,
+    paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
+    marginLeft: 'auto',
   },
   unreadBadgeText: { color: '#fff', fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },

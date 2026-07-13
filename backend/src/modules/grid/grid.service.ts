@@ -156,7 +156,8 @@ export async function getGrid(filters: GridFilters) {
 
   const distanceById = new Map<string, number>();
   for (const [member, dist] of raw) {
-    if (member !== viewerId) distanceById.set(member, Number(dist) * 1000); // km→m
+    // BYRADIUS was given in 'm', so WITHDIST already returns meters — no conversion needed.
+    if (member !== viewerId) distanceById.set(member, Number(dist));
   }
 
   // 3. Two-pass fallback: if Redis has no geo hit (new user who hasn't synced

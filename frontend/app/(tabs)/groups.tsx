@@ -28,6 +28,7 @@ import {
 import { CATEGORY_FILTERS, categoryMeta, relativeTime } from '../../src/lib/rooms';
 import { toastApiError, showSuccess } from '../../src/lib/toast';
 import { connectSocket } from '../../src/services/socket';
+import { useGroupsStore } from '../../src/store/groupsStore';
 import { GroupCard } from '../../src/components/rooms/GroupCard';
 import {
   RoomFilterSheet,
@@ -52,7 +53,13 @@ export default function Groups() {
   const [tab, setTab] = useState<Tab>('mine');
 
   // ── My Groups state ──
-  const [joined, setJoined] = useState<JoinedRoomCard[]>([]);
+  // Sourced from the shared groups store (not local state) so this list stays
+  // live with the same socket-driven unread counts the tab-bar badge uses —
+  // otherwise a message arriving while this screen is open/mounted wouldn't
+  // show up until the next full refetch.
+  const joined = useGroupsStore((st) => st.rooms);
+  const setJoinedRooms = useGroupsStore((st) => st.setRooms);
+  const addRoomToStore = useGroupsStore((st) => st.addRoom);
   const [loadingMine, setLoadingMine] = useState(true);
   const [mineQuery, setMineQuery] = useState('');
 
@@ -81,13 +88,13 @@ export default function Groups() {
   const loadJoined = useCallback(async () => {
     try {
       const j = await listJoinedRooms();
-      setJoined(j.rooms);
+      setJoinedRooms(j.rooms);
     } catch (e) {
       toastApiError(e, 'Could not load your rooms');
     } finally {
       setLoadingMine(false);
     }
-  }, []);
+  }, [setJoinedRooms]);
 
   const loadDiscover = useCallback(
     async (reset: boolean, currentCount: number) => {
@@ -209,7 +216,7 @@ export default function Groups() {
         unreadCount: 0,
         role: 'member',
       };
-      setJoined((prev) => (prev.some((r) => r.id === joinedCard.id) ? prev : [joinedCard, ...prev]));
+      addRoomToStore(joinedCard);
       showSuccess(`You joined ${invite.room.name}!`);
       switchTimer.current = setTimeout(() => setTab('mine'), 600);
     } catch (e) {
@@ -254,7 +261,7 @@ export default function Groups() {
         unreadCount: 0,
         role: 'member',
       };
-      setJoined((prev) => (prev.some((r) => r.id === room.id) ? prev : [joinedCard, ...prev]));
+      addRoomToStore(joinedCard);
       // Auto-switch to My Groups after the pulse.
       switchTimer.current = setTimeout(() => setTab('mine'), 600);
     } catch (e) {

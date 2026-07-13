@@ -137,8 +137,12 @@ Resets at UTC midnight; lets the client show a live countdown during free calls.
 
 - Phone-number PII encryption (`encrypt.ts` ready, not wired).
 - `call:invite` socket event needs `agoraToken` added to the callee payload.
-- No `message.delivered` event exists; the client treats a server-acked message
-  as "delivered" and flips to "read" on the `message.read` event.
+- Message delivery/read ticks: a real `message.status_update` (`delivered`) and
+  `message.read` event pair exists (presence-driven, `chat.service.ts` /
+  `realtime/socket.ts`), gated by `RedisKeys.presence` — kept fresh by a client
+  heartbeat (`src/services/socket.ts`). Blue-tick `message.read` is only
+  emitted to the sender if the sender is on a paid plan (read receipts are a
+  paid-tier perk) — a free-plan sender never sees blue ticks by design.
 
 ## After any change
 

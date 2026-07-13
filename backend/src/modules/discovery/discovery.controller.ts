@@ -170,7 +170,8 @@ export async function rightNowFeed(req: Request, res: Response): Promise<void> {
       'ASC', 'WITHDIST', 'COUNT', 500,
     )) as [string, string][];
     for (const [member, dist] of raw) {
-      if (member !== viewerId) distanceById.set(member, Number(dist) * 1000); // km→m
+      // BYRADIUS was given in 'm', so WITHDIST already returns meters — no conversion needed.
+      if (member !== viewerId) distanceById.set(member, Number(dist));
     }
   }
 

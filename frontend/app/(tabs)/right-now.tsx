@@ -294,21 +294,30 @@ export default function RightNow() {
     <SafeAreaView style={styles.root} edges={['top']}>
       <Text style={styles.title}>Right Now</Text>
 
-      <View style={styles.chipsRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsScroll}
+        contentContainerStyle={styles.chipsRow}
+      >
         {FILTER_CHIPS.map((c) => {
-          const on = filters[c.key];
+          // Distance is the default sort mode (active whenever Age isn't), so
+          // it stays highlighted and its icon flips to show the current
+          // ascending/descending direction on each tap.
+          const on = c.key === 'distance' ? !filters.age : filters[c.key];
+          const icon = c.key === 'distance' ? (distanceDesc ? 'arrow-down' : 'arrow-up') : c.icon;
           return (
             <Pressable
               key={c.key}
               onPress={() => toggleFilter(c.key)}
-              style={[styles.chip, { backgroundColor: on ? theme.backgroundTertiary : theme.surfaceElevated }]}
+              style={[styles.chip, { backgroundColor: on ? theme.brand : theme.surfaceElevated }]}
             >
-              {c.icon && <Ionicons name={c.icon} size={16} color={theme.textPrimary} />}
-              <Text style={styles.chipText}>{c.label}</Text>
+              {icon && <Ionicons name={icon} size={16} color={on ? '#fff' : theme.textPrimary} />}
+              <Text style={[styles.chipText, { color: on ? '#fff' : theme.textPrimary }]}>{c.label}</Text>
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       <FlatList
         data={displayed}
@@ -595,9 +604,10 @@ function makeStyles(theme: AppTheme) {
       fontSize: 26, fontFamily: DisplayFont.bold, fontWeight: '800', color: theme.textPrimary,
       paddingHorizontal: 16, paddingTop: 4, paddingBottom: 10, letterSpacing: -0.3,
     },
+    chipsScroll: { flexGrow: 0, flexShrink: 0, height: 50 },
     chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
     chip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, paddingHorizontal: 16, height: 40 },
-    chipText: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600', color: theme.textPrimary },
+    chipText: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600' },
 
     intro: { flexDirection: 'row', gap: 14, paddingHorizontal: 16, paddingVertical: 14 },
     introIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },

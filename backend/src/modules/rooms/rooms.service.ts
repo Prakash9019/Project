@@ -193,26 +193,47 @@ export async function listJoinedRooms(userId: string, opts: { limit: number; off
   // Sort by room activity desc
   active.sort((a, b) => b.room.lastActivityAt.getTime() - a.room.lastActivityAt.getTime());
 
-  const withUnread = await Promise.all(
-    active.map(async (m) => {
-      const unreadCount = await unreadCountFor(userId, m.roomId);
-      return { ...serializeRoom(m.room, true), unreadCount, role: m.role };
-    }),
-  );
-  return withUnread;
+  const unreadByRoom = await unreadCountsFor(userId, active.map((m) => m.roomId));
+  return active.map((m) => ({
+    ...serializeRoom(m.room, true),
+    unreadCount: unreadByRoom.get(m.roomId) ?? 0,
+    role: m.role,
+  }));
 }
 
-async function unreadCountFor(userId: string, roomId: string): Promise<number> {
-  const lastRead = await redis.get(RedisKeys.roomLastRead(userId, roomId)).catch(() => null);
-  const since = lastRead ? new Date(Number(lastRead)) : null;
-  return prisma.roomMessage.count({
+/**
+ * Per-room unread counts in exactly one Redis round trip + one grouped DB
+ * query, instead of two round trips per room — the previous per-room
+ * Promise.all loop noticeably slowed the Groups tab/badge for users in more
+ * than a handful of rooms.
+ */
+async function unreadCountsFor(userId: string, roomIds: string[]): Promise<Map<string, number>> {
+  if (roomIds.length === 0) return new Map();
+
+  const pipeline = redis.pipeline();
+  for (const roomId of roomIds) pipeline.get(RedisKeys.roomLastRead(userId, roomId));
+  const lastReadResults = await pipeline.exec().catch(() => null);
+
+  const sinceByRoom = new Map<string, Date | null>();
+  roomIds.forEach((roomId, i) => {
+    const raw = lastReadResults?.[i]?.[1] as string | null | undefined;
+    sinceByRoom.set(roomId, raw ? new Date(Number(raw)) : null);
+  });
+
+  const unreadRows = await prisma.roomMessage.groupBy({
+    by: ['roomId'],
     where: {
-      roomId,
       isDeleted: false,
       senderId: { not: userId },
-      ...(since ? { createdAt: { gt: since } } : {}),
+      OR: roomIds.map((roomId) => {
+        const since = sinceByRoom.get(roomId);
+        return since ? { roomId, createdAt: { gt: since } } : { roomId };
+      }),
     },
+    _count: { id: true },
   });
+
+  return new Map(unreadRows.map((r) => [r.roomId, r._count.id]));
 }
 
 export async function markRoomRead(userId: string, roomId: string): Promise<void> {

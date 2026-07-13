@@ -39,7 +39,15 @@ export function showMessageToast(params: MessageToastProps) {
   Toast.show({
     type: 'message',
     props: params,
-    onPress: () => router.push(`/chat/${params.conversationId}`),
+    onPress: () =>
+      router.push({
+        pathname: '/chat/[id]',
+        params: {
+          id: params.conversationId,
+          peerName: params.senderName,
+          peerPhoto: params.senderPhoto ?? '',
+        },
+      }),
   });
 }
 

@@ -4,6 +4,24 @@ import { getAccessToken } from './auth';
 
 let socket: Socket | null = null;
 let socketToken: string | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+// The server's online-presence key expires after ONLINE_WINDOW_SECONDS (120s
+// default) unless refreshed — refresh well under that so a live socket is
+// never mistaken for offline mid-session (e.g. a message stuck on single tick
+// because `sendMessage`'s peer-online check found an expired presence key).
+const HEARTBEAT_INTERVAL_MS = 45_000;
+
+function startHeartbeat(s: Socket): void {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  s.emit('heartbeat');
+  heartbeatTimer = setInterval(() => s.emit('heartbeat'), HEARTBEAT_INTERVAL_MS);
+}
+
+function stopHeartbeat(): void {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
 
 /**
  * Connect (or reuse) the Socket.IO singleton. The server joins room
@@ -29,6 +47,8 @@ export async function connectSocket(): Promise<Socket | null> {
       reconnection: true,
     });
     socketToken = token;
+    socket.on('connect', () => startHeartbeat(socket!));
+    socket.on('disconnect', stopHeartbeat);
   } else {
     socket.auth = { token };
     socketToken = token;
@@ -42,6 +62,7 @@ export function getSocket(): Socket | null {
 }
 
 export function disconnectSocket(): void {
+  stopHeartbeat();
   socket?.disconnect();
   socket = null;
   socketToken = null;

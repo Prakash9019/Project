@@ -36,7 +36,10 @@ export function ProfilePreviewCard({
     setMessaging(true);
     try {
       const conv = await startConversation(card.id);
-      router.push({ pathname: '/chat/[id]', params: { id: conv.id } });
+      router.push({
+        pathname: '/chat/[id]',
+        params: { id: conv.id, peerName: card.firstName ?? '', peerPhoto: card.profilePhoto ?? '' },
+      });
     } catch (e) {
       showError((e as ApiError).message ?? 'Could not start conversation');
     } finally {

@@ -35,14 +35,15 @@ function TabIcon({ name, color, active }: { name: string; color: string; active:
   return <Ionicons name={active ? meta.active : meta.inactive} size={25} color={color} />;
 }
 
-/** Orange dot + count shown on a tab icon (currently the Inbox unread count). */
-function TabBadge({ count, theme }: { count: number; theme: ReturnType<typeof useTheme>['theme'] }) {
-  if (count <= 0) return null;
-  return (
-    <View style={[s.badge, { backgroundColor: theme.brand, borderColor: theme.tabBar }]}>
-      <Text style={s.badgeText}>{count > 99 ? '99+' : count}</Text>
-    </View>
-  );
+/**
+ * Unread indicator for a tab icon: a plain dot (matching the Interest tab's
+ * "new visitor" dot), shown only while the tab is NOT the active one — the
+ * screen behind that tab already shows the detailed counts, so the tab icon
+ * doesn't need to repeat them.
+ */
+function TabBadge({ show, theme }: { show: boolean; theme: ReturnType<typeof useTheme>['theme'] }) {
+  if (!show) return null;
+  return <View style={[s.badge, { backgroundColor: theme.error, borderColor: theme.tabBar }]} />;
 }
 
 function CustomTabBar({ state, navigation }: any) {
@@ -79,8 +80,8 @@ function CustomTabBar({ state, navigation }: any) {
             >
               <View style={s.iconWrap}>
                 <TabIcon name={route.name} color={color} active={active} />
-                {route.name === 'inbox' && <TabBadge count={inboxUnread} theme={theme} />}
-                {route.name === 'groups' && <TabBadge count={groupsUnread} theme={theme} />}
+                {route.name === 'inbox' && <TabBadge show={!active && inboxUnread > 0} theme={theme} />}
+                {route.name === 'groups' && <TabBadge show={!active && groupsUnread > 0} theme={theme} />}
               </View>
               <Text
                 style={[
@@ -124,6 +125,9 @@ export default function TabsLayout() {
       const socket = await connectSocket();
       if (!socket) return;
       const onCreated = (p: { conversationId: string; senderId: string; content?: string; type?: string }) => {
+        // Skip bumping unread for a conversation the user is currently chatting
+        // in — that screen marks itself read on open, so bumping it would be wrong.
+        if (p.senderId !== meId && isViewing('chat/[id]', p.conversationId)) return;
         const preview = p.content ?? (p.type ? `[${p.type}]` : 'New message');
         applyIncomingMessage(p.conversationId, preview, p.senderId === meId);
       };
@@ -165,15 +169,11 @@ const s = StyleSheet.create({
   label: { fontSize: 11 },
   badge: {
     position: 'absolute',
-    top: -4,
-    right: -12,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    top: -2,
+    right: -8,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     borderWidth: 2,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  badgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
 });
