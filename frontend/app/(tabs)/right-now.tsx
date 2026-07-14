@@ -456,9 +456,8 @@ function CreateSheet({
   }, [visible, initialStatus, initialCategory]);
 
   const post = async () => {
-    let status = text.trim();
+    const status = text.trim();
     if (!status) { showError('Add a short status first'); return; }
-    if (hosting && !status.toLowerCase().includes('host')) status = `Hosting — ${status}`;
     const dur = DURATIONS.find((d) => d.key === duration)!;
     const patch = {
       rightNowStatus: status.slice(0, MAX_CHARS),
@@ -616,19 +615,26 @@ function makeStyles(theme: AppTheme) {
     introLearn: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600', color: theme.textTertiary },
     introDismiss: { fontSize: 15, fontFamily: FontFamily.bold, fontWeight: '700', color: theme.textPrimary },
 
-    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 14 },
+    row: {
+      flexDirection: 'row', alignItems: 'center', gap: 14,
+      marginHorizontal: 16, marginBottom: 10, padding: 12, borderRadius: 16,
+      backgroundColor: theme.surfaceElevated,
+    },
     avatarWrap: { position: 'relative' },
-    avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.surfaceElevated, overflow: 'hidden' },
-    onlineDot: { position: 'absolute', right: -1, bottom: 0, width: 15, height: 15, borderRadius: 8, backgroundColor: theme.background, alignItems: 'center', justifyContent: 'center' },
+    avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.surface, overflow: 'hidden' },
+    onlineDot: { position: 'absolute', right: -1, bottom: -1, width: 15, height: 15, borderRadius: 8, backgroundColor: theme.surfaceElevated, alignItems: 'center', justifyContent: 'center' },
     onlineInner: { width: 11, height: 11, borderRadius: 6, backgroundColor: theme.online },
-    rowBody: { flex: 1, gap: 6, paddingRight: 4 },
+    rowBody: { flex: 1, gap: 5, justifyContent: 'center' },
     statusLine: { fontSize: 16, fontFamily: FontFamily.bold, fontWeight: '700', color: theme.textPrimary, lineHeight: 21 },
-    metaRow: { flexDirection: 'row', alignItems: 'center' },
+    metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 12 },
     metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    metaSpaced: { marginLeft: 12 },
-    metaText: { fontSize: 14, fontFamily: FontFamily.regular, color: theme.textTertiary },
-    hostBadge: { marginLeft: 10, width: 18, height: 18, borderRadius: 5, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
-    msgBtn: { paddingLeft: 6, paddingVertical: 6 },
+    metaSpaced: {},
+    metaText: { fontSize: 13, fontFamily: FontFamily.regular, color: theme.textTertiary },
+    hostBadge: { width: 20, height: 20, borderRadius: 6, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+    msgBtn: {
+      width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+      backgroundColor: theme.surface,
+    },
 
     skeletonWrap: { position: 'absolute', top: 120, left: 0, right: 0 },
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },

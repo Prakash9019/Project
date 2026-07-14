@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,9 +14,11 @@ function ProfileMarkerBase({ user, onImageSettled }: { user: UserCard; onImageSe
   const badgeColor = planBadgeColor(theme, user.planBadge);
   const online = user.isOnline ?? user.activity?.online ?? false;
   const initial = (user.firstName ?? '?').charAt(0).toUpperCase();
+  const [photoFailed, setPhotoFailed] = useState(false);
 
   // No photo means nothing to wait on — the letter fallback renders synchronously.
   useEffect(() => {
+    setPhotoFailed(false);
     if (!user.profilePhoto) onImageSettled?.();
   }, [user.profilePhoto, onImageSettled]);
 
@@ -28,7 +30,7 @@ function ProfileMarkerBase({ user, onImageSettled }: { user: UserCard; onImageSe
           { borderColor: theme.surface, backgroundColor: theme.backgroundTertiary },
         ]}
       >
-        {user.profilePhoto ? (
+        {user.profilePhoto && !photoFailed ? (
           <Image
             source={{ uri: user.profilePhoto }}
             style={styles.photo}
@@ -36,6 +38,7 @@ function ProfileMarkerBase({ user, onImageSettled }: { user: UserCard; onImageSe
             cachePolicy="memory-disk"
             transition={0}
             onLoadEnd={onImageSettled}
+            onError={() => setPhotoFailed(true)}
           />
         ) : (
           <View style={[styles.photo, styles.initialWrap, { backgroundColor: theme.brand }]}>

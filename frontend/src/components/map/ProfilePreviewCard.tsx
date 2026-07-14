@@ -22,11 +22,13 @@ export function ProfilePreviewCard({
   const { theme } = useTheme();
   const router = useRouter();
   const [messaging, setMessaging] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
   const slide = useRef(new Animated.Value(CARD_HEIGHT)).current;
   const badgeColor = planBadgeColor(theme, card.planBadge);
   const online = card.isOnline ?? card.activity?.online ?? false;
 
   useEffect(() => {
+    setPhotoFailed(false);
     slide.setValue(CARD_HEIGHT);
     Animated.spring(slide, { toValue: 0, useNativeDriver: true, friction: 9, tension: 60 }).start();
   }, [card.id, slide]);
@@ -61,8 +63,14 @@ export function ProfilePreviewCard({
         ]}
       >
         <View style={styles.photoWrap}>
-          {card.profilePhoto ? (
-            <Image source={{ uri: card.profilePhoto }} style={styles.photo} contentFit="cover" cachePolicy="memory-disk" />
+          {card.profilePhoto && !photoFailed ? (
+            <Image
+              source={{ uri: card.profilePhoto }}
+              style={styles.photo}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              onError={() => setPhotoFailed(true)}
+            />
           ) : (
             <View style={[styles.photo, styles.noPhoto, { backgroundColor: theme.backgroundTertiary }]}>
               <Ionicons name="person" size={24} color={theme.textTertiary} />
