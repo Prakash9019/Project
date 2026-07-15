@@ -32,6 +32,7 @@ import { AttachmentSheet, type AttachmentKind } from '../../src/components/rooms
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { ContextMenu } from '../../src/components/rooms/ContextMenu';
 import { VoiceRecorder } from '../../src/components/rooms/VoiceRecorder';
+import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { useGroupsStore } from '../../src/store/groupsStore';
@@ -76,6 +77,15 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
+// Media classification (mirrors MessageBubble) so the MediaViewer list contains
+// only true photos — videos and GIFs are excluded.
+function isRoomVideoUrl(url: string): boolean {
+  return /\.mp4($|\?)/i.test(url) || url.includes('/video-clips/');
+}
+function isRoomGifUrl(url: string): boolean {
+  return /\.gif($|\?)/i.test(url) || url.includes('tenor.com');
+}
+
 export default function RoomChat() {
   const { theme } = useTheme();
   const router = useRouter();
@@ -105,6 +115,8 @@ export default function RoomChat() {
   const [recording, setRecording] = useState(false);
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
 
   // Image sending — supports multi-select with sequential upload + per-image retry.
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -555,8 +567,24 @@ export default function RoomChat() {
     if (kind === 'camera') {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) return showError('Camera permission needed');
-      const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
-      if (!res.canceled && res.assets[0]) queueImages([res.assets[0].uri]);
+      // Capture photo OR video. The native camera's capture-confirm screen acts
+      // as the send preview (allowsEditing off keeps the full frame).
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 0.8,
+        allowsEditing: false,
+      });
+      if (res.canceled || !res.assets[0]) return;
+      const asset = res.assets[0];
+      if (asset.type === 'video') {
+        await runUpload(async () => {
+          const url = await uploadToR2(asset.uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
+          const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: url, replyToId: replyTo?.id });
+          appendMessage(msg);
+        });
+      } else {
+        queueImages([asset.uri]);
+      }
     } else if (kind === 'gallery') {
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
@@ -685,6 +713,32 @@ export default function RoomChat() {
     [messages, pinnedDismissed],
   );
 
+  // Chronological list of true images (excludes videos/GIFs/docs) for the
+  // full-screen MediaViewer. `messages` is newest-first, so reverse a copy.
+  const viewerImages = useMemo<MediaViewerImage[]>(() => {
+    const out: MediaViewerImage[] = [];
+    [...messages].reverse().forEach((m) => {
+      if (m.isDeleted || m.type !== 'image' || !m.mediaUrl) return;
+      if (isRoomVideoUrl(m.mediaUrl) || isRoomGifUrl(m.mediaUrl)) return;
+      out.push({
+        uri: m.mediaUrl,
+        senderId: m.senderId,
+        senderName: m.senderId === me?.id ? 'You' : m.sender.firstName ?? 'Someone',
+        createdAt: m.createdAt,
+      });
+    });
+    return out;
+  }, [messages, me?.id]);
+
+  const openImageViewer = useCallback(
+    (url: string) => {
+      const idx = viewerImages.findIndex((e) => e.uri === url);
+      setMediaViewerIndex(idx < 0 ? 0 : idx);
+      setMediaViewerOpen(true);
+    },
+    [viewerImages],
+  );
+
   // ── Search matches ──
   const matches = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -739,12 +793,13 @@ export default function RoomChat() {
             onSwipeReply={() => onSwipeReply(item)}
             onReactionPress={(emoji) => toggleReaction(item, emoji)}
             onReplyPress={() => item.replyTo && scrollToMessage(item.replyTo.id)}
+            onImagePress={openImageViewer}
           />
         </View>
       );
     },
     // toggleReaction stable enough; deps kept minimal to avoid re-renders
-    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage],
+    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage, openImageViewer],
   );
 
   const hasText = text.trim().length > 0;
@@ -976,6 +1031,13 @@ export default function RoomChat() {
           <View style={[styles.menu, { backgroundColor: theme.surface }]}>
             <MenuItem icon="search-outline" label="Search in chat" onPress={() => { setMenuOpen(false); setSearchMode(true); }} />
             <MenuItem icon="information-circle-outline" label="Group Info" onPress={() => { setMenuOpen(false); openInfo(); }} />
+            {isAdmin ? (
+              <MenuItem
+                icon="person-add-outline"
+                label="Add Members"
+                onPress={() => { setMenuOpen(false); router.push(`/create-group/members?roomId=${roomId}` as Href); }}
+              />
+            ) : null}
             <MenuItem icon="notifications-off-outline" label="Mute Notifications" onPress={handleMute} />
             <MenuItem icon="flag-outline" label="Report Group" onPress={handleReportRoom} />
             <MenuItem icon="exit-outline" label="Leave Group" destructive onPress={handleLeave} />
@@ -1020,6 +1082,13 @@ export default function RoomChat() {
       />
 
       <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} />
+
+      <MediaViewer
+        visible={mediaViewerOpen}
+        images={viewerImages}
+        initialIndex={mediaViewerIndex}
+        onClose={() => setMediaViewerOpen(false)}
+      />
     </SafeAreaView>
   );
 }

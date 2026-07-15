@@ -73,6 +73,16 @@ export function emitTyping(conversationId: string, userId: string, isTyping: boo
   socket?.emit('typing', { conversationId, userId, isTyping });
 }
 
+/**
+ * Push a live location update over the socket so the server's Redis geo index
+ * stays fresh for real-time grid discovery. This complements (never replaces)
+ * the durable REST `POST /api/v1/me/location` write — both are sent so a
+ * momentarily-disconnected socket never leaves the persisted location stale.
+ */
+export function emitLocationUpdate(lat: number, lng: number): void {
+  socket?.emit('location:update', { lat, lng });
+}
+
 /* ─────────────────────── Dating Rooms (Groups) ─────────────────────── */
 
 /** Join a room's socket channel to receive live messages/typing. */

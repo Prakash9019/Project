@@ -284,6 +284,17 @@ export const deletePhoto = (photoId: string) =>
 export const getPublicProfile = (userId: string) =>
   request<PublicProfile>('GET', `/api/v1/users/${userId}`);
 
+export interface UserRoomCard {
+  id: string;
+  name: string;
+  category: RoomCategory;
+  coverImageUrl: string | null;
+  memberCount: number;
+}
+/** Rooms a user has joined (for the "Groups in Common" section of the chat contact profile). */
+export const getUserRooms = (userId: string) =>
+  request<{ rooms: UserRoomCard[] }>('GET', `/api/v1/users/${userId}/rooms`);
+
 // ── Brief-specified profile extensions (NOT in spec endpoints[]) ──
 // catalogs, prompts CRUD, and voice/video clips are described in the Phase 10
 // brief but are absent from the spec's endpoints[]. Wired per instructions and
@@ -781,6 +792,26 @@ export const listJoinedRooms = (query?: { limit?: number; offset?: number }) =>
     query: query as Record<string, unknown>,
   });
 
+export interface CreateRoomBody {
+  name: string;
+  description?: string;
+  category: RoomCategory;
+  coverImageUrl?: string;
+  isVerifiedOnly?: boolean;
+}
+
+/** Create a user-owned group. Returns the new RoomDetail (myRole='admin', isCreator=true). */
+export const createRoom = (body: CreateRoomBody) =>
+  request<{ room: RoomDetail }>('POST', '/api/rooms', body);
+
+/** Bulk add/invite members to a room (creator/admin only). */
+export const addRoomMembersBulk = (roomId: string, userIds: string[]) =>
+  request<{ added: string[]; invited: string[]; skipped: string[] }>(
+    'POST',
+    `/api/rooms/${roomId}/members/bulk`,
+    { userIds },
+  );
+
 export const getRoom = (roomId: string) =>
   request<{ room: RoomDetail }>('GET', `/api/rooms/${roomId}`);
 
@@ -794,6 +825,18 @@ export const listRoomMessages = (roomId: string, query?: { before?: string; limi
   request<{ messages: RoomMessageCard[]; hasMore: boolean; nextCursor: string | null }>(
     'GET',
     `/api/rooms/${roomId}/messages`,
+    undefined,
+    { query: query as Record<string, unknown> },
+  );
+
+/** Shared media / links / documents for a room (Group Info screen). */
+export const listRoomMedia = (
+  roomId: string,
+  query?: { type?: 'image' | 'link' | 'document' | 'voice'; cursor?: string; limit?: number },
+) =>
+  request<{ media: RoomMessageCard[]; nextCursor: string | null; hasMore: boolean }>(
+    'GET',
+    `/api/rooms/${roomId}/media`,
     undefined,
     { query: query as Record<string, unknown> },
   );

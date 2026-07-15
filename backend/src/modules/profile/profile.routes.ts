@@ -37,6 +37,9 @@ router.get('/catalogs', asyncHandler(c.getCatalogs));
 // ── Public profile (Profile Inspection Overlay) ──────────
 router.get('/users/:userId', asyncHandler(c.getPublicProfile));
 
+// ── Rooms a user has joined (mutual-groups section in chat contact profile) ──
+router.get('/users/:userId/rooms', asyncHandler(c.getUserRooms));
+
 // ── User albums (Change 7: view another user's public albums) ──
 router.get('/users/:userId/albums', asyncHandler(viewUserAlbums));
 router.get('/users/:userId/albums/:albumId', asyncHandler(viewUserAlbumDetail));

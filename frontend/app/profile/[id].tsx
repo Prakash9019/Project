@@ -15,8 +15,9 @@ import {
   Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { Linking } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, FontSize } from '../../src/theme';
@@ -27,13 +28,19 @@ import {
   getUserAlbums,
   startConversation,
   sendMessage,
+  listMessages,
+  listJoinedRooms,
+  getUserRooms,
   tapUser,
   untapUser,
   shortlistUser,
   unshortlistUser,
   blockUser,
   ApiError,
+  type UserRoomCard,
 } from '../../src/services/api';
+import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { categoryMeta } from '../../src/lib/rooms';
 import { useChatStore } from '../../src/store/chatStore';
 import { useGridStore } from '../../src/store/gridStore';
 import { useAuthStore } from '../../src/store/authStore';
@@ -41,9 +48,13 @@ import { showError } from '../../src/lib/toast';
 import { planBadgeColor, labelize } from '../../src/lib/format';
 import type { PublicProfile, AlbumSummary } from '../../src/types/api';
 
+type SharedLink = { id: string; url: string };
+
 export default function ProfileDetail() {
-  const { id: rawId } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string; fromChat?: string; peerName?: string }>();
+  const rawId = params.id;
   const peerId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
+  const fromChat = Array.isArray(params.fromChat) ? params.fromChat[0] : params.fromChat;
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
@@ -64,6 +75,13 @@ export default function ProfileDetail() {
   const [sending, setSending] = useState(false);
   const [kbInset, setKbInset] = useState(0);
   const hasLoadedRef = useRef(false);
+
+  // In-chat contact profile extras (only when opened from a conversation).
+  const [sharedImages, setSharedImages] = useState<MediaViewerImage[]>([]);
+  const [sharedLinks, setSharedLinks] = useState<SharedLink[]>([]);
+  const [mutualGroups, setMutualGroups] = useState<UserRoomCard[]>([]);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState(0);
 
   useEffect(() => {
     hasLoadedRef.current = false;
@@ -115,6 +133,49 @@ export default function ProfileDetail() {
       loadProfile();
     }, [loadProfile])
   );
+
+  // When opened from a chat, load shared media/links + mutual groups.
+  useEffect(() => {
+    if (!fromChat || !peerId) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await listMessages(fromChat, { limit: 100 });
+        if (!active) return;
+        const images: MediaViewerImage[] = [];
+        const links: SharedLink[] = [];
+        for (const m of res.messages) {
+          if (m.isUnsent) continue;
+          if (m.type === 'photo' && !m.viewOnce) {
+            const urls = m.mediaUrls.length ? m.mediaUrls : m.mediaUrl ? [m.mediaUrl] : [];
+            urls.forEach((uri) => {
+              if (uri) images.push({ uri, senderId: m.senderId, senderName: m.senderId === me?.id ? 'You' : params.peerName || profile?.firstName || 'Someone', createdAt: m.createdAt });
+            });
+          } else if (m.type === 'text' && m.content) {
+            const match = m.content.match(/(https?:\/\/[^\s]+)|(www\.[^\s]+)/i);
+            if (match) {
+              const raw = match[0];
+              links.push({ id: m.id, url: raw.startsWith('http') ? raw : `https://${raw}` });
+            }
+          }
+        }
+        setSharedImages(images);
+        setSharedLinks(links);
+      } catch {
+        /* shared content is optional */
+      }
+      try {
+        const [mine, theirs] = await Promise.all([listJoinedRooms(), getUserRooms(peerId)]);
+        if (!active) return;
+        const myIds = new Set(mine.rooms.map((r) => r.id));
+        setMutualGroups(theirs.rooms.filter((r) => myIds.has(r.id)));
+      } catch {
+        /* mutual groups optional */
+      }
+    })();
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromChat, peerId]);
 
   const handleCapError = (e: unknown) => {
     const err = e as ApiError;
@@ -465,8 +526,70 @@ export default function ProfileDetail() {
               </View>
             </Section>
           ) : null}
+
+          {/* ── In-chat contact extras (only when opened from a conversation) ── */}
+          {fromChat && sharedImages.length > 0 ? (
+            <>
+              <View style={styles.sharedHead}>
+                <Text style={[styles.sectionLabel, { color: theme.textTertiary, marginTop: 0 }]}>SHARED MEDIA</Text>
+                <Pressable onPress={() => router.push({ pathname: '/chat/media', params: { id: fromChat, peerName: params.peerName ?? profile.firstName ?? '' } } as Href)}>
+                  <Text style={[styles.seeAll, { color: theme.brand }]}>See All</Text>
+                </Pressable>
+              </View>
+              <View style={styles.sharedStrip}>
+                {sharedImages.slice(0, 3).map((img, i) => (
+                  <Pressable key={`${img.uri}-${i}`} onPress={() => { setViewerIndex(i); setViewerOpen(true); }}>
+                    <Image source={{ uri: img.uri }} style={[styles.sharedThumb, { backgroundColor: theme.surfaceElevated }]} contentFit="cover" cachePolicy="memory-disk" />
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : null}
+
+          {fromChat && sharedLinks.length > 0 ? (
+            <>
+              <View style={styles.sharedHead}>
+                <Text style={[styles.sectionLabel, { color: theme.textTertiary, marginTop: 0 }]}>SHARED LINKS</Text>
+                <Pressable onPress={() => router.push({ pathname: '/chat/media', params: { id: fromChat, peerName: params.peerName ?? profile.firstName ?? '', tab: 'links' } } as Href)}>
+                  <Text style={[styles.seeAll, { color: theme.brand }]}>See All</Text>
+                </Pressable>
+              </View>
+              {sharedLinks.slice(0, 2).map((l) => (
+                <Pressable key={l.id} style={[styles.card, { backgroundColor: theme.surface, marginTop: 8 }]} onPress={() => Linking.openURL(l.url).catch(() => {})}>
+                  <Text style={[styles.body, { color: theme.brand, marginTop: 0 }]} numberOfLines={1}>{l.url}</Text>
+                </Pressable>
+              ))}
+            </>
+          ) : null}
+
+          {fromChat && mutualGroups.length > 0 ? (
+            <Section label="GROUPS IN COMMON">
+              <View style={styles.chips}>
+                {mutualGroups.map((g) => {
+                  const meta = categoryMeta(theme, g.category);
+                  return (
+                    <Pressable
+                      key={g.id}
+                      style={[styles.chip, { backgroundColor: theme.surfaceElevated, flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                      onPress={() => router.push({ pathname: '/rooms/[id]', params: { id: g.id } } as Href)}
+                    >
+                      <Ionicons name={meta.icon} size={14} color={meta.color} />
+                      <Text style={[styles.chipText, { color: theme.textPrimary }]}>{g.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Section>
+          ) : null}
         </View>
       </ScrollView>
+
+      <MediaViewer
+        visible={viewerOpen}
+        images={sharedImages}
+        initialIndex={viewerIndex}
+        onClose={() => setViewerOpen(false)}
+      />
 
       <KeyboardAvoidingView
         style={styles.barWrap}
@@ -598,6 +721,10 @@ const styles = StyleSheet.create({
   statPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   statText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
   sectionLabel: { fontSize: FontSize.sm, fontFamily: DisplayFont.bold, fontWeight: '700', letterSpacing: 0.8, marginTop: 20 },
+  sharedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 },
+  seeAll: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  sharedStrip: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  sharedThumb: { width: 80, height: 80, borderRadius: 12 },
   body: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 22, marginTop: 6 },
   card: { borderRadius: 16, padding: 14, marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },

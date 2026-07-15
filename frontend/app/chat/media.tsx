@@ -14,20 +14,20 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont, FontSize, spacing } from '../../src/theme';
-import { listRoomMedia } from '../../src/services/api';
+import { listMessages } from '../../src/services/api';
+import { useAuthStore } from '../../src/store/authStore';
 import { toastApiError } from '../../src/lib/toast';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
-import type { RoomMessageCard } from '../../src/types/api';
+import type { Message } from '../../src/types/api';
 
 const GAP = 2;
 const TABS = ['media', 'links', 'documents'] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = { media: 'Media', links: 'Links', documents: 'Documents' };
-const TAB_TYPE: Record<Tab, 'image' | 'link' | 'document'> = {
-  media: 'image',
-  links: 'link',
-  documents: 'document',
-};
+
+type MediaEntry = { id: string; uri: string; senderId: string; createdAt: string };
+type LinkEntry = { id: string; url: string; createdAt: string };
+type DocEntry = { id: string; url: string; name: string; createdAt: string };
 
 function extractUrl(text: string): string | null {
   const m = text.match(/(https?:\/\/[^\s]+)|(www\.[^\s]+)/i);
@@ -35,7 +35,6 @@ function extractUrl(text: string): string | null {
   const raw = m[0];
   return raw.startsWith('http') ? raw : `https://${raw}`;
 }
-
 function domainOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -43,78 +42,96 @@ function domainOf(url: string): string {
     return url;
   }
 }
-
-function fileNameOf(msg: RoomMessageCard): string {
-  const stripped = (msg.content ?? '').replace(/^(📄|🎵)\s*/, '').trim();
-  if (stripped) return stripped;
-  const path = (msg.mediaUrl ?? '').split('?')[0];
-  const last = path.split('/').pop();
-  return last || 'Document';
-}
-
 function timeLabel(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function RoomMedia() {
+export default function ChatMedia() {
   const { theme } = useTheme();
   const router = useRouter();
-  const { roomId } = useLocalSearchParams<{ roomId: string }>();
+  const me = useAuthStore((s) => s.user);
+  const { id, peerName, tab: initialTab } = useLocalSearchParams<{ id: string; peerName?: string; tab?: string }>();
+  const conversationId = String(id);
   const { width } = useWindowDimensions();
   const cols = 3;
   const size = (width - GAP * (cols - 1)) / cols;
 
-  const [tab, setTab] = useState<Tab>('media');
-  // Cache per-tab results so switching tabs is instant after first load.
-  const [data, setData] = useState<Record<Tab, RoomMessageCard[]>>({ media: [], links: [], documents: [] });
-  const [loaded, setLoaded] = useState<Record<Tab, boolean>>({ media: false, links: false, documents: false });
-  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<Tab>(
+    initialTab && (TABS as readonly string[]).includes(initialTab) ? (initialTab as Tab) : 'media',
+  );
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
 
-  const load = useCallback(
-    async (which: Tab) => {
-      if (!roomId) return;
-      setLoading(true);
-      try {
-        const res = await listRoomMedia(String(roomId), { type: TAB_TYPE[which], limit: 50 });
-        setData((prev) => ({ ...prev, [which]: res.media }));
-        setLoaded((prev) => ({ ...prev, [which]: true }));
-      } catch (e) {
-        toastApiError(e, 'Could not load media');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [roomId],
-  );
+  const load = useCallback(async () => {
+    if (!conversationId) return;
+    setLoading(true);
+    try {
+      const res = await listMessages(conversationId, { limit: 100 });
+      setMessages(res.messages);
+    } catch (e) {
+      toastApiError(e, 'Could not load media');
+    } finally {
+      setLoading(false);
+    }
+  }, [conversationId]);
 
   useEffect(() => {
-    if (!loaded[tab]) load(tab);
-  }, [tab, loaded, load]);
+    load();
+  }, [load]);
 
-  const current = data[tab];
+  // Client-side classification (inbox has no dedicated media endpoint).
+  const media = useMemo<MediaEntry[]>(() => {
+    const out: MediaEntry[] = [];
+    messages.forEach((m) => {
+      if (m.isUnsent || m.type !== 'photo' || m.viewOnce) return;
+      const urls = m.mediaUrls.length ? m.mediaUrls : m.mediaUrl ? [m.mediaUrl] : [];
+      urls.forEach((uri, i) => uri && out.push({ id: `${m.id}-${i}`, uri, senderId: m.senderId, createdAt: m.createdAt }));
+    });
+    return out;
+  }, [messages]);
+
+  const links = useMemo<LinkEntry[]>(() => {
+    const out: LinkEntry[] = [];
+    messages.forEach((m) => {
+      if (m.isUnsent || m.type !== 'text' || !m.content) return;
+      const url = extractUrl(m.content);
+      if (url) out.push({ id: m.id, url, createdAt: m.createdAt });
+    });
+    return out;
+  }, [messages]);
+
+  const docs = useMemo<DocEntry[]>(() => {
+    const out: DocEntry[] = [];
+    messages.forEach((m) => {
+      const url = m.mediaUrls[0];
+      if (m.isUnsent || m.type !== 'text' || !url || !m.content) return;
+      if (!m.content.startsWith('📄') && !m.content.startsWith('🎵')) return;
+      out.push({ id: m.id, url, name: m.content.replace(/^(📄|🎵)\s*/, '') || 'File', createdAt: m.createdAt });
+    });
+    return out;
+  }, [messages]);
 
   const viewerImages = useMemo<MediaViewerImage[]>(
     () =>
-      data.media
-        .filter((m) => !!m.mediaUrl)
-        .map((m) => ({
-          uri: m.mediaUrl as string,
-          senderId: m.senderId,
-          senderName: m.sender.firstName ?? 'Someone',
-          createdAt: m.createdAt,
-        })),
-    [data.media],
+      media.map((e) => ({
+        uri: e.uri,
+        senderId: e.senderId,
+        senderName: e.senderId === me?.id ? 'You' : peerName || 'Someone',
+        createdAt: e.createdAt,
+      })),
+    [media, peerName, me?.id],
   );
 
-  const openViewer = (mediaUrl: string) => {
-    const idx = viewerImages.findIndex((e) => e.uri === mediaUrl);
+  const openViewer = (uri: string) => {
+    const idx = viewerImages.findIndex((e) => e.uri === uri);
     setViewerIndex(idx < 0 ? 0 : idx);
     setViewerOpen(true);
   };
 
+  const count = tab === 'media' ? media.length : tab === 'links' ? links.length : docs.length;
   const emptyLabel =
     tab === 'media'
       ? { icon: 'image-outline' as const, text: 'No photos shared yet' }
@@ -132,7 +149,6 @@ export default function RoomMedia() {
         <View style={{ width: 26 }} />
       </View>
 
-      {/* Tabs */}
       <View style={[styles.tabs, { borderBottomColor: theme.border }]}>
         {TABS.map((t) => {
           const active = tab === t;
@@ -147,11 +163,11 @@ export default function RoomMedia() {
         })}
       </View>
 
-      {loading && !loaded[tab] ? (
+      {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={theme.brand} />
         </View>
-      ) : current.length === 0 ? (
+      ) : count === 0 ? (
         <View style={styles.center}>
           <Ionicons name={emptyLabel.icon} size={44} color={theme.textTertiary} />
           <Text style={[styles.empty, { color: theme.textTertiary }]}>{emptyLabel.text}</Text>
@@ -159,13 +175,13 @@ export default function RoomMedia() {
       ) : tab === 'media' ? (
         <FlatList
           key="media-grid"
-          data={current}
+          data={media}
           numColumns={cols}
-          keyExtractor={(m) => m.id}
+          keyExtractor={(e) => e.id}
           renderItem={({ item }) => (
-            <Pressable onPress={() => item.mediaUrl && openViewer(item.mediaUrl)}>
+            <Pressable onPress={() => openViewer(item.uri)}>
               <Image
-                source={{ uri: item.mediaUrl ?? undefined }}
+                source={{ uri: item.uri }}
                 style={{ width: size, height: size, margin: GAP / 2, backgroundColor: theme.surfaceElevated }}
                 contentFit="cover"
                 cachePolicy="memory-disk"
@@ -176,15 +192,13 @@ export default function RoomMedia() {
       ) : tab === 'links' ? (
         <FlatList
           key="links-list"
-          data={current}
-          keyExtractor={(m) => m.id}
+          data={links}
+          keyExtractor={(e) => e.id}
           contentContainerStyle={{ paddingVertical: spacing.sm }}
           renderItem={({ item }) => {
-            const url = extractUrl(item.content ?? '');
-            if (!url) return null;
-            const domain = domainOf(url);
+            const domain = domainOf(item.url);
             return (
-              <Pressable style={styles.linkRow} onPress={() => Linking.openURL(url).catch(() => {})}>
+              <Pressable style={styles.linkRow} onPress={() => Linking.openURL(item.url).catch(() => {})}>
                 <Image
                   source={{ uri: `https://www.google.com/s2/favicons?domain=${domain}&sz=64` }}
                   style={[styles.favicon, { backgroundColor: theme.surfaceElevated }]}
@@ -195,7 +209,7 @@ export default function RoomMedia() {
                     {domain}
                   </Text>
                   <Text style={[styles.linkUrl, { color: theme.textSecondary }]} numberOfLines={1}>
-                    {url}
+                    {item.url}
                   </Text>
                   <Text style={[styles.linkTime, { color: theme.textTertiary }]}>{timeLabel(item.createdAt)}</Text>
                 </View>
@@ -206,20 +220,17 @@ export default function RoomMedia() {
       ) : (
         <FlatList
           key="docs-list"
-          data={current}
-          keyExtractor={(m) => m.id}
+          data={docs}
+          keyExtractor={(e) => e.id}
           contentContainerStyle={{ paddingVertical: spacing.sm }}
           renderItem={({ item }) => (
-            <Pressable
-              style={styles.docRow}
-              onPress={() => item.mediaUrl && Linking.openURL(item.mediaUrl).catch(() => {})}
-            >
+            <Pressable style={styles.docRow} onPress={() => Linking.openURL(item.url).catch(() => {})}>
               <View style={[styles.docIcon, { backgroundColor: theme.brand + '22' }]}>
                 <Ionicons name="document-text" size={22} color={theme.brand} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.docName, { color: theme.textPrimary }]} numberOfLines={1}>
-                  {fileNameOf(item)}
+                  {item.name}
                 </Text>
                 <Text style={[styles.linkTime, { color: theme.textTertiary }]}>{timeLabel(item.createdAt)}</Text>
               </View>

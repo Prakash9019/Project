@@ -36,6 +36,7 @@ function MessageBubbleBase({
   onReactionLongPress,
   onAvatarPress,
   onReplyPress,
+  onImagePress,
 }: {
   message: RoomMessageCard;
   isOwn: boolean;
@@ -49,6 +50,8 @@ function MessageBubbleBase({
   onReactionLongPress?: (emoji: string) => void;
   onAvatarPress: () => void;
   onReplyPress?: () => void;
+  /** Open the full-screen media viewer for a tapped image. */
+  onImagePress?: (url: string) => void;
 }) {
   const { theme } = useTheme();
   const s = message.sender;
@@ -168,7 +171,7 @@ function MessageBubbleBase({
         />
       ) : null}
       {!deleted && isImage ? (
-        <View style={styles.imageWrap}>
+        <Pressable style={styles.imageWrap} onPress={() => onImagePress?.(media)}>
           <Image
             key={reloadKey}
             source={{ uri: media }}
@@ -190,7 +193,7 @@ function MessageBubbleBase({
               <Text style={styles.imageRetryText}>Tap to retry</Text>
             </Pressable>
           ) : null}
-        </View>
+        </Pressable>
       ) : null}
       {!deleted && isVideo ? renderMediaCard('videocam', 'Video', 'Tap to play') : null}
       {!deleted && isVoice ? <VoicePlayer uri={media} seed={message.id} isOwn={isOwn} /> : null}

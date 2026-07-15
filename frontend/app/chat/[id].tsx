@@ -14,6 +14,9 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Location from 'expo-location';
+import { Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +25,10 @@ import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { ExpiringPhotoViewer } from '../../src/components/ExpiringPhotoViewer';
 import { PhotoViewer } from '../../src/components/PhotoViewer';
+import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { AttachmentSheet, type AttachmentKind } from '../../src/components/rooms/AttachmentSheet';
+import type { GifResult } from '../../src/components/rooms/GifPicker';
+import { uploadToR2 } from '../../src/utils/uploadToR2';
 import {
   listMessages,
   markConversationRead,
@@ -35,6 +42,7 @@ import {
   unsendMessage,
   editMessage,
   ApiError,
+  type SendMessageBody,
 } from '../../src/services/api';
 import { connectSocket, emitTyping } from '../../src/services/socket';
 import { useAuthStore } from '../../src/store/authStore';
@@ -87,6 +95,7 @@ export default function Chat() {
   const listRef = useRef<FlatList<ChatRow>>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const [peerId, setPeerId] = useState<string | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(false);
   // Peer's own availability toggles (default true until loaded — never over-disable).
@@ -100,15 +109,48 @@ export default function Chat() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [peerTyping, setPeerTyping] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [attachSheetOpen, setAttachSheetOpen] = useState(false);
   const [albumPickerOpen, setAlbumPickerOpen] = useState(false);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
   const [expiringView, setExpiringView] = useState<{ url: string | null; seconds: number; loading: boolean } | null>(null);
   const [photoViewUrl, setPhotoViewUrl] = useState<string | null>(null);
+  const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rows = useMemo(() => buildRows(messages), [messages]);
+
+  // Flat list of every shareable photo in the conversation (album/multi-photo
+  // messages contribute each url) for the full-screen MediaViewer. View-once and
+  // unsent messages are excluded — they have their own consume-once flow.
+  const viewerImages = useMemo<MediaViewerImage[]>(() => {
+    const out: MediaViewerImage[] = [];
+    messages.forEach((m) => {
+      if (m.isUnsent || isViewOnce(m) || m.type !== 'photo') return;
+      const urls = m.mediaUrls.length ? m.mediaUrls : m.mediaUrl ? [m.mediaUrl] : [];
+      urls.forEach((uri) => {
+        if (!uri) return;
+        out.push({
+          uri,
+          senderId: m.senderId,
+          senderName: m.senderId === me?.id ? 'You' : peerName || 'Someone',
+          createdAt: m.createdAt,
+        });
+      });
+    });
+    return out;
+  }, [messages, me?.id, peerName]);
+
+  const openImageViewer = useCallback(
+    (url: string) => {
+      const idx = viewerImages.findIndex((e) => e.uri === url);
+      setMediaViewerIndex(idx < 0 ? 0 : idx);
+      setMediaViewerOpen(true);
+    },
+    [viewerImages],
+  );
 
   const upsert = useCallback((msg: Message) => {
     setMessages((prev) => {
@@ -141,6 +183,7 @@ export default function Chat() {
         const convo = useChatStore.getState().conversations.find((c) => c.id === conversationId);
         const peerId = convo?.peer?.id ?? res.messages.find((m) => m.senderId !== me?.id)?.senderId;
         if (peerId) {
+          setPeerId(peerId);
           getPublicProfile(peerId)
             .then((p) => {
               if (!active) return;
@@ -442,6 +485,120 @@ export default function Chat() {
     }
   };
 
+  // Upload a non-photo file to R2 and send it. Videos use the native 'video'
+  // message type; documents/audio ride on a text message carrying the file url
+  // in mediaUrls with an emoji-prefixed caption (rendered as a tappable card,
+  // mirroring the group chat MessageBubble contract).
+  const uploadAndSendFile = async (
+    localUri: string,
+    uploadType: 'video' | 'document' | 'audio',
+    contentType: string,
+    body: SendMessageBody,
+  ) => {
+    setSending(true);
+    setBanner(null);
+    try {
+      const url = await uploadToR2(localUri, uploadType, contentType);
+      await postMessage({ ...body, mediaUrls: [url] });
+    } catch (e) {
+      setBanner((e as ApiError).message ?? 'Could not send attachment');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const captureAndSend = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return;
+    // The native camera's capture-confirm screen acts as the send preview.
+    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.8 });
+    if (res.canceled || !res.assets[0]) return;
+    const asset = res.assets[0];
+    if (asset.type === 'video') {
+      await uploadAndSendFile(asset.uri, 'video', 'video/mp4', { type: 'video', content: '' });
+    } else {
+      setSending(true);
+      setBanner(null);
+      try {
+        await uploadAndSendPhoto(asset.uri, false);
+        fetchConversations('inbox', true).catch(() => {});
+      } catch (e) {
+        setBanner((e as ApiError).message ?? 'Could not send photo');
+      } finally {
+        setSending(false);
+      }
+    }
+  };
+
+  const pickAndSendVideo = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 0.7 });
+    if (res.canceled || !res.assets[0]) return;
+    await uploadAndSendFile(res.assets[0].uri, 'video', 'video/mp4', { type: 'video', content: '' });
+  };
+
+  const pickAndSendDocument = async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    if (res.canceled || !res.assets?.[0]) return;
+    const file = res.assets[0];
+    const ext = file.name?.includes('.') ? file.name.split('.').pop() : undefined;
+    setSending(true);
+    setBanner(null);
+    try {
+      const url = await uploadToR2(file.uri, 'document', file.mimeType || 'application/octet-stream', { ext });
+      await postMessage({ type: 'text', content: `📄 ${file.name ?? 'Document'}`, mediaUrls: [url] });
+    } catch (e) {
+      setBanner((e as ApiError).message ?? 'Could not send document');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const pickAndSendAudio = async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
+    if (res.canceled || !res.assets?.[0]) return;
+    const file = res.assets[0];
+    setSending(true);
+    setBanner(null);
+    try {
+      const url = await uploadToR2(file.uri, 'audio', file.mimeType || 'audio/mpeg');
+      await postMessage({ type: 'text', content: `🎵 ${file.name ?? 'Audio'}`, mediaUrls: [url] });
+    } catch (e) {
+      setBanner((e as ApiError).message ?? 'Could not send audio');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendLocation = async () => {
+    const perm = await Location.requestForegroundPermissionsAsync();
+    if (!perm.granted) return;
+    try {
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const { latitude, longitude } = pos.coords;
+      await postMessage({
+        type: 'text',
+        content: `📍 My location: https://maps.google.com/?q=${latitude},${longitude}`,
+      });
+    } catch {
+      setBanner('Could not get your location');
+    }
+  };
+
+  const sendGif = async (gif: GifResult) => {
+    await postMessage({ type: 'photo', content: '', mediaUrls: [gif.url] });
+  };
+
+  const onPickAttachment = async (kind: AttachmentKind) => {
+    setAttachSheetOpen(false);
+    if (kind === 'camera') return captureAndSend();
+    if (kind === 'gallery') return pickAndSendPhoto(false);
+    if (kind === 'video') return pickAndSendVideo();
+    if (kind === 'document') return pickAndSendDocument();
+    if (kind === 'audio') return pickAndSendAudio();
+    if (kind === 'location') return sendLocation();
+    // contact / sticker are not supported in 1:1 chat.
+  };
+
   const openAlbumPicker = async () => {
     setAttachOpen(false);
     setAlbumPickerOpen(true);
@@ -579,7 +736,7 @@ export default function Chat() {
     if (item.type === 'photo' && item.mediaUrls.length > 0) {
       const isAlbum = item.content?.startsWith('📁 ');
       return (
-        <Pressable onPress={() => setPhotoViewUrl(item.mediaUrls[0] ?? item.mediaUrl)}>
+        <Pressable onPress={() => openImageViewer(item.mediaUrls[0] ?? item.mediaUrl ?? '')}>
           <View style={styles.photoStack}>
             <Image source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} cachePolicy="memory-disk" />
             {item.mediaUrls.length > 1 && (
@@ -612,6 +769,27 @@ export default function Chat() {
           <Ionicons name="mic" size={16} color={mine ? theme.textInverse : theme.textPrimary} />
           <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Voice message</Text>
         </View>
+      );
+    }
+
+    // Document / audio file: a text message carrying the file url in mediaUrls
+    // with an emoji-prefixed caption. Renders a tappable card that opens the file.
+    const fileUrl = item.mediaUrls[0];
+    const isDoc = item.type === 'text' && !!fileUrl && item.content?.startsWith('📄');
+    const isAudioFile = item.type === 'text' && !!fileUrl && item.content?.startsWith('🎵');
+    if (isDoc || isAudioFile) {
+      const label = (item.content ?? '').replace(/^(📄|🎵)\s*/, '') || (isDoc ? 'Document' : 'Audio');
+      const fg = mine ? theme.textInverse : theme.textPrimary;
+      const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
+      return (
+        <Pressable style={styles.fileCard} onPress={() => fileUrl && Linking.openURL(fileUrl).catch(() => {})}>
+          <Ionicons name={isDoc ? 'document-text' : 'musical-notes'} size={22} color={mine ? theme.textInverse : theme.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{label}</Text>
+            <Text style={[styles.fileSub, { color: sub }]}>{isDoc ? 'Tap to open' : 'Tap to play'}</Text>
+          </View>
+          <Ionicons name="download-outline" size={20} color={fg} />
+        </Pressable>
       );
     }
 
@@ -712,19 +890,31 @@ export default function Chat() {
         <Pressable onPress={() => router.back()} hitSlop={12}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </Pressable>
-        {peerPhoto ? (
-          <Image source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-        ) : (
-          <View style={[styles.headAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
-            <Ionicons name="person" size={20} color={theme.textTertiary} />
+        <Pressable
+          style={styles.headTap}
+          disabled={!peerId}
+          onPress={() =>
+            peerId &&
+            router.push({
+              pathname: '/profile/[id]',
+              params: { id: peerId, fromChat: conversationId, peerName: peerName ?? '' },
+            })
+          }
+        >
+          {peerPhoto ? (
+            <Image source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+          ) : (
+            <View style={[styles.headAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="person" size={20} color={theme.textTertiary} />
+            </View>
+          )}
+          <View style={styles.headProfile}>
+            <Text style={[styles.headName, { color: theme.textPrimary }]} numberOfLines={1}>
+              {peerName || 'Chat'}
+            </Text>
+            {peerTyping && <Text style={[styles.headStatus, { color: theme.online }]}>typing…</Text>}
           </View>
-        )}
-        <View style={styles.headProfile}>
-          <Text style={[styles.headName, { color: theme.textPrimary }]} numberOfLines={1}>
-            {peerName || 'Chat'}
-          </Text>
-          {peerTyping && <Text style={[styles.headStatus, { color: theme.online }]}>typing…</Text>}
-        </View>
+        </Pressable>
         <CallButton type="audio" />
         <CallButton type="video" />
       </View>
@@ -768,6 +958,9 @@ export default function Chat() {
         )}
 
         <View style={[styles.composer, { borderTopColor: theme.border }]}>
+          <Pressable onPress={() => setAttachSheetOpen(true)} style={styles.attachBtn} disabled={sending || !!editingMessage}>
+            <Ionicons name="add-circle-outline" size={26} color={theme.brand} />
+          </Pressable>
           <Pressable onPress={() => setAttachOpen(true)} style={styles.attachBtn} disabled={sending || !!editingMessage}>
             <Ionicons name="image-outline" size={24} color={theme.brand} />
           </Pressable>
@@ -852,6 +1045,18 @@ export default function Chat() {
         onClose={() => setExpiringView(null)}
       />
       <PhotoViewer visible={!!photoViewUrl} url={photoViewUrl} onClose={() => setPhotoViewUrl(null)} />
+      <MediaViewer
+        visible={mediaViewerOpen}
+        images={viewerImages}
+        initialIndex={mediaViewerIndex}
+        onClose={() => setMediaViewerOpen(false)}
+      />
+      <AttachmentSheet
+        visible={attachSheetOpen}
+        onClose={() => setAttachSheetOpen(false)}
+        onPick={onPickAttachment}
+        onGifSelected={sendGif}
+      />
 
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
     </SafeAreaView>
@@ -861,6 +1066,7 @@ export default function Chat() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
+  headTap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 },
   headAvatar: { width: 36, height: 36, borderRadius: 18 },
   headProfile: { flex: 1 },
   headName: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700' },
@@ -880,6 +1086,9 @@ const styles = StyleSheet.create({
   textMe: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.regular },
   removed: { fontSize: FontSize.md, fontFamily: FontFamily.regular, fontStyle: 'italic' },
   mediaChip: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  fileCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200 },
+  fileName: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
+  fileSub: { fontSize: FontSize.xs, fontFamily: FontFamily.regular, marginTop: 1 },
   snapTile: { width: 160, borderRadius: 12, overflow: 'hidden' },
   snapOpened: { opacity: 0.55 },
   snapImage: { width: 160, height: 200 },

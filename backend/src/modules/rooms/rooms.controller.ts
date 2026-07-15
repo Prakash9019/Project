@@ -4,6 +4,7 @@ import type {
   ListRoomsQuery,
   ListJoinedQuery,
   ListMessagesQuery,
+  ListMediaQuery,
   SendMessageBody,
   ReactBody,
   ListMembersQuery,
@@ -12,6 +13,8 @@ import type {
   UpdateMemberRoleBody,
   UpdateRoomPhotoBody,
   TransferOwnershipBody,
+  CreateRoomBody,
+  BulkAddMembersBody,
 } from './rooms.schema';
 
 export async function listRooms(req: Request, res: Response): Promise<void> {
@@ -30,6 +33,18 @@ export async function listJoined(req: Request, res: Response): Promise<void> {
   const q = req.query as unknown as ListJoinedQuery;
   const rooms = await svc.listJoinedRooms(req.user!.sub, { limit: q.limit, offset: q.offset });
   res.status(200).json({ rooms });
+}
+
+export async function createRoom(req: Request, res: Response): Promise<void> {
+  const body = req.body as CreateRoomBody;
+  const room = await svc.createRoom(req.user!.sub, body);
+  res.status(201).json({ room });
+}
+
+export async function bulkAddMembers(req: Request, res: Response): Promise<void> {
+  const { userIds } = req.body as BulkAddMembersBody;
+  const result = await svc.bulkAddMembers(req.user!.sub, req.params.roomId, userIds);
+  res.status(200).json(result);
 }
 
 export async function getRoom(req: Request, res: Response): Promise<void> {
@@ -75,6 +90,16 @@ export async function cancelInvite(req: Request, res: Response): Promise<void> {
 export async function listMessages(req: Request, res: Response): Promise<void> {
   const q = req.query as unknown as ListMessagesQuery;
   const result = await svc.listMessages(req.user!.sub, req.params.roomId, { before: q.before, limit: q.limit });
+  res.status(200).json(result);
+}
+
+export async function listMedia(req: Request, res: Response): Promise<void> {
+  const q = req.query as unknown as ListMediaQuery;
+  const result = await svc.listRoomMedia(req.user!.sub, req.params.roomId, {
+    type: q.type,
+    cursor: q.cursor,
+    limit: q.limit,
+  });
   res.status(200).json(result);
 }
 

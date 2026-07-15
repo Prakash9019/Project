@@ -8,6 +8,7 @@ import {
   listRoomsQuerySchema,
   listJoinedQuerySchema,
   listMessagesQuerySchema,
+  listMediaQuerySchema,
   sendMessageSchema,
   reactSchema,
   listMembersQuerySchema,
@@ -18,6 +19,8 @@ import {
   updateMemberRoleSchema,
   updateRoomPhotoSchema,
   transferOwnershipSchema,
+  createRoomSchema,
+  bulkAddMembersSchema,
 } from './rooms.schema';
 
 const router = Router();
@@ -26,6 +29,9 @@ router.use(requireAuth, requireVerifiedPhone);
 // Discovery / listing
 router.get('/', validate(listRoomsQuerySchema, 'query'), asyncHandler(c.listRooms));
 router.get('/joined', validate(listJoinedQuerySchema, 'query'), asyncHandler(c.listJoined));
+
+// Create a user-owned group (creator becomes an admin member).
+router.post('/', validate(createRoomSchema), asyncHandler(c.createRoom));
 
 // Invites — MUST be registered before '/:roomId' so "invites" isn't matched as a roomId.
 router.get('/invites', asyncHandler(c.listInvites));
@@ -50,6 +56,14 @@ router.delete('/:roomId/join', asyncHandler(c.leaveRoom));
 // Invite or directly add a user to a room (must be a member to do this).
 router.post('/:roomId/invite-or-add/:userId', requireRoomMember, asyncHandler(c.inviteOrAddMember));
 
+// Bulk add/invite members (creator/admin only — asserted in the service).
+router.post(
+  '/:roomId/members/bulk',
+  requireRoomMember,
+  validate(bulkAddMembersSchema),
+  asyncHandler(c.bulkAddMembers),
+);
+
 // Messages — require membership
 router.get(
   '/:roomId/messages',
@@ -62,6 +76,13 @@ router.post(
   requireRoomMember,
   validate(sendMessageSchema),
   asyncHandler(c.sendMessage),
+);
+// Shared media / links / documents (Group Info screen) — require membership
+router.get(
+  '/:roomId/media',
+  requireRoomMember,
+  validate(listMediaQuerySchema, 'query'),
+  asyncHandler(c.listMedia),
 );
 router.post(
   '/:roomId/messages/:messageId/react',

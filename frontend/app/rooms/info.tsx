@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { Avatar } from '../../src/components/Avatar';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../../src/theme';
@@ -75,9 +75,12 @@ export default function RoomInfo() {
     }
   }, [id]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Reload on focus so returning from the Add Members picker reflects new members.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const myRole = useMemo(
     () => members.find((mm) => mm.user.id === me?.id)?.role ?? 'member',
@@ -486,7 +489,10 @@ export default function RoomInfo() {
           {formatCount(totalMembers)} Members
         </Text>
         {isAdmin ? (
-          <Pressable style={styles.addMember} onPress={() => showSuccess('Add member coming soon')}>
+          <Pressable
+            style={styles.addMember}
+            onPress={() => router.push(`/create-group/members?roomId=${id}` as Href)}
+          >
             <View style={[styles.addIcon, { backgroundColor: theme.brand + '22' }]}>
               <Ionicons name="person-add" size={20} color={theme.brand} />
             </View>
@@ -665,6 +671,7 @@ function MemberRow({
       <View style={{ flex: 1 }}>
         <View style={styles.memberNameRow}>
           <Text style={[styles.memberName, { color: theme.textPrimary }]} numberOfLines={1}>
+            {badge === 'creator' ? '👑 ' : ''}
             {u.firstName ?? 'Someone'}
             {isSelf ? ' (You)' : ''}
           </Text>

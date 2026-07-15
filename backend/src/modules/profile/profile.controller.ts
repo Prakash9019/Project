@@ -258,6 +258,13 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
   res.status(200).json({ ...serializeSettings(settings ?? {}), ...userExtras });
 }
 
+// Distance accuracy depends on BOTH users having recently sent location updates.
+// Stale distances are expected if either user hasn't opened the app recently:
+// coordinates are only refreshed when a client foregrounds / focuses a
+// discovery tab and calls this endpoint (see frontend _layout.tsx AppState +
+// (tabs)/index.tsx & right-now.tsx focus effects). This handler persists to BOTH
+// the durable DB columns (survives a Redis flush/restart) AND the Redis geo
+// index (the fast query layer) so neither layer can silently go stale.
 export async function updateLocation(req: Request, res: Response): Promise<void> {
   const { lat, lng } = req.body as z.infer<typeof locationSchema>;
   const userId = req.user!.sub;
@@ -362,6 +369,38 @@ export async function getPublicProfile(req: Request, res: Response): Promise<voi
   res.status(200).json(
     serializePublicProfile(await signUserPhotos(user), viewer, { isLiked: !!tap, isShortlisted: !!favorite }),
   );
+}
+
+// ── Rooms a user has joined (mutual-groups) ──────────────
+// Powers the "Groups in Common" section of the in-chat contact profile. The
+// client intersects this with its own joined rooms. Blocked either direction → 404.
+export async function getUserRooms(req: Request, res: Response): Promise<void> {
+  const viewerId = req.user!.sub;
+  const parsed = uuidParam.safeParse(req.params.userId);
+  if (!parsed.success) { res.status(400).json({ error: 'validation_error', message: 'Invalid ID format' }); return; }
+  const userId = parsed.data;
+
+  const blocked = await prisma.block.findFirst({
+    where: { OR: [{ blockerId: viewerId, blockedId: userId }, { blockerId: userId, blockedId: viewerId }] },
+    select: { id: true },
+  });
+  if (blocked) throw Errors.notFound('Profile not available');
+
+  const memberships = await prisma.roomMember.findMany({
+    where: { userId },
+    include: { room: true },
+  });
+  const active = memberships.filter((m) => m.room.isActive);
+  const rooms = await Promise.all(
+    active.map(async (m) => ({
+      id: m.room.id,
+      name: m.room.name,
+      category: m.room.category,
+      coverImageUrl: await signUrl(m.room.coverImageUrl),
+      memberCount: m.room.memberCount,
+    })),
+  );
+  res.status(200).json({ rooms });
 }
 
 // ── Prompts ──────────────────────────────────────────────

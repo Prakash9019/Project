@@ -7,10 +7,11 @@ try {
 } catch (e) {
   console.warn('[Firebase] Native module not available — rebuild the app with `npx expo run:android` or `npx expo run:ios`:', e);
 }
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Stack, useRouter, useNavigationContainerRef } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
+import * as Location from 'expo-location';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -32,7 +33,8 @@ import {
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { setOnAuthFailure } from '../src/services/auth';
-import { connectSocket } from '../src/services/socket';
+import { connectSocket, emitLocationUpdate } from '../src/services/socket';
+import { updateLocation } from '../src/services/api';
 import { useAuthStore } from '../src/store/authStore';
 import { useChatStore } from '../src/store/chatStore';
 import { useGroupsStore } from '../src/store/groupsStore';
@@ -70,6 +72,7 @@ function RootStack() {
   const logout = useAuthStore((s) => s.logout);
   const authedUserId = useAuthStore((s) => s.user?.id);
   const navContainerRef = useNavigationContainerRef();
+  const appState = useRef(AppState.currentState);
 
   // Expose the router's navigation container so toast logic can read the
   // focused route/params and suppress notifications for the screen you're on.
@@ -95,6 +98,32 @@ function RootStack() {
   // disconnects it. Keyed on user id so it re-establishes on account switch.
   useEffect(() => {
     if (authedUserId) connectSocket().catch(() => {});
+  }, [authedUserId]);
+
+  // Refresh the user's location whenever the app returns to the foreground.
+  // Distances shown across the app go stale while backgrounded (the user may
+  // have moved); pushing a fresh fix on resume corrects both our own outgoing
+  // distance and keeps us discoverable. Silent — never interrupts the user.
+  useEffect(() => {
+    if (!authedUserId) return;
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      const cameToForeground =
+        appState.current.match(/inactive|background/) && nextState === 'active';
+      appState.current = nextState;
+      if (!cameToForeground) return;
+      try {
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (perm.status !== 'granted') return;
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        emitLocationUpdate(loc.coords.latitude, loc.coords.longitude);
+        updateLocation(loc.coords.latitude, loc.coords.longitude).catch(() => {});
+      } catch {
+        // Silent fail — don't interrupt the user on a location hiccup.
+      }
+    });
+    return () => sub.remove();
   }, [authedUserId]);
 
   // Global notification toasts. One always-mounted place turns realtime socket
@@ -193,6 +222,7 @@ function RootStack() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="profile/[id]" options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="chat/[id]" />
+          <Stack.Screen name="chat/media" />
           <Stack.Screen name="call/[id]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
           <Stack.Screen name="filters" options={{ presentation: 'modal' }} />
           <Stack.Screen name="explore" options={{ presentation: 'modal' }} />
@@ -208,6 +238,8 @@ function RootStack() {
           <Stack.Screen name="rooms/members" options={{ presentation: 'modal' }} />
           <Stack.Screen name="rooms/info" />
           <Stack.Screen name="rooms/media" />
+          <Stack.Screen name="create-group/members" />
+          <Stack.Screen name="create-group/details" />
         </Stack>
         {/* Incoming calls now surface as a 'call_incoming' toast (with
             Accept/Decline) via the socket listener above — no separate sheet. */}

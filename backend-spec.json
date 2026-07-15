@@ -668,6 +668,21 @@
       }
     },
     {
+      "id": "get-user-rooms",
+      "method": "GET",
+      "path": "/api/v1/users/:userId/rooms",
+      "auth": "bearer+verified",
+      "summary": "Rooms (groups) the target user has joined. Powers the 'Groups in Common' section of the in-chat contact profile (the client intersects this with its own joined rooms). Respects block rules (blocked either direction -> 404). Each room: { id, name, category, coverImageUrl (signed|null), memberCount }.",
+      "responses": {
+        "200": {
+          "schema": {
+            "rooms": "{ id: string, name: string, category: RoomCategory, coverImageUrl: string|null, memberCount: number }[]"
+          }
+        },
+        "404": {}
+      }
+    },
+    {
       "id": "get-grid",
       "method": "GET",
       "path": "/api/v1/grid",
@@ -1616,6 +1631,27 @@
       }
     },
     {
+      "id": "rooms-create",
+      "method": "POST",
+      "path": "/api/rooms",
+      "auth": "bearer+verified",
+      "summary": "Create a user-owned group. isOfficial=false, isActive=true, memberCount=1. The creator is recorded via Room.creatorId AND seeded as a RoomMember with role 'admin' (RoomRole has no 'creator' value; creator status is derived from creatorId). Returns the full RoomDetail (with myRole='admin', isCreator=true) so the client can open the new room.",
+      "body": [
+        { "name": "name", "type": "string", "notes": "required, 1-100 chars" },
+        { "name": "description", "type": "string", "nullable": true, "notes": "optional, max 500 chars" },
+        { "name": "category", "type": "RoomCategory", "notes": "required" },
+        { "name": "coverImageUrl", "type": "string", "nullable": true, "notes": "optional; hosted URL or bare R2 object key (signed on read)" },
+        { "name": "isVerifiedOnly", "type": "boolean", "nullable": true, "notes": "default false" }
+      ],
+      "responses": {
+        "201": {
+          "schema": {
+            "room": "RoomDetail"
+          }
+        }
+      }
+    },
+    {
       "id": "rooms-detail",
       "method": "GET",
       "path": "/api/rooms/:roomId",
@@ -1691,6 +1727,41 @@
             "messages": "RoomMessageCard[]",
             "hasMore": "boolean",
             "nextCursor": "iso8601|null"
+          }
+        }
+      }
+    },
+    {
+      "id": "rooms-media-list",
+      "method": "GET",
+      "path": "/api/rooms/:roomId/media",
+      "auth": "bearer+verified+member",
+      "summary": "Shared media for the Group Info 'Media, Links & Documents' screen. Filters the room's non-deleted messages by kind: image (type='image' with mediaUrl), voice (type='voice' with mediaUrl), document (text message with mediaUrl and a 📄 caption), link (text message whose content contains a URL — rare, external links are blocked at send time). Omitting type returns all messages with a mediaUrl. Each item is a RoomMessageCard (signed mediaUrl, sender UserCard). Cursor paginates by createdAt, newest first.",
+      "query": [
+        {
+          "name": "type",
+          "type": "string",
+          "nullable": true,
+          "notes": "one of image|link|document|voice; omit for all shared media"
+        },
+        {
+          "name": "cursor",
+          "type": "iso8601",
+          "nullable": true,
+          "notes": "createdAt cursor for pagination"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "notes": "default 50, max 50"
+        }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "media": "RoomMessageCard[]",
+            "nextCursor": "iso8601|null",
+            "hasMore": "boolean"
           }
         }
       }
@@ -2005,6 +2076,26 @@
         "method": "'direct' | 'invite_sent' | 'already_member' | 'invite_already_sent'"
       },
       "notes": "201 {added:true,method:'direct'} on direct add; 201 {added:false,method:'invite_sent'} when an invite is created; 200 {added:true,method:'already_member'} if already a member; 200 {added:false,method:'invite_already_sent'} if a pending invite already exists; 403 cannot_add_user when target is not groupsAvailable and no conversation exists."
+    },
+    {
+      "id": "rooms-members-bulk",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/members/bulk",
+      "auth": "bearer+verified",
+      "summary": "Bulk add/invite members to a room (creator/admin only; asserted in the service). Each userId runs through the same invite-or-add policy: groupsAvailable users are added directly, users with an existing conversation get an invite, everyone else (and the requester themselves) is skipped. De-dupes userIds.",
+      "body": [
+        { "name": "userIds", "type": "string[]", "notes": "1-50 user UUIDs" }
+      ],
+      "responses": {
+        "200": {
+          "schema": {
+            "added": "string[]",
+            "invited": "string[]",
+            "skipped": "string[]"
+          }
+        }
+      },
+      "notes": "added = directly joined; invited = invite sent (or already pending); skipped = already a member, not addable (403 cannot_add_user), or an error. Requester must be a room member (requireRoomMember) and creator/admin."
     },
     {
       "id": "rooms-invites-list",

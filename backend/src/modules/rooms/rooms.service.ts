@@ -258,6 +258,75 @@ export async function getRoomDetail(userId: string, roomId: string) {
   };
 }
 
+// ── Create (user-generated group) ──────────────────────────────────────────────
+
+/**
+ * Create a user-owned group. The creator is recorded via Room.creatorId AND
+ * seeded as a RoomMember with role 'admin' (RoomRole has no 'creator' value —
+ * creator status is derived from creatorId everywhere, e.g. serializeRoom /
+ * assertRoomAdmin). Returns the full RoomDetail so the client can open it.
+ */
+export async function createRoom(
+  userId: string,
+  body: {
+    name: string;
+    description?: string;
+    category: RoomCategory;
+    coverImageUrl?: string;
+    isVerifiedOnly?: boolean;
+  },
+) {
+  const room = await prisma.room.create({
+    data: {
+      name: body.name,
+      description: body.description ?? null,
+      category: body.category,
+      coverImageUrl: body.coverImageUrl ?? null,
+      isVerifiedOnly: body.isVerifiedOnly ?? false,
+      creatorId: userId,
+      isOfficial: false,
+      isActive: true,
+      memberCount: 1,
+      members: { create: { userId, role: 'admin' } },
+    },
+  });
+  return getRoomDetail(userId, room.id);
+}
+
+/**
+ * Add many users to a room in one call (creator/admin only). Each user goes
+ * through the same inviteOrAddMember policy: open-to-groups users are added
+ * directly, users we already talk to get an invite, everyone else is skipped.
+ */
+export async function bulkAddMembers(requesterId: string, roomId: string, userIds: string[]) {
+  await assertRoomAdmin(requesterId, roomId);
+
+  const added: string[] = [];
+  const invited: string[] = [];
+  const skipped: string[] = [];
+
+  // De-dupe and never (self-)add the requester.
+  const targets = [...new Set(userIds)].filter((id) => id !== requesterId);
+
+  for (const targetUserId of targets) {
+    try {
+      const { body } = await inviteOrAddMember(requesterId, roomId, targetUserId);
+      if (body.method === 'direct') added.push(targetUserId);
+      else if (body.method === 'invite_sent' || body.method === 'invite_already_sent') {
+        invited.push(targetUserId);
+      } else {
+        // already_member — nothing to do.
+        skipped.push(targetUserId);
+      }
+    } catch {
+      // cannot_add_user (no conversation + not open to groups), user not found, etc.
+      skipped.push(targetUserId);
+    }
+  }
+
+  return { added, invited, skipped };
+}
+
 // ── Join / leave ──────────────────────────────────────────────────────────────
 
 export async function joinRoom(userId: string, roomId: string) {
@@ -610,6 +679,80 @@ export async function listMessages(
   if (!opts.before) await markRoomRead(userId, roomId);
 
   return { messages: serialized, hasMore, nextCursor };
+}
+
+/**
+ * Shared media for the Group Info "Media, Links & Documents" screen. Filters the
+ * room's messages by kind:
+ *  - image    → type='image' with a mediaUrl (photos, GIFs, videos)
+ *  - voice    → type='voice' with a mediaUrl
+ *  - document → text messages carrying a file (mediaUrl set, 📄 caption)
+ *  - link     → text messages containing a URL (rare in rooms — external links
+ *               are blocked at send time by violatesRoomContentRules)
+ * Omitting `type` returns all shared media (images + docs + voice). Cursor
+ * paginates by createdAt, newest first.
+ */
+export async function listRoomMedia(
+  userId: string,
+  roomId: string,
+  opts: { type?: 'image' | 'link' | 'document' | 'voice'; cursor?: string; limit: number },
+) {
+  const base: Prisma.RoomMessageWhereInput = {
+    roomId,
+    isDeleted: false,
+    ...(opts.cursor ? { createdAt: { lt: new Date(opts.cursor) } } : {}),
+  };
+
+  let kindFilter: Prisma.RoomMessageWhereInput;
+  switch (opts.type) {
+    case 'image':
+      kindFilter = { type: 'image', mediaUrl: { not: null } };
+      break;
+    case 'voice':
+      kindFilter = { type: 'voice', mediaUrl: { not: null } };
+      break;
+    case 'document':
+      kindFilter = { type: 'text', mediaUrl: { not: null }, content: { startsWith: '📄' } };
+      break;
+    case 'link':
+      kindFilter = {
+        type: 'text',
+        OR: [{ content: { contains: 'http' } }, { content: { contains: 'www.' } }],
+      };
+      break;
+    default:
+      // All shared media: any message with a mediaUrl.
+      kindFilter = { mediaUrl: { not: null } };
+  }
+
+  const where: Prisma.RoomMessageWhereInput = { AND: [base, kindFilter] };
+
+  const messages = await prisma.roomMessage.findMany({
+    where,
+    include: {
+      sender: { include: PHOTO_INCLUDE },
+      replyTo: { include: { sender: { select: { firstName: true, name: true } } } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: opts.limit + 1,
+  });
+
+  const hasMore = messages.length > opts.limit;
+  const page = hasMore ? messages.slice(0, opts.limit) : messages;
+
+  const senderIds = [...new Set(page.map((m) => m.senderId))];
+  const online = await presenceSet(senderIds);
+  const ctx: SerializeMsgCtx = {
+    viewerId: userId,
+    online,
+    distances: new Map(),
+    reactions: new Map(),
+    deliveries: new Map(),
+  };
+
+  const media = await Promise.all(page.map((m) => serializeMessage(m, ctx)));
+  const nextCursor = hasMore ? page[page.length - 1].createdAt.toISOString() : null;
+  return { media, nextCursor, hasMore };
 }
 
 /**

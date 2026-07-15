@@ -97,6 +97,11 @@ function GroupCardBase({
               {room.name}
             </Text>
             {room.isOfficial ? <Ionicons name="checkmark-circle" size={15} color={theme.info} /> : null}
+            {joined && joined.role !== 'member' ? (
+              <View style={[styles.adminBadge, { backgroundColor: theme.brand + '22' }]}>
+                <Text style={[styles.adminBadgeText, { color: theme.brand }]}>Admin</Text>
+              </View>
+            ) : null}
             {variant === 'joined' ? (
               <Text style={[styles.time, { color: theme.textTertiary }]}>{relativeTime(room.lastActivityAt)}</Text>
             ) : null}
@@ -172,6 +177,7 @@ export const GroupCard = memo(GroupCardBase, (prev, next) => {
     a.onlineCount === b.onlineCount &&
     a.lastActivityAt === b.lastActivityAt &&
     (a.unreadCount ?? 0) === (b.unreadCount ?? 0) &&
+    a.role === b.role &&
     prev.joining === next.joining &&
     prev.variant === next.variant
   );
@@ -204,6 +210,8 @@ const styles = StyleSheet.create({
     marginLeft: 'auto',
   },
   unreadBadgeText: { color: '#fff', fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
+  adminBadge: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill },
+  adminBadgeText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   name: { fontSize: FontSize.lg, fontFamily: DisplayFont.medium, flexShrink: 1 },
   time: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginLeft: 'auto' },

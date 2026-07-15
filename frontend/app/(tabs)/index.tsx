@@ -29,6 +29,7 @@ import { TapsList } from '../../src/components/interest/TapsList';
 import { planAtLeast } from '../../src/lib/format';
 import { markInterestSeen, hasUnreadInterest } from '../../src/utils/interestUnread';
 import { updateLocation, getSpotlight, GridQuery } from '../../src/services/api';
+import { emitLocationUpdate } from '../../src/services/socket';
 import { showError } from '../../src/lib/toast';
 import type { UserCard } from '../../src/types/api';
 
@@ -101,6 +102,9 @@ export default function Browse() {
   // with no visible symptom on our own screen (our own grid still loads fine
   // from local coords) — so failures must never be swallowed silently.
   const syncLocation = useCallback((lat: number, lng: number) => {
+    // Real-time layer: keep the server's Redis geo index warm immediately.
+    emitLocationUpdate(lat, lng);
+    // Durable layer: persist to the DB (survives Redis flush/restart).
     updateLocation(lat, lng)
       .then(() => { locationSyncWarned.current = false; })
       .catch((e) => {
@@ -131,7 +135,10 @@ export default function Browse() {
           return;
         }
         setPermDenied(false);
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        // Balanced accuracy is battery-friendly and precise enough for a grid.
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
         const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setCoords(c);
         syncLocation(c.lat, c.lng);
@@ -155,22 +162,16 @@ export default function Browse() {
     acquireAndLoad(false);
   }, [activeFilter, filterVersion, exploreLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh every 3 minutes while focused.
+  // Re-acquire a FRESH GPS fix on every focus so distances are never stale from
+  // a location captured on a previous session/tab. acquireAndLoad() gets a new
+  // fix, pushes it to the backend (REST + socket), and refetches the grid.
+  // Also refresh every 3 minutes while the tab stays focused.
   useFocusEffect(
     useCallback(() => {
-      if (coords && Date.now() - lastRefresh.current > REFRESH_MS) {
-        fetchGrid({ ...coords, ...query }, true);
-        lastRefresh.current = Date.now();
-      }
-      const id = setInterval(() => {
-        if (coords) {
-          if (!exploreLocation) syncLocation(coords.lat, coords.lng);
-          fetchGrid({ ...coords, ...query }, true);
-          lastRefresh.current = Date.now();
-        }
-      }, REFRESH_MS);
+      acquireAndLoad(true);
+      const id = setInterval(() => acquireAndLoad(true), REFRESH_MS);
       return () => clearInterval(id);
-    }, [coords, query, fetchGrid, exploreLocation, syncLocation])
+    }, [acquireAndLoad])
   );
 
   // Featured Nearby — active "spotlight" add-on holders near the viewer.

@@ -17,13 +17,15 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
+import * as Location from 'expo-location';
 import { useTheme, FontFamily, DisplayFont, type AppTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { ListSkeleton } from '../../src/components/Skeleton';
 import { RightNowIcon } from '../../src/components/icons';
 import { showError, showSuccess, toastApiError } from '../../src/lib/toast';
 import { minutesAgoLabel, expiresInLabel } from '../../src/lib/format';
-import { getRightNow, updateProfile, startConversation, ApiError } from '../../src/services/api';
+import { getRightNow, updateProfile, updateLocation, startConversation, ApiError } from '../../src/services/api';
+import { emitLocationUpdate } from '../../src/services/socket';
 import type { RightNowCategory, RightNowCard, Self } from '../../src/types/api';
 
 const MAX_CHARS = 140;
@@ -107,7 +109,28 @@ export default function RightNow() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(false); }, [load]));
+  // Refresh the device location on focus (same battery-friendly pattern as
+  // Browse) BEFORE loading the feed — the Right Now feed is distance-ranked
+  // server-side off the user's stored location, so a stale fix skews distances.
+  const refreshLocation = useCallback(async () => {
+    try {
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      emitLocationUpdate(pos.coords.latitude, pos.coords.longitude);
+      updateLocation(pos.coords.latitude, pos.coords.longitude).catch(() => {});
+    } catch {
+      // Silent — never block the feed on a location hiccup.
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshLocation().finally(() => load(false));
+    }, [load, refreshLocation]),
+  );
 
   const myRow = useMemo((): RightNowCard | null => {
     if (!myActive || !user || !myStatus) return null;

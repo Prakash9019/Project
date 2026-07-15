@@ -489,6 +489,25 @@ export default function Groups() {
         />
       )}
 
+      {/* Create Group FAB */}
+      <Pressable
+        style={styles.fab}
+        onPress={() => router.push('/create-group/members' as Href)}
+        hitSlop={8}
+      >
+        <LinearGradient
+          colors={theme.gradientWarm}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.fabInner}
+        >
+          <Ionicons name="people" size={24} color="#fff" />
+          <View style={[styles.fabPlus, { backgroundColor: theme.background }]}>
+            <Ionicons name="add" size={12} color={theme.textPrimary} />
+          </View>
+        </LinearGradient>
+      </Pressable>
+
       <RoomFilterSheet
         visible={filterOpen}
         value={filters}
@@ -600,4 +619,29 @@ const styles = StyleSheet.create({
   chipsRow: { gap: spacing.sm, paddingVertical: spacing.md },
   filterChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth },
   filterChipText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
+
+  fab: {
+    position: 'absolute',
+    bottom: 80,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  fabInner: { flex: 1, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  fabPlus: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

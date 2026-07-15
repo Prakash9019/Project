@@ -22,9 +22,32 @@ export const listJoinedQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+// User-created group. The creator's RoomMember row is seeded with role 'admin'
+// (RoomRole has no 'creator' value — creator status is derived from Room.creatorId).
+export const createRoomSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).optional(),
+  category: z.enum(ROOM_CATEGORIES),
+  // Accepts a hosted URL or a bare R2 object key (signUrl presigns keys on read).
+  coverImageUrl: z.string().trim().min(1).max(2048).optional(),
+  isVerifiedOnly: z.boolean().optional().default(false),
+});
+
+export const bulkAddMembersSchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1).max(50),
+});
+
 export const listMessagesQuerySchema = z.object({
   before: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(30),
+});
+
+// Media / links / documents tab in Group Info. `type` narrows the shared-media
+// query; omitting it returns all shared media (images + docs + voice).
+export const listMediaQuerySchema = z.object({
+  type: z.enum(['image', 'link', 'document', 'voice']).optional(),
+  cursor: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(50),
 });
 
 export const sendMessageSchema = z
@@ -90,7 +113,10 @@ export const transferOwnershipSchema = z.object({
 
 export type ListRoomsQuery = z.infer<typeof listRoomsQuerySchema>;
 export type ListJoinedQuery = z.infer<typeof listJoinedQuerySchema>;
+export type CreateRoomBody = z.infer<typeof createRoomSchema>;
+export type BulkAddMembersBody = z.infer<typeof bulkAddMembersSchema>;
 export type ListMessagesQuery = z.infer<typeof listMessagesQuerySchema>;
+export type ListMediaQuery = z.infer<typeof listMediaQuerySchema>;
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
 export type ReactBody = z.infer<typeof reactSchema>;
 export type ListMembersQuery = z.infer<typeof listMembersQuerySchema>;
