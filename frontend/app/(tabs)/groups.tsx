@@ -46,7 +46,7 @@ import type {
 type Tab = 'mine' | 'discover' | 'invites';
 const PAGE = 20;
 
-const TAB_BAR_HEIGHT = 49;
+const TAB_BAR_HEIGHT = 5;
 
 export default function Groups() {
   const { theme } = useTheme();
@@ -494,7 +494,7 @@ export default function Groups() {
 
       {/* Create Group FAB — sits 16px above the bottom tab bar */}
       <View
-        style={[styles.fabRow, { bottom: insets.bottom + TAB_BAR_HEIGHT + 16 }]}
+        style={[styles.fabRow, { bottom: insets.bottom   }]}
         pointerEvents="box-none"
       >
         {/* First-time discoverability hint — auto-hides once the user joins a group */}
