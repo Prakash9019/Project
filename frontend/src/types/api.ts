@@ -138,6 +138,33 @@ export interface Photo {
   createdAt: string;
 }
 
+/** Effective plan limits/perks, computed server-side (middleware/subscription.ts). */
+export interface EffectiveLimits {
+  plan: string;
+  gridProfiles: number | null;
+  interactionCap: number | null;
+  bioChars: number;
+  messageTemplates: number;
+  pinChats: number;
+  readReceipts: boolean;
+  typingIndicator: boolean;
+  expiringPhotosPerDay: number | null;
+  voiceClipSec: number | null;
+  videoClipSec: number | null;
+  incognitoMode: boolean;
+  travelMode: boolean;
+  whoViewedMe: boolean;
+  aiFeatures: boolean;
+  exploreAccess: boolean;
+  maxRadiusM: number;
+  hideExactDistance: boolean;
+  callHistoryAccess: boolean;
+  albums: {
+    maxAlbums: number | null;
+    maxPhotosPerAlbum: number;
+  };
+}
+
 /**
  * Public-facing user fields shared by Self and PublicProfile.
  * Omits all frontendVisible:false fields (phone, reputationScore, location*,
@@ -150,6 +177,8 @@ export interface User {
   primaryPhotoUrl?: string | null;
   /** Free-tier call-minute usage for the live countdown; null for paid plans. */
   callLimits?: CallLimits | null;
+  /** Effective plan limits/perks (GET /auth/me), computed server-side from plan + planExpiresAt. */
+  effectiveLimits: EffectiveLimits;
   name: string | null;
   firstName: string | null;
   age: number | null;

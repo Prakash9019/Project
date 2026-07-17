@@ -461,6 +461,25 @@ export const editMessage = (conversationId: string, messageId: string, content: 
     { content }
   );
 
+// ── Message templates (Premium+; free plan has a limit of 0) ──
+// Mounted on the conversations router: GET/POST/DELETE /api/v1/conversations/templates.
+export interface MessageTemplate {
+  id: string;
+  content: string;
+  createdAt: string;
+}
+export const getMessageTemplates = () =>
+  request<{ templates: MessageTemplate[]; limit: number }>(
+    'GET',
+    '/api/v1/conversations/templates'
+  );
+
+export const createMessageTemplate = (content: string) =>
+  request<MessageTemplate>('POST', '/api/v1/conversations/templates', { content });
+
+export const deleteMessageTemplate = (templateId: string) =>
+  request<void>('DELETE', `/api/v1/conversations/templates/${templateId}`);
+
 export interface ChatPhotoUploadUrl {
   uploadUrl: string;
   key: string;
@@ -806,7 +825,7 @@ export const createRoom = (body: CreateRoomBody) =>
 
 /** Bulk add/invite members to a room (creator/admin only). */
 export const addRoomMembersBulk = (roomId: string, userIds: string[]) =>
-  request<{ added: string[]; invited: string[]; skipped: string[] }>(
+  request<{ added: string[]; invited: string[]; skipped: string[]; alreadyMember: string[] }>(
     'POST',
     `/api/rooms/${roomId}/members/bulk`,
     { userIds },

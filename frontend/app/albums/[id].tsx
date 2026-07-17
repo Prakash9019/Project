@@ -7,7 +7,6 @@ import {
   FlatList,
   useWindowDimensions,
   ActivityIndicator,
-  Alert,
   Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -16,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { ShareAlbumSheet } from '../../src/components/ShareAlbumSheet';
 import { getAlbum, getUserAlbum, uploadAlbumPhoto, ApiError } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
@@ -25,6 +26,7 @@ export default function AlbumDetail() {
   const { id, title, ownerId } = useLocalSearchParams<{ id: string; title?: string; ownerId?: string }>();
   const router = useRouter();
   const { theme } = useTheme();
+  const { alertConfig, hideAlert, alertError } = useAlert();
   const { width } = useWindowDimensions();
   const tile = (width - 6) / 3;
   const me = useAuthStore((s) => s.user);
@@ -69,8 +71,8 @@ export default function AlbumDetail() {
       }
     } catch (e) {
       const err = e as ApiError;
-      if (err.status === 403) Alert.alert('Limit reached', 'Upgrade for more photos per album.');
-      else Alert.alert('Upload failed', err.message ?? 'Try again.');
+      if (err.status === 403) alertError('Limit reached', 'Upgrade for more photos per album.');
+      else alertError('Upload failed', err.message ?? 'Try again.');
     } finally {
       setUploading(false);
     }
@@ -140,6 +142,8 @@ export default function AlbumDetail() {
       </Modal>
 
       <ShareAlbumSheet visible={shareOpen} onClose={() => setShareOpen(false)} albumId={id} albumTitle={title ?? 'Album'} />
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

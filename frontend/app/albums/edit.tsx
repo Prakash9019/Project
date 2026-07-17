@@ -6,7 +6,6 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
-  Alert,
   ScrollView,
   useWindowDimensions,
   Modal,
@@ -17,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { ShareAlbumSheet } from '../../src/components/ShareAlbumSheet';
 import { relativeTime } from '../../src/lib/format';
 import { showSuccess, toastApiError } from '../../src/lib/toast';
@@ -35,6 +36,7 @@ export default function EditAlbum() {
   const { id, title: initialTitle } = useLocalSearchParams<{ id: string; title?: string }>();
   const router = useRouter();
   const { theme } = useTheme();
+  const { alertConfig, hideAlert, confirm, alertError, deleteConfirm } = useAlert();
   const { width } = useWindowDimensions();
   const cell = (width - 6) / 3;
 
@@ -94,25 +96,23 @@ export default function EditAlbum() {
       }
     } catch (e) {
       const err = e as ApiError;
-      if (err.status === 403) Alert.alert('Limit reached', 'Upgrade for more photos per album.');
-      else Alert.alert('Upload failed', err.message ?? 'Try again.');
+      if (err.status === 403) alertError('Limit reached', 'Upgrade for more photos per album.');
+      else alertError('Upload failed', err.message ?? 'Try again.');
     } finally {
       setUploading(false);
     }
   };
 
   const removePhoto = (photoId: string) => {
-    Alert.alert('Remove photo', 'Remove this photo from the album?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () => {
-          setPhotos((p) => p.filter((x) => x.id !== photoId));
-          removeAlbumPhoto(id, photoId).catch(() => load());
-        },
+    confirm(
+      'Remove photo',
+      'Remove this photo from the album?',
+      () => {
+        setPhotos((p) => p.filter((x) => x.id !== photoId));
+        removeAlbumPhoto(id, photoId).catch(() => load());
       },
-    ]);
+      { destructive: true, confirmLabel: 'Remove', icon: 'trash', iconColor: theme.error },
+    );
   };
 
   // Long-press one photo to "pick it up", tap another to swap → persist order.
@@ -147,21 +147,18 @@ export default function EditAlbum() {
   };
 
   const confirmDelete = () => {
-    Alert.alert('Delete album?', 'This permanently removes the album and all its photos.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteAlbum(id);
-            router.back();
-          } catch (e) {
-            toastApiError(e, 'Could not delete album');
-          }
-        },
+    deleteConfirm(
+      'album',
+      async () => {
+        try {
+          await deleteAlbum(id);
+          router.back();
+        } catch (e) {
+          toastApiError(e, 'Could not delete album');
+        }
       },
-    ]);
+      'This permanently removes the album and all its photos.',
+    );
   };
 
   return (
@@ -278,6 +275,8 @@ export default function EditAlbum() {
       </Modal>
 
       <ShareAlbumSheet visible={shareOpen} onClose={() => setShareOpen(false)} albumId={id} albumTitle={title} />
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

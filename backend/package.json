@@ -12,7 +12,13 @@
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "ts-node --transpile-only prisma/seed.ts",
     "seed:rooms": "ts-node --transpile-only prisma/seeds/rooms.ts",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint . --ext .ts",
+    "test": "dotenv -e .env.test -- vitest run",
+    "test:watch": "dotenv -e .env.test -- vitest",
+    "test:coverage": "dotenv -e .env.test -- vitest run --coverage",
+    "test:db:up": "docker compose -f docker-compose.test.yml up -d",
+    "test:db:down": "docker compose -f docker-compose.test.yml down",
+    "test:db:setup": "npm run test:db:up && sleep 2 && dotenv -e .env.test -- npx prisma migrate deploy"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"
@@ -60,9 +66,14 @@
     "@types/morgan": "^1.9.9",
     "@types/node": "^20.14.0",
     "@types/node-cron": "^3.0.11",
+    "@types/supertest": "^7.2.1",
     "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "dotenv-cli": "^11.0.0",
     "prisma": "^5.18.0",
+    "supertest": "^7.2.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.10"
   }
 }

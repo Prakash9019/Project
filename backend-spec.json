@@ -942,6 +942,53 @@
       }
     },
     {
+      "id": "message-templates-list",
+      "method": "GET",
+      "path": "/api/v1/conversations/templates",
+      "auth": "bearer+verified",
+      "summary": "List the current user's saved message templates. Mounted on the conversations router. Returns the templates plus the plan's template limit.",
+      "responses": {
+        "200": {
+          "schema": "{templates: MessageTemplate[], limit: number}"
+        }
+      }
+    },
+    {
+      "id": "message-templates-create",
+      "method": "POST",
+      "path": "/api/v1/conversations/templates",
+      "auth": "bearer+verified",
+      "summary": "Create a message template. Plan-gated by messageTemplates limit (free=0, premium=5, gold=5, platinum=10). 403 plan_required when the plan has no templates; 403 template_limit_reached when the limit is exceeded.",
+      "requestBody": {
+        "required": [
+          "content"
+        ],
+        "fields": [
+          {
+            "name": "content",
+            "type": "string"
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "schema": "MessageTemplate"
+        },
+        "403": {}
+      }
+    },
+    {
+      "id": "message-templates-delete",
+      "method": "DELETE",
+      "path": "/api/v1/conversations/templates/:templateId",
+      "auth": "bearer+verified",
+      "summary": "Delete one of the current user's message templates.",
+      "responses": {
+        "204": {},
+        "404": {}
+      }
+    },
+    {
       "id": "calls-initiate",
       "method": "POST",
       "path": "/api/v1/calls",
@@ -4355,7 +4402,10 @@
     "Self (GET /api/v1/auth/me) (IMPLEMENTED): now includes primaryPhotoUrl (published primary Photo.url, or null) and callLimits. callLimits = { audioMinutesUsed, audioMinutesLimit, videoMinutesUsed, videoMinutesLimit } for FREE plan only (base 5 audio / 2 video per day + active *_call_topup add-ons; resets at UTC midnight); null for paid plans (unlimited).",
     "Grid query additions sent by the Filters screen (handle server-side on GET /api/v1/grid): gender (csv), relationshipIntent (csv), verifiedOnly (bool, Premium+), activeLast30Min (Premium+), activeLast5Min/recentlyJoined/highReplyRate (Gold+), radius (meters; free \u226425km, Gold+ \u2264100km), advancedFilters (JSON string of { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[], Premium+).",
     "Dating Rooms (Groups): brand-new module (migration 20260619_dating_rooms). Endpoints under /api/rooms (bearer+verified). Message/member endpoints require room membership (requireRoomMember -> 403 not_a_room_member). Messages run AI text moderation (adapters/moderation.classifyText) -> 451 message_flagged. Unread tracked in Redis rooms:lastread:{userId}:{roomId}. Socket channel room:{roomId}; sockets auto-join on connect for joined rooms. Username in room UI = firstName; phone/email/exact location never exposed.",
-    "callHistoryAccess: Premium DOES get call history access (callHistoryAccess=true), matching the PDF feature matrix \u2014 corrected from an earlier implementation gap where Premium was set to false."
+    "callHistoryAccess: Premium DOES get call history access (callHistoryAccess=true), matching the PDF feature matrix \u2014 corrected from an earlier implementation gap where Premium was set to false.",
+    "computeEffectiveLimits() is in backend/src/middleware/subscription.ts (not utils/subscription.ts). Returns EffectiveLimits object. Called by requireAuth middleware on every request (attaches to req.effectiveLimits) and also returned in GET /api/v1/auth/me response as effectiveLimits field.",
+    "Message template endpoints are mounted on the conversations router: GET/POST /api/v1/conversations/templates, DELETE /api/v1/conversations/templates/:templateId",
+    "Self type = type alias for User. effectiveLimits and callLimits are on User. PublicProfile extends UserCard \u2014 does not include these fields."
   ],
   "v1LaunchChecklist": {
     "mustShip": [

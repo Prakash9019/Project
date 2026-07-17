@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../config/prisma';
+import { HttpError } from '../utils/httpError';
 
 export type EffectivePlan = 'free' | 'premium' | 'gold' | 'platinum';
 
@@ -160,10 +161,8 @@ export function requirePlan(...allowedPlans: EffectivePlan[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const plan = req.effectiveLimits?.plan ?? 'free';
     if (!allowedPlans.includes(plan as EffectivePlan)) {
-      const err = Object.assign(new Error('This feature requires a higher plan'), {
-        status: 403, code: 'plan_required', details: { required: allowedPlans, current: plan },
-      });
-      return next(err);
+      return next(new HttpError(403, 'plan_required', 'This feature requires a higher plan',
+        { required: allowedPlans, current: plan }));
     }
     next();
   };

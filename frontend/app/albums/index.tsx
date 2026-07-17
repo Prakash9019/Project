@@ -7,7 +7,6 @@ import {
   ScrollView,
   useWindowDimensions,
   ActivityIndicator,
-  Alert,
   RefreshControl,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -16,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { listAlbums, getSharedAlbums, deleteAlbum, type SharedAlbum } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 import type { AlbumSummary, Plan } from '../../src/types/api';
@@ -35,6 +36,7 @@ export default function MyAlbums() {
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
   const plan = useAuthStore((s) => s.user?.plan ?? 'free');
+  const { alertConfig, hideAlert, showAlert, deleteConfirm } = useAlert();
 
   const GAP = 12;
   const PAD = 16;
@@ -67,36 +69,45 @@ export default function MyAlbums() {
 
   const onCreate = () => {
     if (atLimit) {
-      Alert.alert('Album limit reached', `Your plan allows ${limit} album${limit === 1 ? '' : 's'}. Upgrade to create more.`, [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'Upgrade', onPress: () => router.push('/(tabs)/store') },
-      ]);
+      showAlert({
+        title: 'Album limit reached',
+        message: `Your plan allows ${limit} album${limit === 1 ? '' : 's'}. Upgrade to create more.`,
+        icon: 'lock-closed',
+        iconColor: theme.warning,
+        buttons: [
+          { label: 'Not now', style: 'cancel', onPress: hideAlert },
+          { label: 'Upgrade', style: 'default', onPress: () => { hideAlert(); router.push('/(tabs)/store'); } },
+        ],
+      });
       return;
     }
     router.push('/albums/create');
   };
 
   const openMenu = (album: AlbumSummary) => {
-    Alert.alert(album.title, undefined, [
-      { text: 'Edit album', onPress: () => router.push({ pathname: '/albums/edit', params: { id: album.id, title: album.title } }) },
-      {
-        text: 'Delete album',
-        style: 'destructive',
-        onPress: () =>
-          Alert.alert('Delete album?', 'This permanently removes the album and its photos.', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: async () => {
+    showAlert({
+      title: album.title,
+      buttons: [
+        {
+          label: 'Edit album',
+          onPress: () => { hideAlert(); router.push({ pathname: '/albums/edit', params: { id: album.id, title: album.title } }); },
+        },
+        {
+          label: 'Delete album',
+          style: 'destructive',
+          onPress: () =>
+            deleteConfirm(
+              'album',
+              async () => {
                 setAlbums((a) => a.filter((x) => x.id !== album.id));
                 deleteAlbum(album.id).catch(() => load());
               },
-            },
-          ]),
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+              'This permanently removes the album and its photos.',
+            ),
+        },
+        { label: 'Cancel', style: 'cancel', onPress: hideAlert },
+      ],
+    });
   };
 
   const CreateTile = (
@@ -218,6 +229,8 @@ export default function MyAlbums() {
           )}
         </ScrollView>
       )}
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

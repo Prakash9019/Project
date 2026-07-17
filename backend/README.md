@@ -39,4 +39,8 @@ You also need a local **PostgreSQL** and **Redis** running (see `.env`).
   `FREE_TIER_DAILY_REQUESTS`/day, with a-la-carte credits or subscription upgrades beyond that.
 - **Reply boosting**: `reputationScore` rises on accepts, decays on ignores, and re-ranks the grid.
 
+npm test                  # run before every commit
+npm run test:watch        # while actively coding
+npm run test:coverage     # before a release
+
 The machine-readable API contract lives in `../backend-spec.json` (consumed by the frontend-from-spec skill).

@@ -6,7 +6,6 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,11 +13,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { createAlbum, uploadAlbumPhoto, ApiError } from '../../src/services/api';
 
 export default function CreateAlbum() {
   const router = useRouter();
   const { theme } = useTheme();
+  const { alertConfig, hideAlert, showAlert, alertError } = useAlert();
 
   const [title, setTitle] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
@@ -62,12 +64,18 @@ export default function CreateAlbum() {
       setPreview(null);
       setSelectedCount(0);
       if (err.status === 403) {
-        Alert.alert('Album limit reached', 'Upgrade your plan to create more albums.', [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Upgrade', onPress: () => router.replace('/(tabs)/store') },
-        ]);
+        showAlert({
+          title: 'Album limit reached',
+          message: 'Upgrade your plan to create more albums.',
+          icon: 'lock-closed',
+          iconColor: theme.warning,
+          buttons: [
+            { label: 'Not now', style: 'cancel', onPress: hideAlert },
+            { label: 'Upgrade', style: 'default', onPress: () => { hideAlert(); router.replace('/(tabs)/store'); } },
+          ],
+        });
       } else {
-        Alert.alert('Could not create album', err.message ?? 'Please try again.');
+        alertError('Could not create album', err.message ?? 'Please try again.');
       }
     } finally {
       setBusy(false);
@@ -131,10 +139,20 @@ export default function CreateAlbum() {
 
       <Pressable
         style={styles.whatBtn}
-        onPress={() => Alert.alert("What's an Album?", 'Albums are private photo sets you can share with people you chat with. Only people you grant access can see them.')}
+        onPress={() =>
+          showAlert({
+            title: "What's an Album?",
+            message: 'Albums are private photo sets you can share with people you chat with. Only people you grant access can see them.',
+            icon: 'information-circle',
+            iconColor: theme.info,
+            buttons: [{ label: 'Got it', style: 'default', onPress: hideAlert }],
+          })
+        }
       >
         <Text style={[styles.whatText, { color: theme.brandSecondary }]}>What's an Album?</Text>
       </Pressable>
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

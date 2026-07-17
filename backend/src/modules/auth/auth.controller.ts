@@ -5,6 +5,7 @@ import { redis, RedisKeys } from '../../config/redis';
 import { Errors } from '../../utils/httpError';
 import { serializeSelf, signUserPhotos } from '../profile/profile.serializer';
 import { getCallLimits } from '../../utils/callLimits';
+import { computeEffectiveLimits } from '../../middleware/subscription';
 import * as authService from './auth.service';
 import { logEvent } from '../../middleware/logger';
 
@@ -84,5 +85,9 @@ export async function me(req: Request, res: Response): Promise<void> {
   if (!user) throw Errors.notFound('User not found');
   // callLimits: free-tier live call countdown (null for paid plans).
   const callLimits = await getCallLimits(user.id, user.plan);
-  res.status(200).json({ ...serializeSelf(await signUserPhotos(user)), callLimits });
+  const effectiveLimits = computeEffectiveLimits(
+    user.plan,
+    user.planExpiresAt ? Math.floor(user.planExpiresAt.getTime() / 1000) : null,
+  );
+  res.status(200).json({ ...serializeSelf(await signUserPhotos(user)), callLimits, effectiveLimits });
 }

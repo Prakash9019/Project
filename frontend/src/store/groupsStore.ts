@@ -19,6 +19,8 @@ interface GroupsState {
   setRooms: (rooms: JoinedRoomCard[]) => void;
   /** Prepend a newly-joined/accepted room, replacing any existing entry with the same id. */
   addRoom: (room: JoinedRoomCard) => void;
+  /** Patch fields on a joined room in place (e.g. a new coverImageUrl) without reordering. */
+  patchRoom: (roomId: string, patch: Partial<JoinedRoomCard>) => void;
   /** Bump a room's unread when a new message arrives while not viewing it. */
   applyIncomingRoomMessage: (roomId: string) => void;
   /** Clear a room's unread (called when the user opens it). */
@@ -50,6 +52,12 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
   addRoom: (room) => {
     const rest = get().rooms.filter((r) => r.id !== room.id);
     set({ rooms: [room, ...rest] });
+  },
+
+  patchRoom: (roomId, patch) => {
+    set({
+      rooms: get().rooms.map((r) => (r.id === roomId ? { ...r, ...patch } : r)),
+    });
   },
 
   applyIncomingRoomMessage: (roomId) => {

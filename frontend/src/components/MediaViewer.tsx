@@ -1,5 +1,13 @@
-import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ActivityIndicator,
+  FlatList,
+  useWindowDimensions,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,7 +18,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSpring,
   runOnJS,
 } from 'react-native-reanimated';
 import { FontFamily, FontSize } from '../theme';
@@ -24,8 +31,7 @@ export type MediaViewerImage = {
 
 const MAX_SCALE = 5;
 const DOUBLE_TAP_SCALE = 3;
-const SWIPE_NAV_THRESHOLD = 50;
-const SWIPE_CLOSE_THRESHOLD = 120;
+const MAX_DOTS = 10;
 
 function headerTime(iso: string): string {
   const d = new Date(iso);
@@ -38,12 +44,132 @@ function headerTime(iso: string): string {
 }
 
 /**
- * Full-screen, gesture-driven media viewer for chat images.
- * - Pinch to zoom (1x–5x), double-tap toggles 1x/3x, pan while zoomed.
- * - Horizontal swipe (when not zoomed) navigates between images.
- * - Vertical swipe-down (when not zoomed) closes.
- * Pure black background is required for a media viewer — the only hardcoded
- * color allowed here per project rules.
+ * A single, independently-zoomable page. Each page owns its own zoom/pan state,
+ * so navigating never carries zoom from one image to the next. When a page
+ * leaves the viewport (`active` goes false) it resets to 1x.
+ */
+function ImagePage({
+  image,
+  width,
+  height,
+  active,
+  onZoomChange,
+}: {
+  image: MediaViewerImage;
+  width: number;
+  height: number;
+  active: boolean;
+  onZoomChange: (zoomed: boolean) => void;
+}) {
+  const [loading, setLoading] = useState(true);
+
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+  const [zoomed, setZoomed] = useState(false);
+
+  const setZoom = (z: boolean) => {
+    setZoomed(z);
+    onZoomChange(z);
+  };
+
+  const resetZoom = () => {
+    scale.value = withTiming(1, { duration: 150 });
+    savedScale.value = 1;
+    translateX.value = withTiming(0, { duration: 150 });
+    savedTranslateX.value = 0;
+    translateY.value = withTiming(0, { duration: 150 });
+    savedTranslateY.value = 0;
+    setZoom(false);
+  };
+
+  // Reset zoom when this page scrolls out of view.
+  useEffect(() => {
+    if (!active) resetZoom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      if (scale.value > 1) {
+        runOnJS(resetZoom)();
+      } else {
+        scale.value = withTiming(DOUBLE_TAP_SCALE, { duration: 150 });
+        savedScale.value = DOUBLE_TAP_SCALE;
+        runOnJS(setZoom)(true);
+      }
+    });
+
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.min(Math.max(savedScale.value * e.scale, 1), MAX_SCALE);
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+      if (scale.value <= 1) runOnJS(resetZoom)();
+      else runOnJS(setZoom)(true);
+    });
+
+  // Pan is only enabled while zoomed, so an un-zoomed horizontal drag stays with
+  // the FlatList (page swipe) instead of being captured here.
+  const pan = Gesture.Pan()
+    .enabled(zoomed)
+    .onUpdate((e) => {
+      if (scale.value <= 1) return;
+      const maxX = (width * (scale.value - 1)) / 2;
+      const maxY = (height * (scale.value - 1)) / 2;
+      translateX.value = Math.min(Math.max(savedTranslateX.value + e.translationX, -maxX), maxX);
+      translateY.value = Math.min(Math.max(savedTranslateY.value + e.translationY, -maxY), maxY);
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const composed = Gesture.Race(doubleTap, Gesture.Simultaneous(pinch, pan));
+
+  const imageStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
+
+  return (
+    <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
+      <GestureDetector gesture={composed}>
+        <Animated.View style={imageStyle}>
+          <Image
+            source={{ uri: image.uri }}
+            style={{ width, height }}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={200}
+            onLoadStart={() => setLoading(true)}
+            onLoadEnd={() => setLoading(false)}
+          />
+        </Animated.View>
+      </GestureDetector>
+      {loading ? (
+        <View style={styles.loader} pointerEvents="none">
+          <ActivityIndicator color="#fff" />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Full-screen, swipeable media viewer for chat images.
+ * - Horizontal paging via FlatList (smooth, hardware-paged transitions).
+ * - Each page pinch/double-tap zooms independently; zoom resets on page change.
+ * - Pure black background is required for a media viewer — the only hardcoded
+ *   color allowed here per project rules.
  */
 export function MediaViewer({
   visible,
@@ -57,150 +183,57 @@ export function MediaViewer({
   onClose: () => void;
 }) {
   const { width, height } = useWindowDimensions();
-  const [index, setIndex] = useState(initialIndex);
+  const listRef = useRef<FlatList<MediaViewerImage>>(null);
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [zoomed, setZoomed] = useState(false);
 
-  const scale = useSharedValue(1);
-  const savedScale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const savedTranslateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const savedTranslateY = useSharedValue(0);
-
-  const resetTransform = () => {
-    'worklet';
-    scale.value = withTiming(1, { duration: 150 });
-    savedScale.value = 1;
-    translateX.value = withTiming(0, { duration: 150 });
-    savedTranslateX.value = 0;
-    translateY.value = withTiming(0, { duration: 150 });
-    savedTranslateY.value = 0;
-  };
-
-  // Sync the visible index when (re)opening.
+  // Keep the header/dots in sync when (re)opening at a different image.
   useEffect(() => {
-    if (visible) setIndex(initialIndex);
+    if (visible) {
+      setCurrentIndex(initialIndex);
+      setZoomed(false);
+    }
   }, [visible, initialIndex]);
 
-  // Reset zoom/pan whenever the shown image changes.
-  useEffect(() => {
-    scale.value = 1;
-    savedScale.value = 1;
-    translateX.value = 0;
-    savedTranslateX.value = 0;
-    translateY.value = 0;
-    savedTranslateY.value = 0;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, visible]);
-
-  const goTo = (next: number) => {
-    if (next < 0 || next >= images.length) return;
-    setIndex(next);
-  };
-
-  const pinch = Gesture.Pinch()
-    .onUpdate((e) => {
-      const next = savedScale.value * e.scale;
-      scale.value = Math.min(Math.max(next, 1), MAX_SCALE);
-    })
-    .onEnd(() => {
-      savedScale.value = scale.value;
-      if (scale.value <= 1) resetTransform();
-    });
-
-  const pan = Gesture.Pan()
-    .onUpdate((e) => {
-      if (scale.value > 1) {
-        // Pan the zoomed image, clamped to its scaled bounds.
-        const maxX = (width * (scale.value - 1)) / 2;
-        const maxY = (height * (scale.value - 1)) / 2;
-        translateX.value = Math.min(
-          Math.max(savedTranslateX.value + e.translationX, -maxX),
-          maxX,
-        );
-        translateY.value = Math.min(
-          Math.max(savedTranslateY.value + e.translationY, -maxY),
-          maxY,
-        );
-      } else {
-        // Not zoomed: horizontal drag previews navigation, vertical drag previews close.
-        if (Math.abs(e.translationX) > Math.abs(e.translationY)) {
-          translateX.value = e.translationX;
-        } else if (e.translationY > 0) {
-          translateY.value = e.translationY;
-        }
-      }
-    })
-    .onEnd((e) => {
-      if (scale.value > 1) {
-        savedTranslateX.value = translateX.value;
-        savedTranslateY.value = translateY.value;
-        return;
-      }
-      // Swipe down to close.
-      if (e.translationY > SWIPE_CLOSE_THRESHOLD && Math.abs(e.translationY) > Math.abs(e.translationX)) {
-        runOnJS(onClose)();
-        return;
-      }
-      // Horizontal swipe to navigate.
-      if (e.translationX <= -SWIPE_NAV_THRESHOLD && index < images.length - 1) {
-        translateX.value = withTiming(-width, { duration: 150 }, () => {
-          runOnJS(goTo)(index + 1);
-        });
-        return;
-      }
-      if (e.translationX >= SWIPE_NAV_THRESHOLD && index > 0) {
-        translateX.value = withTiming(width, { duration: 150 }, () => {
-          runOnJS(goTo)(index - 1);
-        });
-        return;
-      }
-      // No threshold met — spring back.
-      translateX.value = withSpring(0);
-      translateY.value = withSpring(0);
-    });
-
-  const doubleTap = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd(() => {
-      if (scale.value > 1) {
-        resetTransform();
-      } else {
-        scale.value = withTiming(DOUBLE_TAP_SCALE, { duration: 150 });
-        savedScale.value = DOUBLE_TAP_SCALE;
-      }
-    });
-
-  const composed = Gesture.Race(doubleTap, Gesture.Simultaneous(pinch, pan));
-
-  const imageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
-
   if (!visible) return null;
-  const current = images[index];
+  const current = images[currentIndex] ?? images[0];
   if (!current) return null;
+
+  const useDots = images.length > 1 && images.length <= MAX_DOTS;
 
   return (
     <View style={styles.root}>
       <StatusBar hidden />
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <GestureDetector gesture={composed}>
-          <Animated.View style={styles.imageWrap}>
-            <Animated.View style={imageStyle}>
-              <Image
-                source={{ uri: current.uri }}
-                style={{ width, height }}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-                transition={120}
-              />
-            </Animated.View>
-          </Animated.View>
-        </GestureDetector>
+        <FlatList
+          ref={listRef}
+          data={images}
+          horizontal
+          pagingEnabled
+          scrollEnabled={!zoomed}
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={initialIndex}
+          extraData={currentIndex}
+          getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+          keyExtractor={(item, i) => `${item.uri}-${i}`}
+          windowSize={3}
+          maxToRenderPerBatch={3}
+          initialNumToRender={1}
+          onMomentumScrollEnd={(e) => {
+            const next = Math.round(e.nativeEvent.contentOffset.x / width);
+            if (next !== currentIndex) setCurrentIndex(next);
+            setZoomed(false);
+          }}
+          renderItem={({ item, index }) => (
+            <ImagePage
+              image={item}
+              width={width}
+              height={height}
+              active={index === currentIndex}
+              onZoomChange={setZoomed}
+            />
+          )}
+        />
 
         {/* Header */}
         <LinearGradient
@@ -219,16 +252,27 @@ export function MediaViewer({
           </View>
         </LinearGradient>
 
-        {/* Footer counter */}
+        {/* Footer — dot indicators for ≤10 images, "n of N" text otherwise */}
         {images.length > 1 ? (
           <LinearGradient
             colors={['transparent', 'rgba(0,0,0,0.75)']}
             style={styles.footer}
             pointerEvents="none"
           >
-            <Text style={styles.counter}>
-              {index + 1} of {images.length}
-            </Text>
+            {useDots ? (
+              <View style={styles.dots}>
+                {images.map((img, i) => (
+                  <View
+                    key={`${img.uri}-${i}`}
+                    style={[i === currentIndex ? styles.dotActive : styles.dotInactive]}
+                  />
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.counter}>
+                {currentIndex + 1} of {images.length}
+              </Text>
+            )}
           </LinearGradient>
         ) : null}
       </SafeAreaView>
@@ -248,7 +292,15 @@ const styles = StyleSheet.create({
     elevation: 1000,
   },
   safe: { flex: 1 },
-  imageWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  loader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   header: {
     position: 'absolute',
     top: 0,
@@ -275,4 +327,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   counter: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  dots: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dotActive: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  dotInactive: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
 });

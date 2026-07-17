@@ -10,7 +10,6 @@ import {
   Platform,
   ActivityIndicator,
   Modal,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,6 +25,8 @@ import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { ExpiringPhotoViewer } from '../../src/components/ExpiringPhotoViewer';
 import { PhotoViewer } from '../../src/components/PhotoViewer';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { CustomAlert, type AlertButton } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { AttachmentSheet, type AttachmentKind } from '../../src/components/rooms/AttachmentSheet';
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
@@ -41,8 +42,10 @@ import {
   getPublicProfile,
   unsendMessage,
   editMessage,
+  getMessageTemplates,
   ApiError,
   type SendMessageBody,
+  type MessageTemplate,
 } from '../../src/services/api';
 import { connectSocket, emitTyping } from '../../src/services/socket';
 import { useAuthStore } from '../../src/store/authStore';
@@ -84,6 +87,7 @@ export default function Chat() {
   const peerPhoto = Array.isArray(params.peerPhoto) ? params.peerPhoto[0] : params.peerPhoto;
   const router = useRouter();
   const { theme } = useTheme();
+  const { alertConfig, hideAlert, showAlert, alertError } = useAlert();
   const me = useAuthStore((s) => s.user);
   const markRead = useChatStore((s) => s.markRead);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
@@ -91,6 +95,7 @@ export default function Chat() {
   const canUnsendAnytime = planAtLeast(me?.plan, 'gold');
   const canUnsend = planAtLeast(me?.plan, 'premium');
   const canEdit = planAtLeast(me?.plan, 'gold');
+  const canUseTemplates = (me?.effectiveLimits?.messageTemplates ?? 0) > 0;
   const EDIT_WINDOW_MS = 5 * 60 * 1000;
   const listRef = useRef<FlatList<ChatRow>>(null);
 
@@ -118,6 +123,9 @@ export default function Chat() {
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rows = useMemo(() => buildRows(messages), [messages]);
@@ -344,11 +352,11 @@ export default function Chat() {
     } catch (e) {
       const err = e as ApiError;
       if (err.status === 403 && err.code === 'edit_window_expired') {
-        Alert.alert('Edit window expired', 'Messages can only be edited within 5 minutes.');
+        alertError('Edit window expired', 'Messages can only be edited within 5 minutes.');
         setEditingMessage(null);
         setDraft('');
       } else {
-        Alert.alert('Could not save edit', err.message ?? 'Please try again.');
+        alertError('Could not save edit', err.message ?? 'Please try again.');
       }
     } finally {
       setSending(false);
@@ -365,6 +373,25 @@ export default function Chat() {
     setDraft('');
   };
 
+  const openTemplatePicker = async () => {
+    setTemplatesOpen(true);
+    setTemplatesLoading(true);
+    try {
+      const res = await getMessageTemplates();
+      setTemplates(res.templates);
+    } catch (e) {
+      alertError('Could not load templates', (e as ApiError).message ?? 'Please try again.');
+      setTemplatesOpen(false);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  };
+
+  const insertTemplate = (template: MessageTemplate) => {
+    setDraft((prev) => (prev.trim() ? `${prev.trim()} ${template.content}` : template.content));
+    setTemplatesOpen(false);
+  };
+
   const runUnsend = async (item: Message) => {
     try {
       await unsendMessage(conversationId, item.id);
@@ -374,9 +401,9 @@ export default function Chat() {
     } catch (e) {
       const err = e as ApiError;
       if (err.status === 403 && err.code === 'already_read') {
-        Alert.alert('Upgrade to Gold to unsend read messages');
+        alertError('Upgrade to Gold to unsend read messages');
       } else {
-        Alert.alert('Could not unsend', err.message ?? 'Please try again.');
+        alertError('Could not unsend', err.message ?? 'Please try again.');
       }
     }
   };
@@ -386,18 +413,18 @@ export default function Chat() {
     if (!mine || item.isUnsent || item.id.startsWith('tmp-')) return;
 
     const withinEditWindow = Date.now() - new Date(item.createdAt).getTime() < EDIT_WINDOW_MS;
-    const options: { text: string; onPress?: () => void; style?: 'destructive' | 'cancel' }[] = [];
+    const buttons: AlertButton[] = [];
 
     if (item.type === 'text' && canEdit && withinEditWindow) {
-      options.push({ text: 'Edit', onPress: () => startEditing(item) });
+      buttons.push({ label: 'Edit', onPress: () => { hideAlert(); startEditing(item); } });
     }
     if (canUnsend && (canUnsendAnytime || !item.readAt)) {
-      options.push({ text: 'Unsend', style: 'destructive', onPress: () => runUnsend(item) });
+      buttons.push({ label: 'Unsend', style: 'destructive', onPress: () => { hideAlert(); runUnsend(item); } });
     }
-    if (options.length === 0) return;
-    options.push({ text: 'Cancel', style: 'cancel' });
+    if (buttons.length === 0) return;
+    buttons.push({ label: 'Cancel', style: 'cancel', onPress: hideAlert });
 
-    Alert.alert('Message options', undefined, options);
+    showAlert({ title: 'Message options', buttons });
   };
 
   // Upload + send a single photo as its own message. Adds an optimistic bubble
@@ -607,7 +634,7 @@ export default function Chat() {
       const res = await listAlbums();
       setAlbums(res.albums);
     } catch {
-      Alert.alert('Could not load albums');
+      alertError('Could not load albums');
       setAlbumPickerOpen(false);
     } finally {
       setAlbumsLoading(false);
@@ -621,7 +648,7 @@ export default function Chat() {
       const detail = await getAlbum(album.id);
       const paths = detail.photos.slice(0, 10).map((p) => p.path ?? p.url);
       if (paths.length === 0) {
-        Alert.alert('Empty album', 'Add photos to this album first.');
+        alertError('Empty album', 'Add photos to this album first.');
         return;
       }
       await postMessage({
@@ -964,6 +991,11 @@ export default function Chat() {
           <Pressable onPress={() => setAttachOpen(true)} style={styles.attachBtn} disabled={sending || !!editingMessage}>
             <Ionicons name="image-outline" size={24} color={theme.brand} />
           </Pressable>
+          {canUseTemplates && (
+            <Pressable onPress={openTemplatePicker} style={styles.attachBtn} disabled={sending || !!editingMessage}>
+              <Ionicons name="list-outline" size={24} color={theme.brand} />
+            </Pressable>
+          )}
           <TextInput
             value={draft}
             onChangeText={onChangeDraft}
@@ -1037,6 +1069,38 @@ export default function Chat() {
         </View>
       </Modal>
 
+      <Modal visible={templatesOpen} transparent animationType="slide" onRequestClose={() => setTemplatesOpen(false)}>
+        <Pressable style={[styles.sheetOverlay, { backgroundColor: theme.overlay }]} onPress={() => setTemplatesOpen(false)}>
+          <Pressable style={[styles.sheet, { backgroundColor: theme.surface, maxHeight: '60%' }]} onPress={() => {}}>
+            <Text style={[styles.sheetTitle, { color: theme.textPrimary }]}>Saved replies</Text>
+            {templatesLoading ? (
+              <ActivityIndicator color={theme.brand} style={{ marginVertical: 24 }} />
+            ) : (
+              <FlatList
+                data={templates}
+                keyExtractor={(t) => t.id}
+                ListEmptyComponent={
+                  <Text style={[styles.emptyAlbums, { color: theme.textSecondary }]}>
+                    No saved replies yet. Add some from your chat settings.
+                  </Text>
+                }
+                renderItem={({ item }) => (
+                  <Pressable style={styles.sheetRow} onPress={() => insertTemplate(item)}>
+                    <Ionicons name="chatbox-ellipses-outline" size={22} color={theme.brand} />
+                    <Text style={[styles.sheetLabel, { color: theme.textPrimary, flex: 1 }]} numberOfLines={2}>
+                      {item.content}
+                    </Text>
+                  </Pressable>
+                )}
+              />
+            )}
+            <Pressable style={styles.cancelSheet} onPress={() => setTemplatesOpen(false)}>
+              <Text style={{ color: theme.textSecondary }}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <ExpiringPhotoViewer
         visible={!!expiringView}
         url={expiringView?.url ?? null}
@@ -1059,6 +1123,8 @@ export default function Chat() {
       />
 
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

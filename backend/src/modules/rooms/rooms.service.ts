@@ -71,7 +71,7 @@ export async function buildUserCard(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeRoom(room: any, isJoined: boolean, onlineCount?: number) {
+export async function serializeRoom(room: any, isJoined: boolean, onlineCount?: number) {
   return {
     id: room.id,
     name: room.name,
@@ -82,7 +82,10 @@ export function serializeRoom(room: any, isJoined: boolean, onlineCount?: number
     country: room.country,
     isOfficial: room.isOfficial,
     isVerifiedOnly: room.isVerifiedOnly,
-    coverImageUrl: room.coverImageUrl ?? null,
+    // R2 objects are private, so the stored key/private URL must be presigned
+    // before the client can load it. listInvites already signs; every room
+    // list/detail must too, or the cover 403s on refetch (icon disappears).
+    coverImageUrl: await signUrl(room.coverImageUrl),
     memberCount: room.memberCount,
     onlineCount: onlineCount ?? room.onlineCount,
     lastActivityAt: room.lastActivityAt,
@@ -152,7 +155,7 @@ export async function listRooms(
 
   const ranked = await rankByRecommendation(userId, rooms);
   // Joined rooms are already excluded above, so every Discover card is un-joined.
-  return ranked.map((r) => serializeRoom(r, false));
+  return Promise.all(ranked.map((r) => serializeRoom(r, false)));
 }
 
 /**
@@ -194,11 +197,13 @@ export async function listJoinedRooms(userId: string, opts: { limit: number; off
   active.sort((a, b) => b.room.lastActivityAt.getTime() - a.room.lastActivityAt.getTime());
 
   const unreadByRoom = await unreadCountsFor(userId, active.map((m) => m.roomId));
-  return active.map((m) => ({
-    ...serializeRoom(m.room, true),
-    unreadCount: unreadByRoom.get(m.roomId) ?? 0,
-    role: m.role,
-  }));
+  return Promise.all(
+    active.map(async (m) => ({
+      ...(await serializeRoom(m.room, true)),
+      unreadCount: unreadByRoom.get(m.roomId) ?? 0,
+      role: m.role,
+    })),
+  );
 }
 
 /**
@@ -252,7 +257,7 @@ export async function getRoomDetail(userId: string, roomId: string) {
   const onlineCount = await computeOnlineCount(roomId);
   // myRole/isCreator let the client gate admin-only affordances (pin, edit).
   return {
-    ...serializeRoom(room, !!member, onlineCount),
+    ...(await serializeRoom(room, !!member, onlineCount)),
     myRole: member?.role ?? null,
     isCreator: room.creatorId === userId,
   };
@@ -304,6 +309,10 @@ export async function bulkAddMembers(requesterId: string, roomId: string, userId
   const added: string[] = [];
   const invited: string[] = [];
   const skipped: string[] = [];
+  // Users who were already in the room. This is NOT a failure — surfacing it
+  // separately from `skipped` lets the client stay silent instead of showing a
+  // misleading "couldn't be added" toast for people who are simply already in.
+  const alreadyMember: string[] = [];
 
   // De-dupe and never (self-)add the requester.
   const targets = [...new Set(userIds)].filter((id) => id !== requesterId);
@@ -315,8 +324,8 @@ export async function bulkAddMembers(requesterId: string, roomId: string, userId
       else if (body.method === 'invite_sent' || body.method === 'invite_already_sent') {
         invited.push(targetUserId);
       } else {
-        // already_member — nothing to do.
-        skipped.push(targetUserId);
+        // already_member — nothing to do, but not a failure.
+        alreadyMember.push(targetUserId);
       }
     } catch {
       // cannot_add_user (no conversation + not open to groups), user not found, etc.
@@ -324,7 +333,7 @@ export async function bulkAddMembers(requesterId: string, roomId: string, userId
     }
   }
 
-  return { added, invited, skipped };
+  return { added, invited, skipped, alreadyMember };
 }
 
 // ── Join / leave ──────────────────────────────────────────────────────────────

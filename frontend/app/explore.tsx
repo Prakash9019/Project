@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, FlatList, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, FlatList, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../src/theme';
 import { useAuthStore } from '../src/store/authStore';
 import { UpgradeModal } from '../src/components/UpgradeModal';
+import { CustomAlert } from '../src/components/CustomAlert';
+import { useAlert } from '../src/hooks/useAlert';
 import { planAtLeast } from '../src/lib/format';
 import { createCityProfile, activateCityProfile, listCityProfiles, CityProfile, ApiError } from '../src/services/api';
 
@@ -15,6 +17,7 @@ export default function Explore() {
   const { theme } = useTheme();
   const plan = useAuthStore((s) => s.user?.plan ?? 'free');
   const canTravel = planAtLeast(plan, 'gold');
+  const { alertConfig, hideAlert, alertSuccess, alertError } = useAlert();
 
   const [city, setCity] = useState('');
   const [profiles, setProfiles] = useState<CityProfile[]>([]);
@@ -38,7 +41,7 @@ export default function Explore() {
       setProfiles((p) => [cp, ...p.filter((x) => x.id !== cp.id)]);
       setCity('');
     } catch (e) {
-      Alert.alert('Could not add city', (e as ApiError).message ?? 'Try again.');
+      alertError('Could not add city', (e as ApiError).message ?? 'Try again.');
     } finally {
       setBusy(false);
     }
@@ -48,10 +51,15 @@ export default function Explore() {
     try {
       await activateCityProfile(cp.id);
       setProfiles((p) => p.map((x) => ({ ...x, active: x.id === cp.id })));
-      Alert.alert('Travel mode on', `You're now visible in ${cp.city} with a "Visiting Soon" badge.`);
-      router.push('/(tabs)');
+      // Navigate to the grid once the user acknowledges — same destination as before,
+      // just after the confirmation is seen (an in-screen dialog can't outlive navigation).
+      alertSuccess(
+        'Travel mode on',
+        `You're now visible in ${cp.city} with a "Visiting Soon" badge.`,
+        () => router.push('/(tabs)'),
+      );
     } catch (e) {
-      Alert.alert('Could not activate', (e as ApiError).message ?? 'Try again.');
+      alertError('Could not activate', (e as ApiError).message ?? 'Try again.');
     }
   };
 
@@ -132,6 +140,8 @@ export default function Explore() {
         title="Travel mode"
         message="Travel mode lets you browse other cities. Available on Gold and above."
       />
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

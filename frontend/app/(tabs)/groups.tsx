@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, type Href } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont, FontSize, spacing, radius } from '../../src/theme';
@@ -46,9 +46,12 @@ import type {
 type Tab = 'mine' | 'discover' | 'invites';
 const PAGE = 20;
 
+const TAB_BAR_HEIGHT = 49;
+
 export default function Groups() {
   const { theme } = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<Tab>('mine');
 
@@ -489,24 +492,35 @@ export default function Groups() {
         />
       )}
 
-      {/* Create Group FAB */}
-      <Pressable
-        style={styles.fab}
-        onPress={() => router.push('/create-group/members' as Href)}
-        hitSlop={8}
+      {/* Create Group FAB — sits 16px above the bottom tab bar */}
+      <View
+        style={[styles.fabRow, { bottom: insets.bottom + TAB_BAR_HEIGHT + 16 }]}
+        pointerEvents="box-none"
       >
-        <LinearGradient
-          colors={theme.gradientWarm}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.fabInner}
-        >
-          <Ionicons name="people" size={24} color="#fff" />
-          <View style={[styles.fabPlus, { backgroundColor: theme.background }]}>
-            <Ionicons name="add" size={12} color={theme.textPrimary} />
+        {/* First-time discoverability hint — auto-hides once the user joins a group */}
+        {joined.length === 0 ? (
+          <View style={[styles.fabHint, { backgroundColor: theme.brand }]}>
+            <Text style={styles.fabHintText}>New Group</Text>
           </View>
-        </LinearGradient>
-      </Pressable>
+        ) : null}
+        <Pressable
+          style={styles.fab}
+          onPress={() => router.push('/create-group/members' as Href)}
+          hitSlop={8}
+        >
+          <LinearGradient
+            colors={theme.gradientWarm}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.fabInner}
+          >
+            <Ionicons name="people" size={24} color="#fff" />
+            <View style={[styles.fabPlus, { backgroundColor: theme.background }]}>
+              <Ionicons name="add" size={12} color={theme.textPrimary} />
+            </View>
+          </LinearGradient>
+        </Pressable>
+      </View>
 
       <RoomFilterSheet
         visible={filterOpen}
@@ -620,10 +634,20 @@ const styles = StyleSheet.create({
   filterChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth },
   filterChipText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
 
-  fab: {
+  fabRow: {
     position: 'absolute',
-    bottom: 80,
     right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  fabHint: {
+    borderRadius: 99,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  fabHintText: { fontSize: 12, fontFamily: FontFamily.semibold, color: '#fff' },
+  fab: {
     width: 56,
     height: 56,
     borderRadius: 28,

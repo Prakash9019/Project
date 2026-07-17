@@ -7,7 +7,6 @@ import {
   ScrollView,
   ActivityIndicator,
   Switch,
-  Alert,
   TextInput,
   Modal,
 } from 'react-native';
@@ -20,6 +19,7 @@ import { Avatar } from '../../src/components/Avatar';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
+import { useGroupsStore } from '../../src/store/groupsStore';
 import {
   getRoom,
   listRoomMembers,
@@ -35,6 +35,8 @@ import {
   deleteRoom,
 } from '../../src/services/api';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
+import { CustomAlert, type AlertButton } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { categoryMeta, formatCount } from '../../src/lib/rooms';
 import { toastApiError, showSuccess } from '../../src/lib/toast';
 import type { RoomDetail, RoomMemberCard, RoomUserCard, RoomMessageCard } from '../../src/types/api';
@@ -43,6 +45,8 @@ export default function RoomInfo() {
   const { theme } = useTheme();
   const router = useRouter();
   const me = useAuthStore((s) => s.user);
+  const patchGroupInStore = useGroupsStore((s) => s.patchRoom);
+  const { alertConfig, showAlert, hideAlert, confirm } = useAlert();
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const id = String(roomId);
 
@@ -121,12 +125,20 @@ export default function RoomInfo() {
       aspect: [1, 1],
     });
     if (res.canceled || !res.assets[0]) return;
+    const localUri = res.assets[0].uri;
+    const previousCover = room?.coverImageUrl ?? null;
     setPhotoUploading(true);
+    // Optimistic: show the picked image immediately while it uploads.
+    setRoom((prev) => (prev ? { ...prev, coverImageUrl: localUri } : prev));
     try {
-      const url = await uploadToR2(res.assets[0].uri, 'room_image', 'image/jpeg', { roomId: id });
+      const url = await uploadToR2(localUri, 'room_image', 'image/jpeg', { roomId: id });
       const result = await updateRoomPhoto(id, url);
       setRoom((prev) => (prev ? { ...prev, coverImageUrl: result.coverImageUrl } : prev));
+      // Keep the My Groups list in sync so its avatar updates without a refetch.
+      patchGroupInStore(id, { coverImageUrl: result.coverImageUrl });
     } catch (e) {
+      // Restore the previous image on failure so the UI never shows a half-applied state.
+      setRoom((prev) => (prev ? { ...prev, coverImageUrl: previousCover } : prev));
       toastApiError(e, 'Could not update group photo');
     } finally {
       setPhotoUploading(false);
@@ -135,45 +147,41 @@ export default function RoomInfo() {
 
   const confirmTransfer = (m: RoomMemberCard) => {
     setTransferOpen(false);
-    Alert.alert('Transfer Ownership', `Make ${m.user.firstName ?? 'this member'} the new group creator?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Transfer',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await transferRoomOwnership(id, m.user.id);
-            // Current user is no longer the creator; refresh room + members.
-            setRoom((prev) => (prev ? { ...prev, isCreator: false, myRole: 'admin' } : prev));
-            showSuccess(`${m.user.firstName ?? 'Member'} is now the group creator`);
-            load();
-          } catch (e) {
-            toastApiError(e, 'Could not transfer ownership');
-          }
-        },
+    confirm(
+      'Transfer Ownership?',
+      `Make ${m.user.firstName ?? 'this member'} the new group creator? You will become an admin.`,
+      async () => {
+        try {
+          await transferRoomOwnership(id, m.user.id);
+          // Current user is no longer the creator; refresh room + members.
+          setRoom((prev) => (prev ? { ...prev, isCreator: false, myRole: 'admin' } : prev));
+          showSuccess(`${m.user.firstName ?? 'Member'} is now the group creator`);
+          load();
+        } catch (e) {
+          toastApiError(e, 'Could not transfer ownership');
+        }
       },
-    ]);
+      { confirmLabel: 'Transfer', icon: 'shield-checkmark-outline', iconColor: theme.planGold },
+    );
   };
 
   const handleDelete = () => {
-    Alert.alert('Delete Group', 'Delete this group? This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setDeleting(true);
-          try {
-            await deleteRoom(id);
-            showSuccess('Group deleted');
-            router.replace('/(tabs)/groups' as Href);
-          } catch (e) {
-            setDeleting(false);
-            toastApiError(e, 'Could not delete group');
-          }
-        },
+    confirm(
+      'Delete Group?',
+      'This will permanently delete the group and all messages. This cannot be undone.',
+      async () => {
+        setDeleting(true);
+        try {
+          await deleteRoom(id);
+          showSuccess('Group deleted');
+          router.replace('/(tabs)/groups' as Href);
+        } catch (e) {
+          setDeleting(false);
+          toastApiError(e, 'Could not delete group');
+        }
       },
-    ]);
+      { destructive: true, confirmLabel: 'Delete Forever', icon: 'trash-outline', iconColor: theme.error },
+    );
   };
 
   // Inline edit (admin/creator)
@@ -230,42 +238,44 @@ export default function RoomInfo() {
   };
 
   const confirmRemoveMember = (m: RoomMemberCard) => {
-    Alert.alert('Remove Member', `Remove ${m.user.firstName ?? 'this member'} from the group?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await removeRoomMember(id, m.user.id);
-            setMembers((prev) => prev.filter((x) => x.id !== m.id));
-            setTotalMembers((t) => Math.max(0, t - 1));
-            showSuccess('Member removed');
-          } catch (e) {
-            toastApiError(e);
-          }
-        },
+    confirm(
+      `Remove ${m.user.firstName ?? 'this member'}?`,
+      'They will be removed from the group immediately.',
+      async () => {
+        try {
+          await removeRoomMember(id, m.user.id);
+          setMembers((prev) => prev.filter((x) => x.id !== m.id));
+          setTotalMembers((t) => Math.max(0, t - 1));
+          showSuccess('Member removed');
+        } catch (e) {
+          toastApiError(e);
+        }
       },
-    ]);
+      { destructive: true, confirmLabel: 'Remove', icon: 'person-remove-outline', iconColor: theme.error },
+    );
   };
 
   // Long-press a member row → admin/creator action sheet.
   const onMemberLongPress = (m: RoomMemberCard) => {
     if (m.user.id === me?.id) return;
-    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
+    const buttons: AlertButton[] = [];
     if (isCreator) {
       buttons.push(
         m.role === 'admin'
-          ? { text: 'Remove Admin', onPress: () => changeRole(m, 'member') }
-          : { text: 'Make Admin', onPress: () => changeRole(m, 'admin') },
+          ? { label: 'Remove Admin', onPress: () => { hideAlert(); changeRole(m, 'member'); } }
+          : { label: 'Make Admin', onPress: () => { hideAlert(); changeRole(m, 'admin'); } },
       );
     }
     if (isAdmin) {
-      buttons.push({ text: 'Remove from Group', style: 'destructive', onPress: () => confirmRemoveMember(m) });
+      buttons.push({
+        label: 'Remove from Group',
+        style: 'destructive',
+        onPress: () => { hideAlert(); confirmRemoveMember(m); },
+      });
     }
     if (buttons.length === 0) return;
-    buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(m.user.firstName ?? 'Member', undefined, buttons);
+    buttons.push({ label: 'Cancel', style: 'cancel', onPress: hideAlert });
+    showAlert({ title: m.user.firstName ?? 'Member', buttons });
   };
 
   const handleMute = async () => {
@@ -280,21 +290,19 @@ export default function RoomInfo() {
   };
 
   const handleLeave = () => {
-    Alert.alert('Leave Group', `Leave ${room?.name ?? 'this group'}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Leave',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await leaveRoom(id);
-            router.replace('/(tabs)/groups' as Href);
-          } catch (e) {
-            toastApiError(e);
-          }
-        },
+    confirm(
+      'Leave Group',
+      'Are you sure? You can rejoin if the group is public.',
+      async () => {
+        try {
+          await leaveRoom(id);
+          router.replace('/(tabs)/groups' as Href);
+        } catch (e) {
+          toastApiError(e);
+        }
       },
-    ]);
+      { destructive: true, confirmLabel: 'Leave', icon: 'log-out-outline', iconColor: theme.error },
+    );
   };
 
   const handleReport = async () => {
@@ -605,6 +613,8 @@ export default function RoomInfo() {
       </Modal>
 
       <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} onBlocked={() => load()} />
+
+      {alertConfig ? <CustomAlert {...alertConfig} onDismiss={hideAlert} /> : null}
     </SafeAreaView>
   );
 }

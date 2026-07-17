@@ -9,13 +9,14 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { Avatar } from '../../src/components/Avatar';
 import { useAuthStore } from '../../src/store/authStore';
 import { updateSettings, updateProfile, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
@@ -33,6 +34,7 @@ export default function Settings() {
   const setUser = useAuthStore((s) => s.setUser);
   const doLogout = useAuthStore((s) => s.logout);
   const plan: Plan = user?.plan ?? 'free';
+  const { alertConfig, hideAlert, alertSuccess, alertError } = useAlert();
 
   const [upgradeFor, setUpgradeFor] = useState<Plan | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -81,7 +83,7 @@ export default function Settings() {
       void updated;
     } catch {
       setToggles((t) => ({ ...t, [key]: prev }));
-      Alert.alert('Could not update setting', 'Please try again.');
+      alertError('Could not update setting', 'Please try again.');
     }
   };
 
@@ -94,7 +96,7 @@ export default function Settings() {
       if (user) setUser({ ...user, aiOptInFeatures: nextAi });
     } catch {
       setAi((a) => ({ ...a, [key]: prev }));
-      Alert.alert('Could not update setting', 'Please try again.');
+      alertError('Could not update setting', 'Please try again.');
     }
   };
 
@@ -107,7 +109,7 @@ export default function Settings() {
       if (user) setUser({ ...user, [key]: value });
     } catch {
       setAvail((a) => ({ ...a, [key]: prev }));
-      Alert.alert('Could not update setting', 'Please try again.');
+      alertError('Could not update setting', 'Please try again.');
     }
   };
 
@@ -124,9 +126,9 @@ export default function Settings() {
   const onExport = async () => {
     try {
       await exportMyData();
-      Alert.alert('Export started', 'Your data export has been requested. You’ll be notified when it’s ready.');
+      alertSuccess('Export started', 'Your data export has been requested. You’ll be notified when it’s ready.');
     } catch {
-      Alert.alert('Export failed', 'Please try again later.');
+      alertError('Export failed', 'Please try again later.');
     }
   };
 
@@ -138,7 +140,7 @@ export default function Settings() {
       await doLogout();
       router.replace('/onboarding');
     } catch {
-      Alert.alert('Could not delete account', 'Please try again.');
+      alertError('Could not delete account', 'Please try again.');
     } finally {
       setBusy(false);
     }
@@ -356,6 +358,8 @@ export default function Settings() {
           </View>
         </View>
       </Modal>
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

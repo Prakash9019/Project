@@ -7,7 +7,6 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +14,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { FormSection, FieldLabel, TextField, ChipSelect } from '../../src/components/form';
 import { useAuthStore } from '../../src/store/authStore';
 import {
@@ -71,6 +72,7 @@ export default function EditProfile() {
   const refreshUser = useAuthStore((s) => s.refreshUser);
   const plan = user?.plan ?? 'free';
   const canClips = planAtLeast(plan, 'premium');
+  const { alertConfig, hideAlert, showAlert, alertSuccess, alertError } = useAlert();
 
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -140,7 +142,7 @@ export default function EditProfile() {
   const pickPrimary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission needed', 'Allow photo access to set a profile picture.');
+      alertError('Permission needed', 'Allow photo access to set a profile picture.');
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, allowsEditing: true, aspect: [1, 1] });
@@ -154,7 +156,7 @@ export default function EditProfile() {
       setPrimaryPhoto(finalUrl);
       setPrimaryPhotoStore(finalUrl); // reflect in grid header / settings immediately
     } catch {
-      Alert.alert('Photo upload', 'Could not upload photo right now.');
+      alertError('Photo Upload Failed', 'Could not upload photo right now. Please try a different photo.');
     } finally {
       setUploadingPhoto(false);
     }
@@ -170,14 +172,20 @@ export default function EditProfile() {
     try {
       if (kind === 'video') await uploadVideoClip(res.assets[0].uri);
       else await uploadVoiceClip(res.assets[0].uri);
-      Alert.alert('Uploaded', `Your ${kind} intro was uploaded.`);
+      alertSuccess('Uploaded', `Your ${kind} intro was uploaded.`);
     } catch {
-      Alert.alert('Upload failed', 'Please try again later.');
+      alertError('Upload failed', 'Please try again later.');
     }
   };
 
   const addPromptRow = () => {
-    Alert.alert('Add prompt', 'Prompt editing uses a question catalog. Pick from the profile screen.', [{ text: 'OK' }]);
+    showAlert({
+      title: 'Add prompt',
+      message: 'Prompt editing uses a question catalog. Pick from the profile screen.',
+      icon: 'information-circle',
+      iconColor: theme.info,
+      buttons: [{ label: 'OK', style: 'default', onPress: hideAlert }],
+    });
   };
   const removePrompt = async (id: string) => {
     setPrompts((p) => p.filter((x) => x.id !== id));
@@ -216,8 +224,8 @@ export default function EditProfile() {
       router.back();
     } catch (e) {
       const err = e as ApiError;
-      if (err.status === 422) Alert.alert('Check your details', err.message ?? 'Some fields are invalid.');
-      else Alert.alert('Could not save', err.message ?? 'Please try again.');
+      if (err.status === 422) alertError('Check your details', err.message ?? 'Some fields are invalid.');
+      else alertError('Could not save', err.message ?? 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -400,6 +408,8 @@ export default function EditProfile() {
           )}
         </FormSection>
       </ScrollView>
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

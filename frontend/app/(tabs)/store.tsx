@@ -1,10 +1,12 @@
 import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert, Modal } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { useAuthStore } from '../../src/store/authStore';
 import { PLANS, BILLING_CYCLES, ADD_ONS, planCycleSavings } from '../../src/lib/plans';
 import { planBadgeColor, planRank } from '../../src/lib/format';
@@ -152,6 +154,7 @@ export default function Store() {
   const refreshUser = useAuthStore((s) => s.refreshUser);
   const setUser = useAuthStore((s) => s.setUser);
   const currentPlan: Plan = user?.plan ?? 'free';
+  const { alertConfig, hideAlert, alertSuccess, alertError } = useAlert();
 
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [busy, setBusy] = useState<string | null>(null);
@@ -190,7 +193,7 @@ export default function Store() {
 
   const ensurePayments = (): boolean => {
     if (!isPaymentsAvailable) {
-      Alert.alert('Payments unavailable', 'Checkout is only available in the mobile app.');
+      alertError('Payments unavailable', 'Checkout is only available in the mobile app.');
       return false;
     }
     return true;
@@ -223,11 +226,11 @@ export default function Store() {
       }
       await refreshUser();
       await loadSub();
-      Alert.alert('Welcome to ' + plan, 'Your plan is now active.');
+      alertSuccess('Welcome to ' + plan, 'Your plan is now active.');
     } catch (e) {
       const err = e as ApiError;
       // Razorpay cancel throws a non-API error; only surface real failures.
-      if (err.status) Alert.alert('Payment failed', err.message ?? 'Please try again.');
+      if (err.status) alertError('Payment failed', err.message ?? 'Please try again.');
     } finally {
       setBusy(null);
     }
@@ -254,10 +257,10 @@ export default function Store() {
       });
       refreshUser();
       await loadActiveAddons();
-      Alert.alert('Purchased', 'Your add-on is active.');
+      alertSuccess('Purchased', 'Your add-on is active.');
     } catch (e) {
       const err = e as ApiError;
-      if (err.status) Alert.alert('Purchase failed', err.message ?? 'Please try again.');
+      if (err.status) alertError('Purchase failed', err.message ?? 'Please try again.');
     } finally {
       setBusy(null);
     }
@@ -569,6 +572,8 @@ export default function Store() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
 }

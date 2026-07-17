@@ -7,7 +7,6 @@ import {
   ScrollView,
   useWindowDimensions,
   ActivityIndicator,
-  Alert,
   Modal,
   TextInput,
   KeyboardAvoidingView,
@@ -16,6 +15,8 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Linking } from 'react-native';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -58,6 +59,7 @@ export default function ProfileDetail() {
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
+  const { alertConfig, hideAlert, confirm, alertError } = useAlert();
   const me = useAuthStore((s) => s.user);
   const patchCard = useGridStore((s) => s.patchCard);
   const { fetchConversations } = useChatStore();
@@ -243,21 +245,19 @@ export default function ProfileDetail() {
 
   const confirmBlock = () => {
     setMenuOpen(false);
-    Alert.alert('Block user', 'They won’t be able to see you or message you. This is mutual.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Block',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await blockUser(peerId);
-            router.back();
-          } catch {
-            Alert.alert('Could not block', 'Please try again.');
-          }
-        },
+    confirm(
+      `Block ${profile?.firstName ?? 'this person'}?`,
+      'They won’t be able to see you or message you. This is mutual.',
+      async () => {
+        try {
+          await blockUser(peerId);
+          router.back();
+        } catch {
+          alertError('Could not block', 'Please try again.');
+        }
       },
-    ]);
+      { destructive: true, confirmLabel: 'Block', icon: 'ban', iconColor: theme.error },
+    );
   };
 
   if (loading) {
@@ -662,6 +662,8 @@ export default function ProfileDetail() {
 
       <ReportSheet visible={reportOpen} userId={peerId} onClose={() => setReportOpen(false)} />
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </View>
   );
 }

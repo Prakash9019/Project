@@ -120,7 +120,7 @@ These were frontend-brief additions and are **now live in the backend** (see the
 - `GET /api/v1/me/photos/upload-url` (alias of `/api/v1/me/upload-url`) →
   `{ uploadUrl, gcsPath, expiresAt }`. Client PUTs bytes, then `POST /api/v1/me/photos { url }`.
 - `GET /api/v1/auth/me` (`Self`) now includes **`primaryPhotoUrl`** (published primary
-  photo URL or null) and **`callLimits`** (see below).
+  photo URL or null), **`callLimits`** (see below), and **`effectiveLimits`** (see below).
 
 ## callLimits (free-tier call countdown)
 
@@ -132,6 +132,35 @@ callLimits: {
 }
 ```
 Resets at UTC midnight; lets the client show a live countdown during free calls.
+
+## effectiveLimits (plan limits)
+
+`computeEffectiveLimits(plan, planExpiresAtUnix)` lives in
+**`backend/src/middleware/subscription.ts`** — read plan limits (`gridProfiles`,
+`interactionCap`, `messageTemplates`, `pinChats`, `maxRadiusM`, `incognitoMode`,
+etc.) from there, never hardcode plan-name checks for these values.
+
+- `requireAuth` middleware calls it on **every** request and attaches the result
+  to `req.effectiveLimits` (lazily downgrades an expired plan to free — no DB hit).
+- `GET /api/v1/auth/me` also calls it directly and returns the result as
+  **`effectiveLimits`** on the response, alongside `callLimits`.
+- Frontend: `EffectiveLimits` type is in `frontend/src/types/api.ts`; read
+  `me.effectiveLimits.<field>` (e.g. `messageTemplates > 0`) instead of
+  `planAtLeast(me?.plan, 'premium')` wherever a real plan-limit number exists.
+
+## Key file locations (corrections from spec)
+
+- Subscription/plan limits: `backend/src/middleware/subscription.ts`
+  (**NOT** `backend/src/utils/subscription.ts` — that path does not exist).
+- Message template endpoints — mounted on the **conversations** router, not a
+  separate router:
+  - `GET    /api/v1/conversations/templates`
+  - `POST   /api/v1/conversations/templates`
+  - `DELETE /api/v1/conversations/templates/:templateId`
+- `Self` type (`frontend/src/types/api.ts`) is a type alias, not its own
+  interface: `export type Self = User`. `effectiveLimits` and `callLimits` are
+  fields on `User`. `PublicProfile extends UserCard`, **not** `User` — these
+  two fields never leak into public profile responses.
 
 ## Known deferred items
 
