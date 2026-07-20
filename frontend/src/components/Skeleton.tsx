@@ -42,13 +42,22 @@ export function GridSkeleton({ cols = 3 }: { cols?: number }) {
   );
 }
 
-/** Message bubble skeletons for the chat loading state. */
+/** Message bubble skeletons for the chat loading state (WhatsApp-style, no spinner). */
 export function ChatSkeleton() {
+  const { theme } = useTheme();
+  // Alternating own/received bubbles; received rows carry an avatar placeholder.
+  const rows = [false, true, false, false, true, false];
   return (
     <View style={styles.chat}>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <View key={i} style={{ alignSelf: i % 2 === 0 ? 'flex-start' : 'flex-end' }}>
-          <Skeleton width={160 + (i % 3) * 40} height={38} radius={18} />
+      {rows.map((isOwn, i) => (
+        <View
+          key={i}
+          style={[styles.chatRow, { justifyContent: isOwn ? 'flex-end' : 'flex-start' }]}
+        >
+          {!isOwn && (
+            <View style={[styles.chatAvatar, { backgroundColor: theme.surfaceElevated }]} />
+          )}
+          <Skeleton width={isOwn ? '58%' : '68%'} height={44} radius={16} />
         </View>
       ))}
     </View>
@@ -72,7 +81,45 @@ export function ListSkeleton({ rows = 8 }: { rows?: number }) {
   );
 }
 
+/** Room card skeletons for the Groups tabs (My Groups + Discover) loading state. */
+export function RoomListSkeleton({ rows = 4 }: { rows?: number }) {
+  return (
+    <View style={{ paddingHorizontal: 20, paddingTop: 8, gap: 20 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <View key={i} style={styles.roomRow}>
+          <Skeleton width={56} height={56} radius={28} />
+          <View style={{ flex: 1, gap: 8 }}>
+            <Skeleton width="55%" height={15} />
+            <Skeleton width="85%" height={12} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** Member row skeletons for the room members list loading state. */
+export function MemberListSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <View style={{ paddingHorizontal: 24, paddingTop: 12, gap: 18 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <View key={i} style={styles.memberRow}>
+          <Skeleton width={48} height={48} radius={24} />
+          <View style={{ flex: 1, gap: 8 }}>
+            <Skeleton width="45%" height={14} />
+            <Skeleton width="30%" height={11} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   chat: { padding: 16, gap: 12 },
+  chatRow: { flexDirection: 'row', alignItems: 'center' },
+  chatAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 8 },
   listRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  roomRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  memberRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
 });

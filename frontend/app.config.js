@@ -65,6 +65,7 @@ export default {
       ],
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
+      "@react-native-firebase/messaging",
       [
         "@react-native-google-signin/google-signin",
         {

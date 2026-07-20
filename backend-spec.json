@@ -600,6 +600,25 @@
       }
     },
     {
+      "id": "register-fcm-token",
+      "method": "POST",
+      "path": "/api/v1/me/fcm-token",
+      "auth": "bearer+verified",
+      "summary": "Register/refresh this device's FCM token for background push (20260718). Requires @react-native-firebase/messaging linked natively; server sends via firebase-admin using FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY (already configured for Firebase Auth). Push is only sent when the recipient has no live socket (RedisKeys.presence) \u2014 foreground is covered by in-app toasts.",
+      "requestBody": {
+        "required": [
+          "token"
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "ok": "boolean"
+          }
+        }
+      }
+    },
+    {
       "id": "add-photo",
       "method": "POST",
       "path": "/api/v1/me/photos",
@@ -769,7 +788,7 @@
           }
         }
       },
-      "notes": "UserCard fields: profilePhoto, firstName, age, distance, distanceLabel, lastActiveAt (human-readable), isVerified, isOnline (boolean, false when hideActiveStatus is on), hasLocation (boolean — true when the candidate was found via the Redis geo index rather than the DB fallback pass; used by the client to decide whether a map marker can be placed, since exact lat/lng is never returned), height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked, boosted, rightNowStatus, rightNowCategory, rightNowActive. Ranking is a weighted score, not a plain sort: boosted/spotlight add-ons score by tier (boost_local +8,000,000 / boost_extended +9,000,000 / boost_city_wide +10,000,000 / mega_boost +11,000,000 / spotlight +12,000,000) > platinum (+5,000,000) > gold (+2,000,000) > premium (+1,000,000) > free (+0), plus up to 500,000 pts for distance (0m=max, 100km=0), up to 100,000 pts for profileCompletenessScore, up to 50,000 pts for historicalReplyRate \u2014 so Platinum candidates outrank lower tiers across every page, not just within one page. If Redis has no geo hit for the caller's radius (no location synced yet, sparse area), the endpoint falls back to a DB-only candidate pool instead of returning an empty grid; those cards have distanceLabel=null. Candidates with hideExactDistance=true (Gold+) show distanceLabel='Near you' instead of a real distance."
+      "notes": "UserCard fields: profilePhoto, firstName, age, distance, distanceLabel, lastActiveAt (human-readable), isVerified, isOnline (boolean, false when hideActiveStatus is on), hasLocation (boolean \u2014 true when the candidate was found via the Redis geo index rather than the DB fallback pass; used by the client to decide whether a map marker can be placed, since exact lat/lng is never returned), height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked, boosted, rightNowStatus, rightNowCategory, rightNowActive. Ranking is a weighted score, not a plain sort: boosted/spotlight add-ons score by tier (boost_local +8,000,000 / boost_extended +9,000,000 / boost_city_wide +10,000,000 / mega_boost +11,000,000 / spotlight +12,000,000) > platinum (+5,000,000) > gold (+2,000,000) > premium (+1,000,000) > free (+0), plus up to 500,000 pts for distance (0m=max, 100km=0), up to 100,000 pts for profileCompletenessScore, up to 50,000 pts for historicalReplyRate \u2014 so Platinum candidates outrank lower tiers across every page, not just within one page. If Redis has no geo hit for the caller's radius (no location synced yet, sparse area), the endpoint falls back to a DB-only candidate pool instead of returning an empty grid; those cards have distanceLabel=null. Candidates with hideExactDistance=true (Gold+) show distanceLabel='Near you' instead of a real distance."
     },
     {
       "id": "get-grid-spotlight",
@@ -916,6 +935,11 @@
             "type": "string"
           },
           {
+            "name": "caption",
+            "type": "string",
+            "notes": "added 20260720; optional, max 1000 chars. Caption travels WITH an image message (type=photo) as one message \u2014 not a separate text message."
+          },
+          {
             "name": "ciphertext",
             "type": "string"
           },
@@ -930,6 +954,11 @@
           {
             "name": "expiresInSeconds",
             "type": "number"
+          },
+          {
+            "name": "replyToId",
+            "type": "uuid",
+            "notes": "added 20260718; must reference a message already in this conversation, 400 otherwise"
           }
         ]
       },
@@ -939,6 +968,27 @@
         },
         "402": {},
         "451": {}
+      }
+    },
+    {
+      "id": "react-to-message",
+      "method": "POST",
+      "path": "/api/v1/conversations/:conversationId/messages/:messageId/react",
+      "auth": "bearer+verified",
+      "summary": "Toggle the caller's reaction (added 20260718; mirrors the room-message reaction pattern in rooms.service.ts). Emits socket event message.reaction to both participants.",
+      "requestBody": {
+        "required": [
+          "emoji"
+        ]
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "added": "boolean",
+            "emoji": "string",
+            "count": "number"
+          }
+        }
       }
     },
     {
@@ -1684,11 +1734,34 @@
       "auth": "bearer+verified",
       "summary": "Create a user-owned group. isOfficial=false, isActive=true, memberCount=1. The creator is recorded via Room.creatorId AND seeded as a RoomMember with role 'admin' (RoomRole has no 'creator' value; creator status is derived from creatorId). Returns the full RoomDetail (with myRole='admin', isCreator=true) so the client can open the new room.",
       "body": [
-        { "name": "name", "type": "string", "notes": "required, 1-100 chars" },
-        { "name": "description", "type": "string", "nullable": true, "notes": "optional, max 500 chars" },
-        { "name": "category", "type": "RoomCategory", "notes": "required" },
-        { "name": "coverImageUrl", "type": "string", "nullable": true, "notes": "optional; hosted URL or bare R2 object key (signed on read)" },
-        { "name": "isVerifiedOnly", "type": "boolean", "nullable": true, "notes": "default false" }
+        {
+          "name": "name",
+          "type": "string",
+          "notes": "required, 1-100 chars"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "nullable": true,
+          "notes": "optional, max 500 chars"
+        },
+        {
+          "name": "category",
+          "type": "RoomCategory",
+          "notes": "required"
+        },
+        {
+          "name": "coverImageUrl",
+          "type": "string",
+          "nullable": true,
+          "notes": "optional; hosted URL or bare R2 object key (signed on read)"
+        },
+        {
+          "name": "isVerifiedOnly",
+          "type": "boolean",
+          "nullable": true,
+          "notes": "default false"
+        }
       ],
       "responses": {
         "201": {
@@ -1783,7 +1856,7 @@
       "method": "GET",
       "path": "/api/rooms/:roomId/media",
       "auth": "bearer+verified+member",
-      "summary": "Shared media for the Group Info 'Media, Links & Documents' screen. Filters the room's non-deleted messages by kind: image (type='image' with mediaUrl), voice (type='voice' with mediaUrl), document (text message with mediaUrl and a 📄 caption), link (text message whose content contains a URL — rare, external links are blocked at send time). Omitting type returns all messages with a mediaUrl. Each item is a RoomMessageCard (signed mediaUrl, sender UserCard). Cursor paginates by createdAt, newest first.",
+      "summary": "Shared media for the Group Info 'Media, Links & Documents' screen. Filters the room's non-deleted messages by kind: image (type='image' with mediaUrl), voice (type='voice' with mediaUrl), document (text message with mediaUrl and a \ud83d\udcc4 caption), link (text message whose content contains a URL \u2014 rare, external links are blocked at send time). Omitting type returns all messages with a mediaUrl. Each item is a RoomMessageCard (signed mediaUrl, sender UserCard). Cursor paginates by createdAt, newest first.",
       "query": [
         {
           "name": "type",
@@ -2131,7 +2204,11 @@
       "auth": "bearer+verified",
       "summary": "Bulk add/invite members to a room (creator/admin only; asserted in the service). Each userId runs through the same invite-or-add policy: groupsAvailable users are added directly, users with an existing conversation get an invite, everyone else (and the requester themselves) is skipped. De-dupes userIds.",
       "body": [
-        { "name": "userIds", "type": "string[]", "notes": "1-50 user UUIDs" }
+        {
+          "name": "userIds",
+          "type": "string[]",
+          "notes": "1-50 user UUIDs"
+        }
       ],
       "responses": {
         "200": {
@@ -2216,6 +2293,215 @@
       ],
       "returns": "{ uploadUrl: string, key: string, mediaUrl: string, expiresAt: iso8601 }",
       "notes": "mediaUrl = MEDIA_BASE_URL + '/' + key when configured, else the raw key (signUrl presigns it on read). External URLs (e.g. Tenor GIFs) are stored verbatim and pass through signUrl unchanged."
+    },
+    {
+      "id": "star-message",
+      "method": "POST",
+      "path": "/api/v1/messages/:messageId/star",
+      "auth": "bearer+verified",
+      "summary": "Star a message (1:1 or room). Idempotent.",
+      "requestBody": {
+        "fields": [
+          {
+            "name": "type",
+            "enum": [
+              "chat",
+              "room"
+            ],
+            "notes": "default 'chat'"
+          }
+        ]
+      },
+      "responses": {
+        "201": {
+          "fields": [
+            {
+              "name": "ok",
+              "type": "boolean"
+            },
+            {
+              "name": "messageId",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unstar-message",
+      "method": "DELETE",
+      "path": "/api/v1/messages/:messageId/star",
+      "auth": "bearer+verified",
+      "summary": "Remove a star.",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "list-starred",
+      "method": "GET",
+      "path": "/api/v1/messages/starred",
+      "auth": "bearer+verified",
+      "summary": "List all starred messages (chat + room), newest first.",
+      "responses": {
+        "200": {
+          "fields": [
+            {
+              "name": "starred",
+              "type": "array",
+              "notes": "[{id,messageId,type,conversationId,roomId,title,senderName,preview,avatarUrl,createdAt,starredAt}]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "archive-conversation",
+      "method": "POST",
+      "path": "/api/v1/conversations/:conversationId/archive",
+      "auth": "bearer+verified",
+      "summary": "Archive/unarchive a conversation for the caller (per-side aArchivedAt/bArchivedAt).",
+      "requestBody": {
+        "required": [
+          "archived"
+        ],
+        "fields": [
+          {
+            "name": "archived",
+            "type": "boolean"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "archived",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "update-conversation",
+      "method": "PATCH",
+      "path": "/api/v1/conversations/:conversationId",
+      "auth": "bearer+verified",
+      "summary": "Set disappearing-messages window.",
+      "requestBody": {
+        "required": [
+          "disappearingMessages"
+        ],
+        "fields": [
+          {
+            "name": "disappearingMessages",
+            "enum": [
+              "24h",
+              "7d",
+              "90d",
+              null
+            ],
+            "notes": "null = off"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "disappearingMessages",
+              "type": "string|null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pin-chat-message",
+      "method": "POST",
+      "path": "/api/v1/conversations/:conversationId/messages/:messageId/pin",
+      "auth": "bearer+verified",
+      "summary": "Pin/unpin a message in a 1:1 chat (either participant). Emits message.pinned.",
+      "requestBody": {
+        "required": [
+          "isPinned"
+        ],
+        "fields": [
+          {
+            "name": "isPinned",
+            "type": "boolean"
+          }
+        ]
+      },
+      "responses": {
+        "200": {
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "isPinned",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-message-for-me",
+      "method": "DELETE",
+      "path": "/api/v1/conversations/:conversationId/messages/:messageId",
+      "auth": "bearer+verified",
+      "summary": "Delete for me \u2014 hides a message from the caller's side only (deletedByA/deletedByB). Delete-for-everyone uses the /unsend endpoint.",
+      "responses": {
+        "204": {}
+      }
+    },
+    {
+      "id": "chat-message-reactions",
+      "method": "GET",
+      "path": "/api/v1/conversations/:conversationId/messages/:messageId/reactions",
+      "auth": "bearer+verified",
+      "summary": "Who reacted to a 1:1 message, grouped by emoji.",
+      "responses": {
+        "200": {
+          "fields": [
+            {
+              "name": "reactions",
+              "type": "array",
+              "notes": "[{emoji, users:[{id,firstName,age,profilePhoto}]}]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "room-message-reactions",
+      "method": "GET",
+      "path": "/api/rooms/:roomId/messages/:messageId/reactions",
+      "auth": "bearer+room-member",
+      "summary": "Who reacted to a room message, grouped by emoji.",
+      "responses": {
+        "200": {
+          "fields": [
+            {
+              "name": "reactions",
+              "type": "array",
+              "notes": "[{emoji, users:UserCard[]}]"
+            }
+          ]
+        }
+      }
     }
   ],
   "models": [
@@ -2692,6 +2978,11 @@
         {
           "name": "lastMessageAt",
           "type": "timestamp"
+        },
+        {
+          "name": "disappearingMessages",
+          "type": "string",
+          "notes": "null | '24h' | '7d' | '90d' (Phase 5); messages older than the window are filtered from responses"
         }
       ],
       "removed": [
@@ -2855,7 +3146,7 @@
     {
       "name": "Message",
       "table": "messages",
-      "notes": "v3: added voice_note to MessageType. aHasReplied/bHasReplied on Conversation updated after insert.",
+      "notes": "v3: added voice_note to MessageType. aHasReplied/bHasReplied on Conversation updated after insert. Phase 3/5: added isPinned, deletedByA/deletedByB; listMessages responses also include computed isStarred.",
       "fields": [
         {
           "name": "id",
@@ -2882,6 +3173,12 @@
           "name": "content",
           "type": "string",
           "nullable": true
+        },
+        {
+          "name": "caption",
+          "type": "string",
+          "nullable": true,
+          "notes": "added 20260720; optional image caption (max 1000). Rendered inside the image bubble; null for non-image messages or captionless images."
         },
         {
           "name": "mediaUrls",
@@ -2966,6 +3263,38 @@
         {
           "name": "createdAt",
           "type": "timestamp"
+        },
+        {
+          "name": "replyToId",
+          "type": "uuid",
+          "nullable": true,
+          "notes": "added 20260718_reply_reactions_fcm_album_privacy; must reference a message in the same conversation"
+        },
+        {
+          "name": "replyTo",
+          "type": "object",
+          "nullable": true,
+          "notes": "denormalized quote in API responses only: { id, senderId, content } (content truncated to 60 chars, 'message removed' if unsent) \u2014 not a stored column"
+        },
+        {
+          "name": "reactions",
+          "type": "array<object>",
+          "notes": "API-only, computed from message_reactions table: [{ emoji, count, userReacted }]. POST /api/v1/conversations/:conversationId/messages/:messageId/react { emoji } toggles the caller's reaction and emits socket event message.reaction { conversationId, messageId, emoji, count, added, userId } to both participants."
+        },
+        {
+          "name": "isPinned",
+          "type": "boolean",
+          "notes": "1:1 pin (Phase 3), default false"
+        },
+        {
+          "name": "deletedByA",
+          "type": "boolean",
+          "notes": "delete-for-me: hidden from userA, default false"
+        },
+        {
+          "name": "deletedByB",
+          "type": "boolean",
+          "notes": "delete-for-me: hidden from userB, default false"
         }
       ]
     },
@@ -3604,6 +3933,40 @@
           "name": "updatedAt",
           "type": "iso8601"
         }
+      ]
+    },
+    {
+      "name": "StarredMessage",
+      "table": "starred_messages",
+      "notes": "Per-user starred messages (Phase 3). type distinguishes 1:1 Message vs RoomMessage; no FK to the message so it survives across both tables.",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true
+        },
+        {
+          "name": "userId",
+          "type": "uuid",
+          "notes": "FK users.id (cascade)"
+        },
+        {
+          "name": "messageId",
+          "type": "string"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "notes": "'chat' | 'room', default 'chat'"
+        },
+        {
+          "name": "createdAt",
+          "type": "datetime"
+        }
+      ],
+      "indexes": [
+        "unique(userId,messageId)",
+        "userId"
       ]
     }
   ],
@@ -4405,7 +4768,9 @@
     "callHistoryAccess: Premium DOES get call history access (callHistoryAccess=true), matching the PDF feature matrix \u2014 corrected from an earlier implementation gap where Premium was set to false.",
     "computeEffectiveLimits() is in backend/src/middleware/subscription.ts (not utils/subscription.ts). Returns EffectiveLimits object. Called by requireAuth middleware on every request (attaches to req.effectiveLimits) and also returned in GET /api/v1/auth/me response as effectiveLimits field.",
     "Message template endpoints are mounted on the conversations router: GET/POST /api/v1/conversations/templates, DELETE /api/v1/conversations/templates/:templateId",
-    "Self type = type alias for User. effectiveLimits and callLimits are on User. PublicProfile extends UserCard \u2014 does not include these fields."
+    "Self type = type alias for User. effectiveLimits and callLimits are on User. PublicProfile extends UserCard \u2014 does not include these fields.",
+    "Room privacy & invite links (migration 20260719_room_privacy_invite_code): Room gained isPrivate (bool) and inviteCode (unique string, generated for every room). POST /api/rooms createRoom accepts isPrivate (default false). Private groups: excluded from GET /api/rooms Discover (where isPrivate:false); POST /api/rooms/:roomId/join throws 403 private_room for non-members; invite-or-add (POST /api/rooms/:roomId/invite-or-add/:userId) and bulk add require admin/creator (assertRoomAdmin) \u2014 public groups keep the open member-add policy. Join via link: GET /api/rooms/by-code/:code (preview, no membership) and POST /api/rooms/by-code/:code/join (join; honours isVerifiedOnly; only self-serve way into a private group) \u2014 both registered before /:roomId. RoomCard now carries isPrivate; getRoomDetail returns inviteCode only to members (null otherwise). Frontend: create-group/details.tsx has a Public/Private selector; Group Info shows Share/Copy invite link; deep link nearme://rooms/join/<code> -> app/rooms/join/[code].tsx.",
+    "FCM push payloads (adapters/fcm.ts buildPushMessage) are typed: new_message, reaction, missed_call, room_message, room_member_join, room_member_left, room_mention. data carries {type, conversationId|roomId} for tap navigation. Push is presence-gated + mute-aware; room mentions (@firstName) push room_mention to the matched member."
   ],
   "v1LaunchChecklist": {
     "mustShip": [

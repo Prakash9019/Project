@@ -49,15 +49,43 @@ export function isPaidPlan(plan: string, planExpiresAt: Date | null): boolean {
   return isActivePlan(plan, planExpiresAt);
 }
 
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
+/** Fetch reactions grouped by messageId → [{emoji, count, userReacted}]. */
+async function reactionsByMessage(messageIds: string[], viewerId: string) {
+  const map = new Map<string, { emoji: string; count: number; userReacted: boolean }[]>();
+  if (messageIds.length === 0) return map;
+  const reactions = await prisma.messageReaction.findMany({
+    where: { messageId: { in: messageIds } },
+    select: { messageId: true, emoji: true, userId: true },
+  });
+  const grouped = new Map<string, Map<string, { count: number; userReacted: boolean }>>();
+  for (const r of reactions) {
+    if (!grouped.has(r.messageId)) grouped.set(r.messageId, new Map());
+    const emojiMap = grouped.get(r.messageId)!;
+    const cur = emojiMap.get(r.emoji) ?? { count: 0, userReacted: false };
+    cur.count += 1;
+    if (r.userId === viewerId) cur.userReacted = true;
+    emojiMap.set(r.emoji, cur);
+  }
+  for (const [msgId, emojiMap] of grouped) {
+    map.set(msgId, [...emojiMap.entries()].map(([emoji, v]) => ({ emoji, count: v.count, userReacted: v.userReacted })));
+  }
+  return map;
+}
+
 /** Serialize a message for API responses — never exposes originalContent, moderationFlagged, deletedAt. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeMessage(msg: any) {
+export function serializeMessage(msg: any, reactions?: { emoji: string; count: number; userReacted: boolean }[]) {
   return {
     id: msg.id,
     conversationId: msg.conversationId,
     senderId: msg.senderId,
     type: msg.type,
     content:    msg.isUnsent ? null : msg.content,
+    caption:    msg.isUnsent ? null : (msg.caption ?? null),
     ciphertext: msg.isUnsent ? null : msg.ciphertext,
     mediaUrls:  msg.mediaUrls ?? [],
     mediaUrl:   msg.mediaUrl ?? null,
@@ -67,11 +95,22 @@ export function serializeMessage(msg: any) {
     expiresAfterView: msg.expiresAfterView ?? (msg.type === 'expiring_photo'),
     isUnsent:   msg.isUnsent ?? false,
     unsentAt:   msg.unsentAt ?? null,
+    isPinned:   msg.isPinned ?? false,
+    isStarred:  msg.isStarred ?? false,
     isEdited:   msg.isEdited ?? false,
     editedAt:   msg.editedAt ?? null,
     translatedContent: msg.translatedContent ?? null,
     deliveredAt: msg.deliveredAt ?? null,
     readAt:     msg.readAt ?? null,
+    replyToId:  msg.replyToId ?? null,
+    replyTo: msg.replyTo
+      ? {
+          id: msg.replyTo.id,
+          senderId: msg.replyTo.senderId,
+          content: msg.replyTo.isUnsent ? 'message removed' : truncate(msg.replyTo.content ?? '', 60),
+        }
+      : null,
+    reactions: reactions ?? [],
     createdAt:  msg.createdAt,
   };
 }
@@ -82,8 +121,12 @@ function isExpiringViewOnce(msg: { type: string; viewOnce?: boolean }) {
 
 /** Sign media URLs and redact view-once content for recipients who haven't opened yet. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function serializeMessageForViewer(msg: any, viewerId: string) {
-  const base = serializeMessage(msg);
+export async function serializeMessageForViewer(
+  msg: any,
+  viewerId: string,
+  reactions?: { emoji: string; count: number; userReacted: boolean }[],
+) {
+  const base = serializeMessage(msg, reactions);
   const isRecipient = msg.senderId !== viewerId;
   const hideMedia = isExpiringViewOnce(msg) && isRecipient && !msg.viewedAt;
 
@@ -164,7 +207,17 @@ export async function startOrGetConversation(senderId: string, receiverId: strin
 
 export { computeCallFlags as callFlags };
 
-export async function listConversations(userId: string, folder: 'inbox' | 'requests') {
+export async function archiveConversation(conversationId: string, userId: string, archived: boolean) {
+  const convo = await getParticipantConversation(userId, conversationId);
+  const isA = convo.userAId === userId;
+  const stamp = archived ? new Date() : null;
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: isA ? { aArchivedAt: stamp } : { bArchivedAt: stamp },
+  });
+}
+
+export async function listConversations(userId: string, folder: 'inbox' | 'requests', archived = false) {
   const visibility = {
     OR: [
       { userAId: userId, aIsHidden: false, aDeletedAt: null },
@@ -242,27 +295,56 @@ export async function listConversations(userId: string, folder: 'inbox' | 'reque
     return latB - latA;
   });
 
-  return conversations.map((c) => ({
+  // Archived filter (per viewer side). Default inbox hides archived threads.
+  const isViewerArchived = (c: (typeof conversations)[number]) =>
+    (c.userAId === userId ? c.aArchivedAt : c.bArchivedAt) != null;
+  const visible = conversations.filter((c) => (archived ? isViewerArchived(c) : !isViewerArchived(c)));
+
+  return visible.map((c) => ({
     ...c,
     unreadCount: unreadByConvoId.get(c.id) ?? 0,
   }));
 }
 
 export async function listMessages(conversationId: string, before: Date | undefined, limit: number, viewerId: string) {
+  // Determine which side the viewer is on so per-side "delete for me" flags apply.
+  const convo = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { userAId: true, disappearingMessages: true },
+  });
+  const isA = convo?.userAId === viewerId;
+
+  // Disappearing-messages cutoff (filter only — no destructive delete).
+  const cutoff = disappearingCutoff(convo?.disappearingMessages ?? null);
+
   const raw = await prisma.message.findMany({
     where: {
       conversationId,
       deletedAt: null,
+      ...(isA ? { deletedByA: false } : { deletedByB: false }),
+      ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
       ...(before ? { createdAt: { lt: before } } : {}),
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
+    include: { replyTo: true },
   });
 
   const hasMore = raw.length > limit;
   const slice = hasMore ? raw.slice(0, limit) : raw;
   const nextCursor = hasMore ? slice[slice.length - 1].createdAt.toISOString() : null;
-  const messages = await Promise.all(slice.map((m) => serializeMessageForViewer(m, viewerId)));
+  const reactionsByMsg = await reactionsByMessage(slice.map((m) => m.id), viewerId);
+  const starredRows = await prisma.starredMessage.findMany({
+    where: { userId: viewerId, messageId: { in: slice.map((m) => m.id) } },
+    select: { messageId: true },
+  });
+  const starredSet = new Set(starredRows.map((s) => s.messageId));
+  const messages = await Promise.all(
+    slice.map(async (m) => ({
+      ...(await serializeMessageForViewer(m, viewerId, reactionsByMsg.get(m.id))),
+      isStarred: starredSet.has(m.id),
+    })),
+  );
 
   return { messages, hasMore, nextCursor };
 }
@@ -276,9 +358,11 @@ export async function sendMessage(
     type: 'text' | 'photo' | 'video' | 'voice' | 'expiring_photo' | 'voice_note';
     ciphertext?: string;
     content?: string;
+    caption?: string;
     mediaUrls?: string[];
     viewOnce?: boolean;
     expiresInSeconds?: number;
+    replyToId?: string;
   },
 ) {
   // 1. Participant + hidden check
@@ -374,6 +458,15 @@ export async function sendMessage(
     // gold/platinum: unlimited — no cap check
   }
 
+  // Validate replyToId belongs to this conversation, if provided
+  if (payload.replyToId) {
+    const target = await prisma.message.findFirst({
+      where: { id: payload.replyToId, conversationId },
+      select: { id: true },
+    });
+    if (!target) throw Errors.badRequest('Reply target message not found in this conversation');
+  }
+
   // Track whether this message first sets the reply flag
   const isA = convo.userAId === senderId;
   const wasFirstReply = isA ? !convo.aHasReplied : !convo.bHasReplied;
@@ -387,11 +480,14 @@ export async function sendMessage(
         type: payload.type,
         ciphertext: payload.ciphertext,
         content: payload.content,
+        caption: payload.caption ?? null,
         mediaUrls: payload.mediaUrls ?? [],
         viewOnce: payload.viewOnce ?? payload.type === 'expiring_photo',
         expiresAfterView: payload.type === 'expiring_photo',
         expiresInSeconds: payload.expiresInSeconds ?? (payload.type === 'expiring_photo' ? env.expiringPhoto.viewSeconds : null),
+        replyToId: payload.replyToId,
       },
+      include: { replyTo: true },
     });
 
     await tx.conversation.update({
@@ -495,6 +591,158 @@ export async function unsendMessage(messageId: string, senderId: string, plan: s
     where: { id: messageId },
     data: { isUnsent: true, unsentAt: new Date(), content: null },
   });
+}
+
+/** Duration → cutoff Date for disappearing messages (null = off). */
+export function disappearingCutoff(setting: string | null): Date | null {
+  if (!setting) return null;
+  const ms = setting === '24h' ? 24 * 3600e3 : setting === '7d' ? 7 * 86400e3 : setting === '90d' ? 90 * 86400e3 : 0;
+  if (!ms) return null;
+  return new Date(Date.now() - ms);
+}
+
+/** "Delete for me" — hide a message from the requesting side only (either party). */
+export async function deleteMessageForMe(conversationId: string, messageId: string, userId: string) {
+  const convo = await getParticipantConversation(userId, conversationId);
+  const msg = await prisma.message.findFirst({ where: { id: messageId, conversationId }, select: { id: true } });
+  if (!msg) throw Errors.notFound('Message not found');
+  const isA = convo.userAId === userId;
+  return prisma.message.update({
+    where: { id: messageId },
+    data: isA ? { deletedByA: true } : { deletedByB: true },
+  });
+}
+
+/** Pin / unpin a message in a 1:1 conversation (either participant). */
+export async function setMessagePinned(conversationId: string, messageId: string, userId: string, isPinned: boolean) {
+  await getParticipantConversation(userId, conversationId);
+  const msg = await prisma.message.findFirst({ where: { id: messageId, conversationId }, select: { id: true } });
+  if (!msg) throw Errors.notFound('Message not found');
+  return prisma.message.update({ where: { id: messageId }, data: { isPinned } });
+}
+
+/** Set the disappearing-messages window for a conversation. */
+export async function setDisappearingMessages(conversationId: string, userId: string, setting: string | null) {
+  await getParticipantConversation(userId, conversationId);
+  return prisma.conversation.update({ where: { id: conversationId }, data: { disappearingMessages: setting } });
+}
+
+/** Grouped reaction detail: who reacted with each emoji. */
+export async function listMessageReactions(conversationId: string, messageId: string, viewerId: string) {
+  await getParticipantConversation(viewerId, conversationId);
+  const reactions = await prisma.messageReaction.findMany({
+    where: { messageId },
+    orderBy: { createdAt: 'asc' },
+    include: { user: { include: { photos: { where: { isPrimary: true, isPrivate: false }, take: 1 } } } },
+  });
+  const grouped = new Map<string, { id: string; firstName: string | null; age: number | null; profilePhoto: string | null }[]>();
+  for (const r of reactions) {
+    if (!grouped.has(r.emoji)) grouped.set(r.emoji, []);
+    grouped.get(r.emoji)!.push({
+      id: r.user.id,
+      firstName: r.user.firstName ?? r.user.name ?? null,
+      age: r.user.age ?? null,
+      profilePhoto: await signUrl(r.user.photos[0]?.url ?? null),
+    });
+  }
+  return [...grouped.entries()].map(([emoji, users]) => ({ emoji, users }));
+}
+
+// ── Starred messages ─────────────────────────────────────
+
+export async function starMessage(userId: string, messageId: string, type: 'chat' | 'room') {
+  return prisma.starredMessage.upsert({
+    where: { userId_messageId: { userId, messageId } },
+    update: {},
+    create: { userId, messageId, type },
+  });
+}
+
+export async function unstarMessage(userId: string, messageId: string) {
+  await prisma.starredMessage.deleteMany({ where: { userId, messageId } });
+}
+
+function starredPreview(type: string, content: string | null): string {
+  if (type === 'photo' || type === 'image' || type === 'expiring_photo') return '📷 Photo';
+  if (type === 'voice' || type === 'voice_note') return '🎤 Voice message';
+  if (type === 'video') return '🎥 Video';
+  return (content ?? '').slice(0, 120) || 'Message';
+}
+
+/** List all of a user's starred messages (both 1:1 and room), newest first. */
+export async function listStarredMessages(userId: string) {
+  const stars = await prisma.starredMessage.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+  const chatIds = stars.filter((s) => s.type === 'chat').map((s) => s.messageId);
+  const roomIds = stars.filter((s) => s.type === 'room').map((s) => s.messageId);
+
+  const [chatMsgs, roomMsgs] = await Promise.all([
+    chatIds.length
+      ? prisma.message.findMany({
+          where: { id: { in: chatIds } },
+          include: {
+            sender: { select: { firstName: true, name: true } },
+            conversation: {
+              include: {
+                userA: { select: { id: true, firstName: true, name: true, photos: { where: { isPrimary: true, isPrivate: false }, take: 1 } } },
+                userB: { select: { id: true, firstName: true, name: true, photos: { where: { isPrimary: true, isPrivate: false }, take: 1 } } },
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
+    roomIds.length
+      ? prisma.roomMessage.findMany({
+          where: { id: { in: roomIds } },
+          include: {
+            sender: { select: { firstName: true, name: true } },
+            room: { select: { id: true, name: true, coverImageUrl: true } },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const chatById = new Map(chatMsgs.map((m) => [m.id, m]));
+  const roomById = new Map(roomMsgs.map((m) => [m.id, m]));
+
+  const starred = await Promise.all(
+    stars.map(async (s) => {
+      if (s.type === 'room') {
+        const m = roomById.get(s.messageId);
+        if (!m) return null;
+        return {
+          id: s.id,
+          messageId: s.messageId,
+          type: 'room' as const,
+          roomId: m.room.id,
+          conversationId: null,
+          title: m.room.name,
+          senderName: m.sender.firstName ?? m.sender.name ?? 'Someone',
+          preview: starredPreview(m.type, m.content),
+          avatarUrl: await signUrl(m.room.coverImageUrl),
+          createdAt: m.createdAt,
+          starredAt: s.createdAt,
+        };
+      }
+      const m = chatById.get(s.messageId);
+      if (!m) return null;
+      const peer = m.conversation.userAId === userId ? m.conversation.userB : m.conversation.userA;
+      return {
+        id: s.id,
+        messageId: s.messageId,
+        type: 'chat' as const,
+        roomId: null,
+        conversationId: m.conversationId,
+        title: peer.firstName ?? peer.name ?? 'Someone',
+        senderName: m.senderId === userId ? 'You' : m.sender.firstName ?? m.sender.name ?? 'Someone',
+        preview: starredPreview(m.type, m.content),
+        avatarUrl: await signUrl(peer.photos[0]?.url ?? null),
+        createdAt: m.createdAt,
+        starredAt: s.createdAt,
+      };
+    }),
+  );
+
+  return { starred: starred.filter((s): s is NonNullable<typeof s> => s !== null) };
 }
 
 export async function deleteMessageForSelf(messageId: string, userId: string) {
@@ -619,6 +867,29 @@ export async function deleteTemplate(templateId: string, userId: string) {
   const template = await prisma.messageTemplate.findFirst({ where: { id: templateId, userId } });
   if (!template) throw Errors.notFound('Template not found');
   await prisma.messageTemplate.delete({ where: { id: templateId } });
+}
+
+// Reactions
+
+export async function toggleReaction(userId: string, conversationId: string, messageId: string, emoji: string) {
+  const msg = await prisma.message.findFirst({ where: { id: messageId, conversationId } });
+  if (!msg) throw Errors.notFound('Message not found');
+
+  const existing = await prisma.messageReaction.findUnique({
+    where: { messageId_userId_emoji: { messageId, userId, emoji } },
+  });
+
+  let added: boolean;
+  if (existing) {
+    await prisma.messageReaction.delete({ where: { id: existing.id } });
+    added = false;
+  } else {
+    await prisma.messageReaction.create({ data: { messageId, userId, emoji } });
+    added = true;
+  }
+
+  const count = await prisma.messageReaction.count({ where: { messageId, emoji } });
+  return { added, emoji, count };
 }
 
 export { recordInteraction };

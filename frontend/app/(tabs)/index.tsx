@@ -240,17 +240,6 @@ export default function Browse() {
           <Ionicons name="search" size={18} color={theme.textTertiary} />
           <Text style={[styles.searchText, { color: theme.textTertiary }]}>Explore more profiles</Text>
         </Pressable>
-        <Pressable
-          style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]}
-          onPress={() =>
-            router.push({
-              pathname: '/map-explore',
-              params: coords ? { lat: String(coords.lat), lng: String(coords.lng) } : undefined,
-            })
-          }
-        >
-          <Ionicons name="map-outline" size={18} color={theme.textPrimary} />
-        </Pressable>
         <Pressable style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]} onPress={() => router.push('/filters')}>
           <Ionicons name="options-outline" size={18} color={theme.textPrimary} />
           {activeFilterCount > 0 && (

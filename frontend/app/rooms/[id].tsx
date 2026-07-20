@@ -9,36 +9,32 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
-  ScrollView,
 } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as Location from 'expo-location';
-import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { RoomHeader } from '../../src/components/rooms/RoomHeader';
 import { MessageBubble } from '../../src/components/rooms/MessageBubble';
-import { ReplyPreview } from '../../src/components/rooms/ReplyPreview';
 import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
-import { AttachmentSheet, type AttachmentKind } from '../../src/components/rooms/AttachmentSheet';
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { ContextMenu } from '../../src/components/rooms/ContextMenu';
-import { VoiceRecorder } from '../../src/components/rooms/VoiceRecorder';
+import { ChatComposer } from '../../src/components/chat/ChatComposer';
+import { SearchPanel, type SearchMessage } from '../../src/components/chat/SearchPanel';
+import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
+import { ChatSkeleton } from '../../src/components/Skeleton';
 import { useAuthStore } from '../../src/store/authStore';
 import { useGroupsStore } from '../../src/store/groupsStore';
 import {
   getRoom,
   listRoomMessages,
+  listRoomMembers,
   sendRoomMessage,
   reactToRoomMessage,
   deleteRoomMessage,
@@ -47,6 +43,8 @@ import {
   reportRoom,
   leaveRoom,
   pinRoomMessage,
+  starMessage,
+  unstarMessage,
 } from '../../src/services/api';
 import {
   connectSocket,
@@ -61,8 +59,6 @@ import { toastApiError, showSuccess, showError } from '../../src/lib/toast';
 import type { RoomDetail, RoomMessageCard, RoomReaction, RoomUserCard } from '../../src/types/api';
 
 const PAGE = 30;
-
-type PendingImage = { id: string; uri: string; status: 'queued' | 'uploading' | 'failed' };
 
 function dayKey(iso: string): string {
   return new Date(iso).toDateString();
@@ -83,7 +79,7 @@ function isRoomVideoUrl(url: string): boolean {
   return /\.mp4($|\?)/i.test(url) || url.includes('/video-clips/');
 }
 function isRoomGifUrl(url: string): boolean {
-  return /\.gif($|\?)/i.test(url) || url.includes('tenor.com');
+  return /\.gif($|\?)/i.test(url) || url.includes('klipy');
 }
 
 export default function RoomChat() {
@@ -100,7 +96,6 @@ export default function RoomChat() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomMessageCard | null>(null);
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
@@ -108,34 +103,23 @@ export default function RoomChat() {
   const [contextMsg, setContextMsg] = useState<RoomMessageCard | null>(null);
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
-  const [showEmoji, setShowEmoji] = useState(false);
   const [reactTarget, setReactTarget] = useState<RoomMessageCard | null>(null);
-  const [attachOpen, setAttachOpen] = useState(false);
+  const [reactionDetailsFor, setReactionDetailsFor] = useState<string | null>(null);
+  const [mentionCandidates, setMentionCandidates] = useState<{ id: string; firstName: string; avatarUrl?: string | null }[]>([]);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [recording, setRecording] = useState(false);
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
 
-  // Image sending — supports multi-select with sequential upload + per-image retry.
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [uploadingInfo, setUploadingInfo] = useState<{ current: number; total: number } | null>(null);
-  const imageSeq = useRef(0);
-
   // Search-in-chat
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [matchIdx, setMatchIdx] = useState(0);
 
   const listRef = useRef<FlashListRef<RoomMessageCard>>(null);
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const lastTypingSent = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recordCancelled = useRef(false);
-  const holdingRef = useRef(false);
 
   // ── Initial load ──
   const load = useCallback(async () => {
@@ -160,6 +144,24 @@ export default function RoomChat() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load members for @mention autocomplete.
+  useEffect(() => {
+    let active = true;
+    listRoomMembers(roomId, { limit: 100 })
+      .then((res) => {
+        if (!active) return;
+        setMentionCandidates(
+          res.members
+            .filter((m) => m.user.id !== me?.id)
+            .map((m) => ({ id: m.user.id, firstName: m.user.firstName ?? 'Someone', avatarUrl: m.user.profilePhotoUrl })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [roomId, me?.id]);
 
   // ── Socket wiring (unchanged logic) ──
   useEffect(() => {
@@ -306,90 +308,34 @@ export default function RoomChat() {
     }
   };
 
-  // ── Send text ──
-  const onChangeText = (t: string) => {
-    setText(t);
-    const now = Date.now();
-    if (now - lastTypingSent.current > 1500) {
-      emitRoomTyping(roomId, true);
-      lastTypingSent.current = now;
-    }
-  };
+  // ── Typing ──
+  const handleTypingStart = () => emitRoomTyping(roomId, true);
+  const handleTypingStop = () => emitRoomTyping(roomId, false);
 
-  const send = async () => {
-    const content = text.trim();
-    if (!content || sending) return;
-    setSending(true);
+  // ── ChatComposer send handlers (parent owns API + R2 upload pipeline) ──
+  const handleSendText = async (content: string, replyToId?: string) => {
     try {
-      const msg = await sendRoomMessage(roomId, { content, type: 'text', replyToId: replyTo?.id });
-      setText('');
-      setReplyTo(null);
-      setShowEmoji(false);
+      const msg = await sendRoomMessage(roomId, { content, type: 'text', replyToId });
       emitRoomTyping(roomId, false);
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+      appendMessage(msg);
     } catch (e: unknown) {
       const err = e as { status?: number; code?: string };
-      if (err.status === 451 || err.code === 'message_flagged') {
-        showError('Your message was flagged for review');
-      } else {
-        toastApiError(e, 'Could not send message');
-      }
-    } finally {
-      setSending(false);
+      if (err.status === 451 || err.code === 'message_flagged') showError('Your message was flagged for review');
+      else toastApiError(e, 'Could not send message');
+      throw e; // let the composer keep the draft on failure
     }
   };
 
-  // ── Send image(s) — direct-to-R2 room_image upload, one message per image ──
-  // Uploads happen sequentially (avoids rate-limiting); each image gets its own
-  // preview chip that shows progress and, on failure, an individual retry button.
-  const uploadOneImage = async (uri: string) => {
-    const url = await uploadToR2(uri, 'room_image', 'image/jpeg', { roomId });
-    const msg = await sendRoomMessage(roomId, {
-      content: '',
-      type: 'image',
-      mediaUrl: url,
-      replyToId: replyTo?.id,
-    });
-    appendMessage(msg);
-  };
-
-  const processImages = useCallback(
-    async (items: PendingImage[]) => {
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        setUploadingInfo({ current: i + 1, total: items.length });
-        setPendingImages((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading' } : p)));
-        try {
-          await uploadOneImage(item.uri);
-          setPendingImages((prev) => prev.filter((p) => p.id !== item.id));
-        } catch (e) {
-          setPendingImages((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: 'failed' } : p)));
-          toastApiError(e, 'Could not send photo');
-        }
-      }
-      setUploadingInfo(null);
-    },
-    // uploadOneImage closes over roomId/replyTo which are stable enough here
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [roomId, replyTo?.id],
-  );
-
-  const queueImages = (uris: string[]) => {
-    const items: PendingImage[] = uris.map((uri) => ({
-      id: `img-${imageSeq.current++}`,
-      uri,
-      status: 'queued',
-    }));
-    setPendingImages((prev) => [...prev, ...items]);
-    processImages(items);
-  };
-
-  const retryImage = (item: PendingImage) => {
-    processImages([item]);
-  };
-
-  const removePendingImage = (id: string) => {
-    setPendingImages((prev) => prev.filter((p) => p.id !== id));
+  // ── Send image(s) — one message per image; caption (if any) rides in `content`
+  // so it renders below the photo in MessageBubble. Uploaded sequentially. ──
+  const handleSendImages = async (uris: string[], caption: string, replyToId?: string) => {
+    for (const uri of uris) {
+      await runUpload(async () => {
+        const url = await uploadToR2(uri, 'room_image', 'image/jpeg', { roomId, onProgress: setUploadProgress });
+        const msg = await sendRoomMessage(roomId, { content: caption, type: 'image', mediaUrl: url, replyToId });
+        appendMessage(msg);
+      });
+    }
   };
 
   // Run an R2 upload with a visible progress bar, then reset.
@@ -409,17 +355,32 @@ export default function RoomChat() {
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
   };
 
-  const sendVideo = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'],
-      quality: 0.7,
-    });
-    if (res.canceled || !res.assets[0]) return;
+  const handleSendVideo = async (uri: string, replyToId?: string) => {
     await runUpload(async () => {
-      const url = await uploadToR2(res.assets[0].uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
-      const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: url, replyToId: replyTo?.id });
+      const url = await uploadToR2(uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
+      const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: url, replyToId });
       appendMessage(msg);
     });
+  };
+
+  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string) => {
+    await runUpload(async () => {
+      const url = await uploadToR2(uri, 'voice_clip', 'audio/mp4', { onProgress: setUploadProgress });
+      const msg = await sendRoomMessage(roomId, { content: '', type: 'voice', mediaUrl: url, replyToId });
+      appendMessage(msg);
+    });
+  };
+
+  const handleSendLocation = async (lat: number, lng: number, label: string) => {
+    try {
+      const msg = await sendRoomMessage(roomId, {
+        content: `📍 ${label}\nhttps://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`,
+        type: 'text',
+      });
+      appendMessage(msg);
+    } catch (e) {
+      toastApiError(e, 'Could not send location');
+    }
   };
 
   const sendDocument = async () => {
@@ -460,7 +421,7 @@ export default function RoomChat() {
     });
   };
 
-  // ── Send GIF (Tenor URL is already hosted — no R2 upload) ──
+  // ── Send GIF (KLIPY URL is already hosted — no R2 upload) ──
   const sendGif = async (gif: GifResult) => {
     setSending(true);
     try {
@@ -515,6 +476,19 @@ export default function RoomChat() {
     showSuccess('Copied');
   };
 
+  const doStar = async (msg: RoomMessageCard) => {
+    setContextMsg(null);
+    const next = !msg.isStarred;
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isStarred: next } : m)));
+    try {
+      if (next) await starMessage(msg.id, 'room');
+      else await unstarMessage(msg.id);
+    } catch (e) {
+      setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isStarred: !next } : m)));
+      toastApiError(e, 'Could not star');
+    }
+  };
+
   const isAdmin = room?.isCreator === true || room?.myRole === 'admin';
 
   const doPin = async (msg: RoomMessageCard) => {
@@ -561,126 +535,6 @@ export default function RoomChat() {
   };
 
   const openInfo = () => router.push(`/rooms/info?roomId=${roomId}` as Href);
-
-  // ── Attachments ──
-  const onPickAttachment = async (kind: AttachmentKind) => {
-    if (kind === 'camera') {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) return showError('Camera permission needed');
-      // Capture photo OR video. The native camera's capture-confirm screen acts
-      // as the send preview (allowsEditing off keeps the full frame).
-      const res = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images', 'videos'],
-        quality: 0.8,
-        allowsEditing: false,
-      });
-      if (res.canceled || !res.assets[0]) return;
-      const asset = res.assets[0];
-      if (asset.type === 'video') {
-        await runUpload(async () => {
-          const url = await uploadToR2(asset.uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
-          const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: url, replyToId: replyTo?.id });
-          appendMessage(msg);
-        });
-      } else {
-        queueImages([asset.uri]);
-      }
-    } else if (kind === 'gallery') {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsMultipleSelection: true,
-        selectionLimit: 10,
-        quality: 0.8,
-      });
-      if (!res.canceled && res.assets.length) queueImages(res.assets.map((a) => a.uri));
-    } else if (kind === 'location') {
-      try {
-        const perm = await Location.requestForegroundPermissionsAsync();
-        if (!perm.granted) return showError('Location permission needed');
-        const pos = await Location.getCurrentPositionAsync({});
-        const { latitude, longitude } = pos.coords;
-        const msg = await sendRoomMessage(roomId, {
-          content: `📍 Location: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
-          type: 'text',
-        });
-        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
-      } catch {
-        showError('Could not get location');
-      }
-    } else if (kind === 'video') {
-      await sendVideo();
-    } else if (kind === 'document') {
-      await sendDocument();
-    } else if (kind === 'audio') {
-      await sendAudioFile();
-    } else if (kind === 'sticker') {
-      showSuccess('Sticker packs coming soon');
-    } else {
-      showSuccess('Coming soon');
-    }
-  };
-
-  // ── Voice recording (expo-audio → R2 → { type:'voice' }) ──
-  const startRecording = async () => {
-    holdingRef.current = true;
-    try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) {
-        showError('Microphone permission needed');
-        holdingRef.current = false;
-        return;
-      }
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await audioRecorder.prepareToRecordAsync();
-      // User already released before init finished — discard immediately.
-      if (!holdingRef.current) {
-        await audioRecorder.stop().catch(() => {});
-        await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
-        return;
-      }
-      audioRecorder.record();
-      recordCancelled.current = false;
-      setRecording(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    } catch {
-      showError('Could not start recording');
-      holdingRef.current = false;
-    }
-  };
-
-  const stopRecording = async () => {
-    holdingRef.current = false;
-    if (!audioRecorder.isRecording) return;
-    setRecording(false);
-    let uri: string | null = null;
-    let durationMs = 0;
-    try {
-      await audioRecorder.stop();
-      const status = audioRecorder.getStatus();
-      durationMs = status.durationMillis ?? 0;
-      uri = audioRecorder.uri;
-    } catch {
-      /* already stopped */
-    }
-    await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
-
-    // Discard cancelled or too-short (< 1s) recordings.
-    if (recordCancelled.current || !uri || durationMs < 1000) {
-      recordCancelled.current = false;
-      return;
-    }
-
-    await runUpload(async () => {
-      const url = await uploadToR2(uri!, 'voice_clip', 'audio/mp4', { onProgress: setUploadProgress });
-      const msg = await sendRoomMessage(roomId, {
-        content: '',
-        type: 'voice',
-        mediaUrl: url,
-        replyToId: replyTo?.id,
-      });
-      appendMessage(msg);
-    });
-  };
 
   // ── Reply / swipe ──
   const onSwipeReply = useCallback((msg: RoomMessageCard) => {
@@ -739,31 +593,31 @@ export default function RoomChat() {
     [viewerImages],
   );
 
-  // ── Search matches ──
-  const matches = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [] as number[];
-    const idxs: number[] = [];
-    messages.forEach((m, i) => {
-      if (!m.isDeleted && m.content.toLowerCase().includes(q)) idxs.push(i);
-    });
-    return idxs;
-  }, [searchQuery, messages]);
+  // ── Search: normalized items for the tabbed search panel ──
+  const searchItems = useMemo<SearchMessage[]>(
+    () =>
+      messages.map((m) => ({
+        id: m.id,
+        content: m.isDeleted ? null : m.content,
+        createdAt: m.createdAt,
+        type: m.type,
+        mediaUrls: m.mediaUrl ? [m.mediaUrl] : [],
+        senderName: m.senderId === me?.id ? 'You' : m.sender.firstName ?? 'Someone',
+        isDeleted: m.isDeleted,
+      })),
+    [messages, me?.id],
+  );
 
-  useEffect(() => {
-    setMatchIdx(0);
-  }, [searchQuery]);
+  const jumpToMessage = useCallback(
+    (id: string) => {
+      setSearchMode(false);
+      setSearchQuery('');
+      scrollToMessage(id);
+    },
+    [scrollToMessage],
+  );
 
-  const jumpMatch = (dir: 1 | -1) => {
-    if (matches.length === 0) return;
-    const next = (matchIdx + dir + matches.length) % matches.length;
-    setMatchIdx(next);
-    const idx = matches[next];
-    listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
-    setHighlightId(messages[idx]?.id ?? null);
-  };
-
-  const searchHighlightId = searchMode && matches.length ? messages[matches[matchIdx]]?.id : null;
+  const searchHighlightId = null;
 
   const renderItem = useCallback(
     ({ item, index }: { item: RoomMessageCard; index: number }) => {
@@ -792,6 +646,7 @@ export default function RoomChat() {
             }}
             onSwipeReply={() => onSwipeReply(item)}
             onReactionPress={(emoji) => toggleReaction(item, emoji)}
+            onReactionLongPress={() => setReactionDetailsFor(item.id)}
             onReplyPress={() => item.replyTo && scrollToMessage(item.replyTo.id)}
             onImagePress={openImageViewer}
           />
@@ -801,8 +656,6 @@ export default function RoomChat() {
     // toggleReaction stable enough; deps kept minimal to avoid re-renders
     [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage, openImageViewer],
   );
-
-  const hasText = text.trim().length > 0;
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
@@ -823,18 +676,10 @@ export default function RoomChat() {
               style={[styles.searchInput, { color: theme.textPrimary }]}
             />
           </View>
-          {searchQuery.trim() ? (
-            <View style={styles.searchNav}>
-              <Text style={[styles.matchCount, { color: theme.textSecondary }]}>
-                {matches.length ? `${matchIdx + 1} of ${matches.length}` : '0'}
-              </Text>
-              <Pressable onPress={() => jumpMatch(-1)} hitSlop={6}>
-                <Ionicons name="chevron-up" size={22} color={theme.textPrimary} />
-              </Pressable>
-              <Pressable onPress={() => jumpMatch(1)} hitSlop={6}>
-                <Ionicons name="chevron-down" size={22} color={theme.textPrimary} />
-              </Pressable>
-            </View>
+          {searchQuery.length > 0 ? (
+            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
+            </Pressable>
           ) : null}
         </View>
       ) : (
@@ -871,10 +716,15 @@ export default function RoomChat() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         style={{ flex: 1 }}
       >
-        {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={theme.brand} />
-          </View>
+        {searchMode ? (
+          <SearchPanel
+            query={searchQuery}
+            messages={searchItems}
+            onJumpToMessage={jumpToMessage}
+            onOpenMedia={openImageViewer}
+          />
+        ) : loading ? (
+          <ChatSkeleton />
         ) : (
           <FlashList
             ref={listRef}
@@ -899,130 +749,33 @@ export default function RoomChat() {
 
         {typingText ? <Text style={[styles.typing, { color: theme.textTertiary }]}>{typingText}</Text> : null}
 
-        {/* Upload progress */}
-        {uploadProgress !== null ? (
-          <View style={styles.uploadBar}>
-            <Ionicons name="cloud-upload-outline" size={16} color={theme.brand} />
-            <View style={[styles.uploadTrack, { backgroundColor: theme.surfaceElevated }]}>
-              <View
-                style={[
-                  styles.uploadFill,
-                  { backgroundColor: theme.brand, width: `${Math.round(uploadProgress * 100)}%` },
-                ]}
-              />
-            </View>
-            <Text style={[styles.uploadLabel, { color: theme.textSecondary }]}>
-              {Math.round(uploadProgress * 100)}%
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Pending-image strip (multi-select upload) */}
-        {pendingImages.length ? (
-          <View style={styles.pendingWrap}>
-            {uploadingInfo ? (
-              <Text style={[styles.pendingLabel, { color: theme.textSecondary }]}>
-                Uploading {uploadingInfo.current} of {uploadingInfo.total}…
-              </Text>
-            ) : null}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingRow}>
-              {pendingImages.map((p) => (
-                <View key={p.id} style={styles.pendingChip}>
-                  <Image source={{ uri: p.uri }} style={styles.pendingThumb} contentFit="cover" />
-                  {p.status === 'uploading' ? (
-                    <View style={styles.pendingOverlay}>
-                      <ActivityIndicator size="small" color="#fff" />
-                    </View>
-                  ) : null}
-                  {p.status === 'failed' ? (
-                    <Pressable style={[styles.pendingOverlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]} onPress={() => retryImage(p)}>
-                      <Ionicons name="reload" size={20} color="#fff" />
-                    </Pressable>
-                  ) : null}
-                  {p.status === 'failed' ? (
-                    <Pressable style={styles.pendingRemove} onPress={() => removePendingImage(p.id)} hitSlop={6}>
-                      <Ionicons name="close-circle" size={18} color="#fff" />
-                    </Pressable>
-                  ) : null}
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
-
-        {/* Reply preview bar */}
-        {replyTo ? (
-          <View style={{ marginHorizontal: spacing.md, marginBottom: 4 }}>
-            <ReplyPreview
-              senderName={replyTo.sender.firstName}
-              content={replyTo.content || 'Photo'}
-              onCancel={() => setReplyTo(null)}
-            />
-          </View>
-        ) : null}
-
-        {/* Input bar */}
+        {/* Composer (shared with inbox) */}
         {!searchMode ? (
-          <View style={[styles.inputBar, { borderTopColor: theme.border, backgroundColor: theme.background }]}>
-            {recording ? (
-              <VoiceRecorder cancelling={false} />
-            ) : (
-              <>
-                <Pressable onPress={() => setShowEmoji((v) => !v)} hitSlop={6} style={styles.iconBtn}>
-                  <Ionicons name={showEmoji ? 'close' : 'happy-outline'} size={24} color={theme.textSecondary} />
-                </Pressable>
-                <View style={[styles.inputWrap, { backgroundColor: theme.surfaceElevated }]}>
-                  <TextInput
-                    value={text}
-                    onChangeText={onChangeText}
-                    onFocus={() => setShowEmoji(false)}
-                    placeholder="Message"
-                    placeholderTextColor={theme.textTertiary}
-                    style={[styles.input, { color: theme.textPrimary }]}
-                    multiline
-                  />
-                </View>
-                {!hasText ? (
-                  <>
-                    <Pressable onPress={() => setAttachOpen(true)} hitSlop={6} style={styles.iconBtn}>
-                      <Ionicons name="add-circle-outline" size={26} color={theme.textSecondary} />
-                    </Pressable>
-                    <Pressable
-                      onPress={() => onPickAttachment('camera')}
-                      onLongPress={startRecording}
-                      onPressOut={stopRecording}
-                      delayLongPress={250}
-                      hitSlop={6}
-                      style={styles.iconBtn}
-                    >
-                      <Ionicons name="camera-outline" size={24} color={theme.textSecondary} />
-                    </Pressable>
-                  </>
-                ) : null}
-              </>
-            )}
-
-            {hasText && !recording ? (
-              <Pressable onPress={send} disabled={sending}>
-                <LinearGradient
-                  colors={theme.gradientWarm}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.sendBtn}
-                >
-                  {sending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Ionicons name="arrow-up" size={22} color="#fff" />
-                  )}
-                </LinearGradient>
-              </Pressable>
-            ) : null}
-          </View>
+          <ChatComposer
+            roomId={roomId}
+            replyTo={
+              replyTo
+                ? { id: replyTo.id, senderName: replyTo.sender.firstName ?? 'Someone', content: replyTo.content || 'Photo' }
+                : null
+            }
+            onClearReply={() => setReplyTo(null)}
+            onClearEdit={() => {}}
+            onSendText={handleSendText}
+            onSendImages={handleSendImages}
+            onSendVideo={handleSendVideo}
+            onSendAudio={handleSendAudioClip}
+            onSendDocument={sendDocument}
+            onSendAudioFile={sendAudioFile}
+            onSendGif={sendGif}
+            onSendLocation={handleSendLocation}
+            onEditConfirm={async () => {}}
+            onTypingStart={handleTypingStart}
+            onTypingStop={handleTypingStop}
+            mentionCandidates={mentionCandidates}
+            uploadProgress={uploadProgress != null ? Math.round(uploadProgress * 100) : null}
+            placeholder="Message"
+          />
         ) : null}
-
-        {/* Emoji panel (compose) */}
-        {showEmoji && !searchMode ? <EmojiPicker onSelect={(e) => setText((t) => t + e)} /> : null}
       </KeyboardAvoidingView>
 
       {/* Room three-dot menu */}
@@ -1059,6 +812,7 @@ export default function RoomChat() {
         onReply={() => { setReplyTo(contextMsg); setContextMsg(null); }}
         onCopy={() => contextMsg && doCopy(contextMsg)}
         onForward={() => {}}
+        onStar={() => contextMsg && doStar(contextMsg)}
         onPin={() => contextMsg && doPin(contextMsg)}
         onDelete={() => contextMsg && doDelete(contextMsg)}
         onReport={() => contextMsg && doReport(contextMsg)}
@@ -1074,13 +828,6 @@ export default function RoomChat() {
         </Pressable>
       </Modal>
 
-      <AttachmentSheet
-        visible={attachOpen}
-        onClose={() => setAttachOpen(false)}
-        onPick={onPickAttachment}
-        onGifSelected={sendGif}
-      />
-
       <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} />
 
       <MediaViewer
@@ -1088,6 +835,14 @@ export default function RoomChat() {
         images={viewerImages}
         initialIndex={mediaViewerIndex}
         onClose={() => setMediaViewerOpen(false)}
+      />
+
+      <ReactionDetails
+        visible={!!reactionDetailsFor}
+        onClose={() => setReactionDetailsFor(null)}
+        scope="room"
+        parentId={roomId}
+        messageId={reactionDetailsFor}
       />
     </SafeAreaView>
   );
@@ -1180,24 +935,6 @@ const styles = StyleSheet.create({
   unreadText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
 
   typing: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, paddingHorizontal: spacing.lg, paddingBottom: 4 },
-  uploadBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: 6 },
-  uploadTrack: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
-  uploadFill: { height: 4, borderRadius: 2 },
-  uploadLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, width: 40, textAlign: 'right' },
-
-  pendingWrap: { paddingHorizontal: spacing.md, paddingBottom: 6, gap: 6 },
-  pendingLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
-  pendingRow: { gap: 8 },
-  pendingChip: { width: 56, height: 56, borderRadius: 10, overflow: 'hidden' },
-  pendingThumb: { width: 56, height: 56 },
-  pendingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
-  pendingRemove: { position: 'absolute', top: 2, right: 2 },
-
-  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth },
-  iconBtn: { paddingBottom: 8, paddingHorizontal: 2 },
-  inputWrap: { flex: 1, borderRadius: radius.xl, paddingHorizontal: spacing.md, paddingVertical: Platform.OS === 'ios' ? 10 : 4, maxHeight: 110, justifyContent: 'center' },
-  input: { fontSize: FontSize.md, fontFamily: FontFamily.regular, maxHeight: 90 },
-  sendBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
 
   menuBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   menu: { minWidth: 250, borderRadius: radius.lg, paddingVertical: spacing.sm, gap: 2 },

@@ -499,31 +499,54 @@ export default function ProfileDetail() {
 
           {albums.length > 0 ? (
             <Section label="ALBUMS">
-              <View style={styles.albumGrid}>
-                {albums.map((a) => (
-                  <Pressable
-                    key={a.id}
-                    style={[styles.albumTile, { backgroundColor: theme.backgroundTertiary }]}
-                    onPress={() => router.push({ pathname: '/albums/[id]', params: { id: a.id, title: a.title, ownerId: peerId } })}
-                  >
-                    {a.coverPhoto ? (
-                      <Image source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-                    ) : (
-                      <View style={[StyleSheet.absoluteFill, styles.noPhoto]}>
-                        <Ionicons name="images" size={28} color={theme.textTertiary} />
-                      </View>
-                    )}
-                    <View style={styles.albumShade} />
-                    <View style={styles.albumMeta}>
-                      <Text style={styles.albumName} numberOfLines={1}>{a.title}</Text>
-                      <View style={styles.albumCount}>
-                        <Ionicons name="images" size={11} color="#fff" />
-                        <Text style={styles.albumCountText}>{a.photoCount}</Text>
-                      </View>
-                    </View>
+              {albums.every((a) => a.locked) ? (
+                <View style={[styles.lockedAlbumCard, { backgroundColor: theme.backgroundTertiary }]}>
+                  <Ionicons name="lock-closed" size={32} color={theme.textTertiary} />
+                  <Text style={[styles.lockedAlbumTitle, { color: theme.textPrimary }]}>Albums locked</Text>
+                  <Text style={[styles.lockedAlbumSub, { color: theme.textSecondary }]}>
+                    Send a message to unlock
+                  </Text>
+                  <Pressable style={[styles.lockedAlbumBtn, { backgroundColor: theme.brand }]} onPress={openChat}>
+                    <Text style={styles.lockedAlbumBtnText}>Send Message</Text>
                   </Pressable>
-                ))}
-              </View>
+                </View>
+              ) : (
+                <View style={styles.albumGrid}>
+                  {albums.map((a) => (
+                    <Pressable
+                      key={a.id}
+                      style={[styles.albumTile, { backgroundColor: theme.backgroundTertiary }]}
+                      onPress={() =>
+                        a.locked
+                          ? openChat()
+                          : router.push({ pathname: '/albums/[id]', params: { id: a.id, title: a.title, ownerId: peerId } })
+                      }
+                    >
+                      {a.locked ? (
+                        <View style={[StyleSheet.absoluteFill, styles.noPhoto]}>
+                          <Ionicons name="lock-closed" size={28} color={theme.textTertiary} />
+                        </View>
+                      ) : a.coverPhoto ? (
+                        <Image source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                      ) : (
+                        <View style={[StyleSheet.absoluteFill, styles.noPhoto]}>
+                          <Ionicons name="images" size={28} color={theme.textTertiary} />
+                        </View>
+                      )}
+                      <View style={styles.albumShade} />
+                      <View style={styles.albumMeta}>
+                        <Text style={styles.albumName} numberOfLines={1}>{a.locked ? 'Locked' : a.title}</Text>
+                        {!a.locked && (
+                          <View style={styles.albumCount}>
+                            <Ionicons name="images" size={11} color="#fff" />
+                            <Text style={styles.albumCountText}>{a.photoCount}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
             </Section>
           ) : null}
 
@@ -743,6 +766,11 @@ const styles = StyleSheet.create({
   sendBtn: { marginLeft: 4, alignItems: 'center', justifyContent: 'center' },
   iconAction: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   albumGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  lockedAlbumCard: { marginTop: 10, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 6 },
+  lockedAlbumTitle: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  lockedAlbumSub: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
+  lockedAlbumBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 },
+  lockedAlbumBtnText: { color: '#fff', fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 14, overflow: 'hidden', justifyContent: 'flex-end' },
   albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', backgroundColor: 'rgba(0,0,0,0.4)' },
   albumMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 6 },

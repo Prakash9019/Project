@@ -30,6 +30,7 @@ import { toastApiError, showSuccess } from '../../src/lib/toast';
 import { connectSocket } from '../../src/services/socket';
 import { useGroupsStore } from '../../src/store/groupsStore';
 import { GroupCard } from '../../src/components/rooms/GroupCard';
+import { RoomListSkeleton } from '../../src/components/Skeleton';
 import {
   RoomFilterSheet,
   DEFAULT_DISCOVER_FILTERS,
@@ -209,6 +210,7 @@ export default function Groups() {
         country: 'India',
         isOfficial: false,
         isVerifiedOnly: false,
+        isPrivate: false,
         coverImageUrl: invite.room.coverImageUrl,
         memberCount: invite.room.memberCount,
         onlineCount: 0,
@@ -452,9 +454,7 @@ export default function Groups() {
           />
         )
       ) : loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.brand} />
-        </View>
+        <RoomListSkeleton rows={4} />
       ) : (
         <FlatList
           key={tab}

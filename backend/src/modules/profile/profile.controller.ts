@@ -98,6 +98,10 @@ export const locationSchema = z.object({
   lng: z.number().refine(isValidLng, 'Invalid longitude'),
 });
 
+export const fcmTokenSchema = z.object({
+  token: z.string().min(1).max(512),
+});
+
 export const promptSchema = z.object({
   prompt: z.string().min(1).max(120),
   answer: z.string().min(1).max(300),
@@ -293,6 +297,13 @@ export async function updateLocation(req: Request, res: Response): Promise<void>
   });
   await redis.geoadd(RedisKeys.geoUsers, fuzzyLng, fuzzyLat, userId);
   await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
+  res.status(200).json({ ok: true });
+}
+
+/** POST /api/v1/me/fcm-token — register/refresh this device's FCM token for background push. */
+export async function setFcmToken(req: Request, res: Response): Promise<void> {
+  const { token } = req.body as z.infer<typeof fcmTokenSchema>;
+  await prisma.user.update({ where: { id: req.user!.sub }, data: { fcmToken: token } });
   res.status(200).json({ ok: true });
 }
 

@@ -26,6 +26,8 @@ router.delete('/templates/:templateId', asyncHandler(c.deleteTemplate));
 router.get('/:conversationId/messages', validate(c.listMessagesQuerySchema, 'query'), asyncHandler(c.listMessages));
 router.post('/:conversationId/messages', validate(c.sendMessageSchema), asyncHandler(c.sendMessage));
 router.post('/:conversationId/read', asyncHandler(c.markRead));
+router.post('/:conversationId/archive', validate(c.archiveSchema), asyncHandler(c.archiveConversation));
+router.patch('/:conversationId', validate(c.disappearingSchema), asyncHandler(c.updateConversation));
 router.delete('/:conversationId', asyncHandler(c.deleteThreadHandler));
 router.post('/:conversationId/dismiss', asyncHandler(c.dismissConversation));
 router.post('/:conversationId/pin', asyncHandler(c.pinConversation));
@@ -39,6 +41,9 @@ router.patch(
   asyncHandler(c.editMessage),
 );
 router.post('/:conversationId/messages/:messageId/unsend', asyncHandler(c.unsendMessage));
+router.post('/:conversationId/messages/:messageId/react', validate(c.reactSchema), asyncHandler(c.reactToMessage));
+router.get('/:conversationId/messages/:messageId/reactions', asyncHandler(c.listMessageReactions));
+router.post('/:conversationId/messages/:messageId/pin', validate(c.pinMessageSchema), asyncHandler(c.pinMessageHandler));
 router.delete('/:conversationId/messages/:messageId', asyncHandler(c.deleteMessageHandler));
 router.post('/:conversationId/messages/:messageId/view', asyncHandler(c.consumeExpiringPhoto));
 router.post(

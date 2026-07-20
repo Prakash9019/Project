@@ -34,7 +34,7 @@ import {
 import { ThemeProvider, useTheme } from '../src/theme';
 import { setOnAuthFailure } from '../src/services/auth';
 import { connectSocket, emitLocationUpdate } from '../src/services/socket';
-import { updateLocation } from '../src/services/api';
+import { updateLocation, registerFcmToken } from '../src/services/api';
 import { useAuthStore } from '../src/store/authStore';
 import { useChatStore } from '../src/store/chatStore';
 import { useGroupsStore } from '../src/store/groupsStore';
@@ -48,6 +48,7 @@ import {
   showCallToast,
   showRoomMessageToast,
 } from '../src/lib/toast';
+import { loadNotificationPrefs, type NotificationPreferences } from './settings/notifications';
 import type { UserCard, RoomMessageCard } from '../src/types/api';
 
 /** Human-friendly one-line preview for a message toast, by message type. */
@@ -126,9 +127,70 @@ function RootStack() {
     return () => sub.remove();
   }, [authedUserId]);
 
+  // FCM push registration + background handler. Requires a native build (not
+  // Expo Go) and @react-native-firebase/messaging linked via app.config.js
+  // plugins — guarded the same way as the app.ts require above so a missing
+  // native module only warns instead of crashing the root layout.
+  useEffect(() => {
+    if (!authedUserId) return;
+    (async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const messagingModule = require('@react-native-firebase/messaging');
+        const messaging = messagingModule.default;
+        const authStatus = await messaging().requestPermission();
+        const enabled =
+          authStatus === messagingModule.AuthorizationStatus.AUTHORIZED ||
+          authStatus === messagingModule.AuthorizationStatus.PROVISIONAL;
+        if (!enabled) return;
+        const token = await messaging().getToken();
+        if (token) registerFcmToken(token).catch(() => {});
+        // App is foregrounded — the socket listener above already shows a
+        // toast for new messages/taps/calls; don't double-notify here.
+        messaging().onMessage(async () => {});
+        messaging().setBackgroundMessageHandler(async () => {});
+
+        // ── Notification-tap navigation ──
+        // Route to the right screen based on the typed `data` set by the backend
+        // (see adapters/fcm.ts buildPushMessage). Chat-family → /chat/:id,
+        // room-family → /rooms/:id.
+        const navigateFromData = (data: Record<string, string> | undefined) => {
+          if (!data?.type) return;
+          const { type, conversationId, roomId } = data;
+          if (type.startsWith('room_') && roomId) {
+            router.push(`/rooms/${roomId}`);
+          } else if (conversationId) {
+            router.push(`/chat/${conversationId}`);
+          }
+        };
+
+        // App opened from a quit state by tapping a notification.
+        messaging()
+          .getInitialNotification()
+          .then((remoteMessage: { data?: Record<string, string> } | null) => {
+            if (remoteMessage) navigateFromData(remoteMessage.data);
+          })
+          .catch(() => {});
+
+        // App in background, brought to foreground by a notification tap.
+        messaging().onNotificationOpenedApp((remoteMessage: { data?: Record<string, string> } | null) => {
+          if (remoteMessage) navigateFromData(remoteMessage.data);
+        });
+      } catch (e) {
+        console.warn('[FCM] Native module not available — rebuild the app with `npx expo run:android` or `npx expo run:ios`:', e);
+      }
+    })();
+  }, [authedUserId]);
+
   // Global notification toasts. One always-mounted place turns realtime socket
   // events into rich toasts (message / tap / incoming call / room message).
   // Each helper self-suppresses when you're already viewing that content.
+  const notifPrefs = useRef<NotificationPreferences | null>(null);
+  const myFirstName = useAuthStore((s) => s.user?.firstName);
+  useEffect(() => {
+    loadNotificationPrefs().then((p) => { notifPrefs.current = p; }).catch(() => {});
+  }, [authedUserId]);
+
   useEffect(() => {
     if (!authedUserId) return;
     let cleanup = () => {};
@@ -138,6 +200,7 @@ function RootStack() {
 
       const onMessage = (p: { conversationId: string; senderId: string; content?: string; type?: string }) => {
         if (p.senderId === authedUserId) return; // never toast your own message
+        if (notifPrefs.current && !notifPrefs.current.messages) return;
         const convo = useChatStore.getState().conversations.find((c) => c.id === p.conversationId);
         const peer = convo?.peer;
         showMessageToast({
@@ -184,6 +247,14 @@ function RootStack() {
 
       const onRoomMessage = (msg: RoomMessageCard) => {
         if (msg.senderId === authedUserId) return;
+        const prefs = notifPrefs.current;
+        if (prefs) {
+          if (!prefs.groupMessages) return;
+          if (prefs.mentionsOnly) {
+            const mentioned = !!myFirstName && new RegExp(`@${myFirstName}\\b`, 'i').test(msg.content ?? '');
+            if (!mentioned) return;
+          }
+        }
         showRoomMessageToast({
           roomId: msg.roomId,
           roomName: useGroupsStore.getState().roomName(msg.roomId),
@@ -229,6 +300,8 @@ function RootStack() {
           <Stack.Screen name="map-explore" options={{ presentation: 'modal' }} />
           <Stack.Screen name="settings/index" options={{ presentation: 'modal' }} />
           <Stack.Screen name="settings/edit-profile" />
+          <Stack.Screen name="settings/notifications" />
+          <Stack.Screen name="starred-messages" />
           <Stack.Screen name="albums/index" options={{ presentation: 'modal' }} />
           <Stack.Screen name="albums/[id]" />
           <Stack.Screen name="albums/create" options={{ presentation: 'modal' }} />
@@ -238,6 +311,7 @@ function RootStack() {
           <Stack.Screen name="rooms/members" options={{ presentation: 'modal' }} />
           <Stack.Screen name="rooms/info" />
           <Stack.Screen name="rooms/media" />
+          <Stack.Screen name="rooms/join/[code]" options={{ presentation: 'modal' }} />
           <Stack.Screen name="create-group/members" />
           <Stack.Screen name="create-group/details" />
         </Stack>

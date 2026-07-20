@@ -39,6 +39,10 @@ router.post('/invites/:inviteId/accept', asyncHandler(c.acceptInvite));
 router.post('/invites/:inviteId/decline', asyncHandler(c.declineInvite));
 router.delete('/invites/:inviteId', asyncHandler(c.cancelInvite));
 
+// Invite-link join — MUST precede '/:roomId' so "by-code" isn't matched as a roomId.
+router.get('/by-code/:code', asyncHandler(c.getRoomByCode));
+router.post('/by-code/:code/join', asyncHandler(c.joinRoomByCode));
+
 router.get('/:roomId', asyncHandler(c.getRoom));
 
 // Admin / creator: edit room info
@@ -89,6 +93,11 @@ router.post(
   requireRoomMember,
   validate(reactSchema),
   asyncHandler(c.reactToMessage),
+);
+router.get(
+  '/:roomId/messages/:messageId/reactions',
+  requireRoomMember,
+  asyncHandler(c.listMessageReactions),
 );
 router.post(
   '/:roomId/messages/:messageId/report',

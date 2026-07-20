@@ -179,6 +179,10 @@ export const updateSettings = (body: Partial<UserSettings>) =>
 export const updateLocation = (lat: number, lng: number) =>
   request<{ ok: boolean }>('POST', '/api/v1/me/location', { lat, lng });
 
+/** Register/refresh this device's FCM token so the backend can send background push. */
+export const registerFcmToken = (token: string) =>
+  request<{ ok: boolean }>('POST', '/api/v1/me/fcm-token', { token });
+
 // NOTE: data-export and account-deletion are specified by the frontend brief
 // (Phase 9) and follow the /me convention; they are not listed in the spec's
 // endpoints[] array. Wired here as instructed.
@@ -385,20 +389,43 @@ export interface ListConversationsResponse {
   folder: string;
   conversations: ConversationSummary[];
 }
-export const listConversations = (folder: 'inbox' | 'requests' = 'inbox') =>
+export const listConversations = (folder: 'inbox' | 'requests' = 'inbox', archived = false) =>
   request<ListConversationsResponse>('GET', '/api/v1/conversations', undefined, {
-    query: { folder },
+    query: archived ? { folder, archived: 'true' } : { folder },
   });
+
+/** Archive / unarchive a conversation for the caller. */
+export const archiveConversation = (conversationId: string, archived: boolean) =>
+  request<{ id: string; archived: boolean }>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/archive`,
+    { archived }
+  );
+
+/** Pin / unpin a conversation for the caller (plan-gated: Gold+, capped by pinChats). */
+export const pinConversation = (conversationId: string, isPinned: boolean) =>
+  isPinned
+    ? request<{ isPinned: boolean }>('POST', `/api/v1/conversations/${conversationId}/pin`)
+    : request<void>('DELETE', `/api/v1/conversations/${conversationId}/pin`);
+
+/** Delete a conversation thread for the caller. */
+export const deleteConversationThread = (conversationId: string) =>
+  request<void>('DELETE', `/api/v1/conversations/${conversationId}`);
 
 export interface ListMessagesResponse {
   messages: Message[];
+  hasMore: boolean;
+  nextCursor: string | null;
   audioCallEnabled: boolean;
   videoCallEnabled: boolean;
+  disappearingMessages?: '24h' | '7d' | '90d' | null;
 }
 export const markConversationRead = (conversationId: string) =>
   request<void>('POST', `/api/v1/conversations/${conversationId}/read`);
 
-export const listMessages = (conversationId: string, query?: { cursor?: string; limit?: number }) =>
+// `before` = ISO createdAt of the oldest loaded message (server returns older
+// messages before it). Backend returns { messages (newest-first), hasMore, nextCursor }.
+export const listMessages = (conversationId: string, query?: { before?: string; limit?: number }) =>
   request<ListMessagesResponse>(
     'GET',
     `/api/v1/conversations/${conversationId}/messages`,
@@ -409,10 +436,12 @@ export const listMessages = (conversationId: string, query?: { cursor?: string; 
 export interface SendMessageBody {
   type: 'text' | 'photo' | 'video' | 'voice' | 'expiring_photo' | 'voice_note';
   content?: string;
+  caption?: string;
   ciphertext?: string;
   mediaUrls?: string[];
   viewOnce?: boolean;
   expiresInSeconds?: number;
+  replyToId?: string;
 }
 export type SendMessageResponse = Message & {
   audioCallEnabled: boolean;
@@ -460,6 +489,79 @@ export const editMessage = (conversationId: string, messageId: string, content: 
     `/api/v1/conversations/${conversationId}/messages/${messageId}`,
     { content }
   );
+
+export interface ReactToMessageResponse {
+  added: boolean;
+  emoji: string;
+  count: number;
+}
+export const reactToMessage = (conversationId: string, messageId: string, emoji: string) =>
+  request<ReactToMessageResponse>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/react`,
+    { emoji }
+  );
+
+/** Delete for me — hides the message from the caller's side only (either party). */
+export const deleteMessage = (conversationId: string, messageId: string) =>
+  request<void>('DELETE', `/api/v1/conversations/${conversationId}/messages/${messageId}`);
+
+/** Pin / unpin a message in a 1:1 chat. */
+export const pinChatMessage = (conversationId: string, messageId: string, isPinned: boolean) =>
+  request<{ id: string; isPinned: boolean }>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/pin`,
+    { isPinned }
+  );
+
+/** Disappearing-messages window for a conversation (null = off). */
+export const setDisappearingMessages = (conversationId: string, disappearingMessages: '24h' | '7d' | '90d' | null) =>
+  request<{ id: string; disappearingMessages: string | null }>(
+    'PATCH',
+    `/api/v1/conversations/${conversationId}`,
+    { disappearingMessages }
+  );
+
+export interface ReactionDetail {
+  emoji: string;
+  users: { id: string; firstName: string | null; age: number | null; profilePhoto?: string | null; profilePhotoUrl?: string | null }[];
+}
+/** Who reacted to a 1:1 message, grouped by emoji. */
+export const getMessageReactions = (conversationId: string, messageId: string) =>
+  request<{ reactions: ReactionDetail[] }>(
+    'GET',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/reactions`
+  );
+
+/** Who reacted to a room message, grouped by emoji. */
+export const getRoomMessageReactions = (roomId: string, messageId: string) =>
+  request<{ reactions: ReactionDetail[] }>(
+    'GET',
+    `/api/rooms/${roomId}/messages/${messageId}/reactions`
+  );
+
+// ── Starred messages ──
+export interface StarredMessageItem {
+  id: string;
+  messageId: string;
+  type: 'chat' | 'room';
+  conversationId: string | null;
+  roomId: string | null;
+  title: string;
+  senderName: string;
+  preview: string;
+  avatarUrl: string | null;
+  createdAt: string;
+  starredAt: string;
+}
+export const starMessage = (messageId: string, type: 'chat' | 'room' = 'chat') =>
+  request<{ ok: boolean; messageId: string }>('POST', `/api/v1/messages/${messageId}/star`, { type });
+
+export const unstarMessage = (messageId: string) =>
+  request<void>('DELETE', `/api/v1/messages/${messageId}/star`);
+
+export const getStarredMessages = () =>
+  request<{ starred: StarredMessageItem[] }>('GET', '/api/v1/messages/starred');
 
 // ── Message templates (Premium+; free plan has a limit of 0) ──
 // Mounted on the conversations router: GET/POST/DELETE /api/v1/conversations/templates.
@@ -635,7 +737,7 @@ export const getAlbum = (albumId: string, query?: { cursor?: string; limit?: num
 
 export const updateAlbum = (
   albumId: string,
-  body: { title?: string; coverPhotoId?: string | null }
+  body: { title?: string; coverPhotoId?: string | null; privacy?: 'everyone' | 'matches' | 'chats_only' | 'nobody' }
 ) => request<AlbumSummary>('PATCH', `/api/albums/${albumId}`, body);
 
 export const deleteAlbum = (albumId: string) =>
@@ -817,11 +919,21 @@ export interface CreateRoomBody {
   category: RoomCategory;
   coverImageUrl?: string;
   isVerifiedOnly?: boolean;
+  /** Private groups are hidden from Discover; join only via invite link or admin add. */
+  isPrivate?: boolean;
 }
 
 /** Create a user-owned group. Returns the new RoomDetail (myRole='admin', isCreator=true). */
 export const createRoom = (body: CreateRoomBody) =>
   request<{ room: RoomDetail }>('POST', '/api/rooms', body);
+
+/** Preview a group from its invite link (no membership required). */
+export const getRoomByCode = (code: string) =>
+  request<{ room: RoomDetail }>('GET', `/api/rooms/by-code/${encodeURIComponent(code)}`);
+
+/** Join a group via its shareable invite link — the only self-serve way into a private group. */
+export const joinRoomByCode = (code: string) =>
+  request<{ ok: true; room: RoomDetail }>('POST', `/api/rooms/by-code/${encodeURIComponent(code)}/join`);
 
 /** Bulk add/invite members to a room (creator/admin only). */
 export const addRoomMembersBulk = (roomId: string, userIds: string[]) =>

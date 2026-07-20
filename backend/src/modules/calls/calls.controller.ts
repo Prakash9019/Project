@@ -8,6 +8,7 @@ import { callFlags } from '../../utils/callFlags';
 import { isBlocked } from '../../utils/blocks';
 import { generateAgoraToken, makeChannelName } from '../../adapters/agora';
 import { emitToUser } from '../../realtime/emitter';
+import { sendTypedPush, isMuted } from '../../services/push';
 import { callWatchdogQueue, scheduledCallQueue } from '../../jobs/queue';
 
 // ── Schemas ──────────────────────────────────────────────
@@ -260,7 +261,22 @@ export async function updateCall(req: Request, res: Response): Promise<void> {
 
   if (status === 'missed') {
     updateData.endedAt = now;
-    // Push notification would fire here via FCM
+    // Notify the callee that they missed a call ("X called you"). Skip if muted.
+    const caller = await prisma.user.findUnique({
+      where: { id: call.callerId },
+      select: { firstName: true, name: true },
+    });
+    const callerName = caller?.firstName ?? caller?.name ?? 'Someone';
+    isMuted(call.calleeId, call.callerId).then((muted) => {
+      if (!muted && call.conversationId) {
+        sendTypedPush(call.calleeId, {
+          type: 'missed_call',
+          conversationId: call.conversationId,
+          callerName,
+          callType: call.type as 'audio' | 'video',
+        }).catch(() => {});
+      }
+    }).catch(() => {});
   }
 
   const updated = await prisma.call.update({ where: { id: callId }, data: updateData });

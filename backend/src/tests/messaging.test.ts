@@ -367,3 +367,71 @@ describe('Conversation management', () => {
     expect(pin2.body.isPinned).toBe(true);
   });
 });
+
+// ─── Starred messages + disappearing messages (Phase 3/5) ────────
+
+describe('Starred messages', () => {
+  it('starred message can be added and retrieved', async () => {
+    const userA = await createTestUser({ plan: 'gold' });
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id, 'gold', Math.floor(Date.now() / 1000) + 86400);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const msg = await sendMessage(tokenA, convId, 'Important message');
+
+    const star = await request(app)
+      .post(`/api/v1/messages/${msg.id}/star`)
+      .set(authHeader(tokenA))
+      .send({ type: 'chat' });
+    expect(star.status).toBe(201);
+
+    const list = await request(app)
+      .get('/api/v1/messages/starred')
+      .set(authHeader(tokenA));
+    expect(list.status).toBe(200);
+    expect(list.body.starred.some((s: { messageId: string }) => s.messageId === msg.id)).toBe(true);
+
+    // Unstar removes it.
+    const unstar = await request(app)
+      .delete(`/api/v1/messages/${msg.id}/star`)
+      .set(authHeader(tokenA));
+    expect(unstar.status).toBe(204);
+
+    const list2 = await request(app)
+      .get('/api/v1/messages/starred')
+      .set(authHeader(tokenA));
+    expect(list2.body.starred.some((s: { messageId: string }) => s.messageId === msg.id)).toBe(false);
+  });
+});
+
+describe('Disappearing messages', () => {
+  it('filters expired messages from the response', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+
+    // Enable 24h disappearing.
+    const patch = await request(app)
+      .patch(`/api/v1/conversations/${convId}`)
+      .set(authHeader(tokenA))
+      .send({ disappearingMessages: '24h' });
+    expect(patch.status).toBe(200);
+
+    // Create a message backdated 25 hours ago.
+    const msg = await sendMessage(tokenA, convId, 'Old message');
+    await prisma.message.update({
+      where: { id: msg.id },
+      data: { createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) },
+    });
+
+    const messages = await request(app)
+      .get(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB));
+    expect(messages.status).toBe(200);
+    const ids = messages.body.messages.map((m: { id: string }) => m.id);
+    expect(ids).not.toContain(msg.id);
+  });
+});

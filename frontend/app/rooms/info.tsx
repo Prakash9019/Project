@@ -9,7 +9,10 @@ import {
   Switch,
   TextInput,
   Modal,
+  Share,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import * as Linking from 'expo-linking';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -289,6 +292,29 @@ export default function RoomInfo() {
     }
   };
 
+  // Shareable deep link that lands on the join screen (nearme://rooms/join/<code>).
+  const inviteLink = useMemo(
+    () => (room?.inviteCode ? Linking.createURL(`rooms/join/${room.inviteCode}`) : null),
+    [room?.inviteCode],
+  );
+
+  const handleShareInvite = async () => {
+    if (!inviteLink) return;
+    try {
+      await Share.share({
+        message: `Join "${room?.name ?? 'my group'}" on NearMe: ${inviteLink}`,
+      });
+    } catch (e) {
+      toastApiError(e, 'Could not open share sheet');
+    }
+  };
+
+  const handleCopyInvite = async () => {
+    if (!inviteLink) return;
+    await Clipboard.setStringAsync(inviteLink);
+    showSuccess('Invite link copied');
+  };
+
   const handleLeave = () => {
     confirm(
       'Leave Group',
@@ -450,6 +476,35 @@ export default function RoomInfo() {
                 {room?.description || 'No description yet'}
               </Text>
             )}
+          </Section>
+        ) : null}
+
+        {/* Invite via link — the way into a private group besides an admin add */}
+        {inviteLink ? (
+          <Section title={room?.isPrivate ? 'Private group · Invite link' : 'Invite link'} theme={theme}>
+            <Text style={[styles.body, { color: theme.textSecondary, marginBottom: spacing.sm }]}>
+              {room?.isPrivate
+                ? 'This group is hidden from Discover. Share this link to let people join.'
+                : 'Share this link to invite people to the group.'}
+            </Text>
+            <View style={styles.inviteActions}>
+              <Pressable
+                style={[styles.inviteBtn, { backgroundColor: theme.brand }]}
+                onPress={handleShareInvite}
+                hitSlop={6}
+              >
+                <Ionicons name="share-outline" size={18} color="#fff" />
+                <Text style={[styles.inviteBtnText, { color: '#fff' }]}>Share Link</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.inviteBtn, { backgroundColor: theme.surfaceElevated, borderColor: theme.border, borderWidth: StyleSheet.hairlineWidth }]}
+                onPress={handleCopyInvite}
+                hitSlop={6}
+              >
+                <Ionicons name="copy-outline" size={18} color={theme.textSecondary} />
+                <Text style={[styles.inviteBtnText, { color: theme.textSecondary }]}>Copy</Text>
+              </Pressable>
+            </View>
           </Section>
         ) : null}
 
@@ -727,6 +782,16 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: FontSize.lg, fontFamily: FontFamily.semibold },
   sectionAction: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
   body: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
+  inviteActions: { flexDirection: 'row', gap: spacing.sm },
+  inviteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+  },
+  inviteBtnText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   mediaRow: { flexDirection: 'row', gap: spacing.sm },
   mediaThumb: { width: 90, height: 90, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.08)' },
 

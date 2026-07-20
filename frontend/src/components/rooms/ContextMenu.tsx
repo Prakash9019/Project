@@ -31,6 +31,7 @@ export function ContextMenu({
   onCopy,
   onForward,
   onPin,
+  onStar,
   onDelete,
   onReport,
   onInfo,
@@ -45,6 +46,7 @@ export function ContextMenu({
   onCopy: () => void;
   onForward: () => void;
   onPin: () => void;
+  onStar?: () => void;
   onDelete: () => void;
   onReport: () => void;
   onInfo: () => void;
@@ -56,6 +58,13 @@ export function ContextMenu({
     { key: 'reply', label: 'Reply', icon: 'arrow-undo-outline', onPress: onReply, show: true },
     { key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: onCopy, show: !!isText },
     { key: 'forward', label: 'Forward', icon: 'arrow-redo-outline', onPress: onForward, show: true, disabled: true },
+    {
+      key: 'star',
+      label: message?.isStarred ? 'Unstar' : 'Star',
+      icon: message?.isStarred ? 'star' : 'star-outline',
+      onPress: () => onStar?.(),
+      show: !!onStar && !message?.isDeleted,
+    },
     {
       key: 'pin',
       label: message?.isPinned ? 'Unpin' : 'Pin',

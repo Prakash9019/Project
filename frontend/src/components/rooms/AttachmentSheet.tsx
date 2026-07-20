@@ -10,17 +10,14 @@ export type AttachmentKind =
   | 'video'
   | 'document'
   | 'location'
-  | 'contact'
   | 'audio'
-  | 'gif'
-  | 'sticker';
+  | 'gif';
 
 type Option = {
   kind: AttachmentKind;
   label: string;
   icon: React.ComponentProps<typeof Ionicons>['name'];
   color: keyof ReturnType<typeof useThemeColors>;
-  disabled?: boolean;
 };
 
 // helper so the color key is typed against the theme
@@ -28,16 +25,15 @@ function useThemeColors() {
   return useTheme().theme;
 }
 
+// Only fully working attachments are listed here.
 const OPTIONS: Option[] = [
   { kind: 'camera', label: 'Camera', icon: 'camera', color: 'brand' },
   { kind: 'gallery', label: 'Gallery', icon: 'images', color: 'planPremium' },
   { kind: 'video', label: 'Video', icon: 'videocam', color: 'info' },
   { kind: 'document', label: 'Document', icon: 'document-text', color: 'brandSecondary' },
   { kind: 'location', label: 'Location', icon: 'location', color: 'success' },
-  { kind: 'contact', label: 'Contact', icon: 'person', color: 'planGold', disabled: true },
   { kind: 'audio', label: 'Audio', icon: 'musical-notes', color: 'rightNow' },
   { kind: 'gif', label: 'GIF', icon: 'film', color: 'planPlatinum' },
-  { kind: 'sticker', label: 'Sticker', icon: 'happy', color: 'warning' },
 ];
 
 /** WhatsApp-style attachment grid (3 per row). */
@@ -67,9 +63,8 @@ export function AttachmentSheet({
               return (
                 <Pressable
                   key={o.kind}
-                  disabled={o.disabled}
                   onPress={() => {
-                    // GIF opens the Tenor picker stacked above this sheet.
+                    // GIF opens the KLIPY picker stacked above this sheet.
                     if (o.kind === 'gif') {
                       setGifOpen(true);
                       return;
@@ -77,7 +72,7 @@ export function AttachmentSheet({
                     onClose();
                     onPick(o.kind);
                   }}
-                  style={[styles.option, o.disabled && { opacity: 0.4 }]}
+                  style={styles.option}
                 >
                   <View style={[styles.iconCircle, { backgroundColor: color + '22' }]}>
                     <Ionicons name={o.icon} size={28} color={color} />
@@ -90,7 +85,7 @@ export function AttachmentSheet({
         </Pressable>
       </Pressable>
 
-      {/* Tenor GIF picker (stacked above the attachment sheet) */}
+      {/* KLIPY GIF picker (stacked above the attachment sheet) */}
       <GifPicker
         visible={gifOpen}
         onClose={() => setGifOpen(false)}

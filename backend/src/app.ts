@@ -16,6 +16,7 @@ import authRoutes from './modules/auth/auth.routes';
 import profileRoutes from './modules/profile/profile.routes';
 import gridRoutes from './modules/grid/grid.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import messagesRoutes from './modules/chat/messages.routes';
 import callsRoutes from './modules/calls/calls.routes';
 import exploreRoutes from './modules/explore/explore.routes';
 import discoveryRoutes from './modules/discovery/discovery.routes';
@@ -122,6 +123,7 @@ export function createApp(): Application {
   app.use(`${v1}`, profileRoutes);
   app.use(`${v1}/grid`, gridRoutes);
   app.use(`${v1}/conversations`, chatRoutes);
+  app.use(`${v1}/messages`, messagesRoutes);
   app.use(`${v1}/calls`, callsRoutes);
   app.use(`${v1}/explore`, exploreRoutes);
   app.use(`${v1}/discovery`, discoveryRoutes);

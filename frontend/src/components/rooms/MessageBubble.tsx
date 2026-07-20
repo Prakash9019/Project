@@ -15,10 +15,25 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Avatar } from '../Avatar';
 import { MessageTick } from '../MessageTick';
+import { ReactionPill } from '../chat/ReactionPill';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import type { RoomMessageCard } from '../../types/api';
 
 const SWIPE_TRIGGER = 60;
+
+/** Render message text with @mentions highlighted (brand color, semibold). */
+function renderWithMentions(content: string, mentionColor: string): React.ReactNode {
+  const parts = content.split(/(@[\p{L}\p{N}_]+)/gu);
+  return parts.map((part, i) =>
+    /^@[\p{L}\p{N}_]+$/u.test(part) ? (
+      <Text key={i} style={{ color: mentionColor, fontFamily: FontFamily.semibold }}>
+        {part}
+      </Text>
+    ) : (
+      part
+    ),
+  );
+}
 
 function timeLabel(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -61,12 +76,12 @@ function MessageBubbleBase({
   const media = message.mediaUrl ?? '';
   const isVideo =
     message.type === 'image' && !!media && (/\.mp4($|\?)/i.test(media) || media.includes('/video-clips/'));
-  // GIFs (Tenor) render at a fixed width with preserved aspect ratio.
+  // GIFs (KLIPY) render at a fixed width with preserved aspect ratio.
   const isGif =
     message.type === 'image' &&
     !!media &&
     !isVideo &&
-    (/\.gif($|\?)/i.test(media) || media.includes('tenor.com'));
+    (/\.gif($|\?)/i.test(media) || media.includes('klipy'));
   const isImage = message.type === 'image' && !!media && !isVideo && !isGif;
   const isVoice = message.type === 'voice' && !!media;
   // Document / audio-file arrive as text messages carrying a mediaUrl + emoji prefix.
@@ -206,7 +221,9 @@ function MessageBubbleBase({
           This message was deleted
         </Text>
       ) : message.content && !isDoc && !isAudioFile ? (
-        <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>{message.content}</Text>
+        <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>
+          {renderWithMentions(message.content, isOwn ? '#fff' : theme.brand)}
+        </Text>
       ) : null}
     </>
   );
@@ -279,6 +296,9 @@ function MessageBubbleBase({
 
             {/* Timestamp + delivery */}
             <View style={[styles.metaRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
+              {message.isStarred && !deleted ? (
+                <Ionicons name="star" size={11} color={theme.brand} style={{ marginRight: 2 }} />
+              ) : null}
               <Text style={[styles.time, { color: theme.textTertiary }]}>{timeLabel(message.createdAt)}</Text>
               {isOwn && !deleted ? (
                 <MessageTick status={deliveryStatus ?? 'sent'} isPremium={false} />
@@ -289,21 +309,14 @@ function MessageBubbleBase({
             {message.reactions.length > 0 ? (
               <View style={[styles.reactionsRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
                 {message.reactions.map((r) => (
-                  <Pressable
+                  <ReactionPill
                     key={r.emoji}
+                    emoji={r.emoji}
+                    count={r.count}
+                    userReacted={r.userReacted}
                     onPress={() => onReactionPress(r.emoji)}
                     onLongPress={() => onReactionLongPress?.(r.emoji)}
-                    style={[
-                      styles.reactionPill,
-                      {
-                        backgroundColor: r.userReacted ? theme.brand + '33' : theme.surfaceElevated,
-                        borderColor: r.userReacted ? theme.brand : 'transparent',
-                      },
-                    ]}
-                  >
-                    <Text style={styles.reactionEmoji}>{r.emoji}</Text>
-                    <Text style={[styles.reactionCount, { color: theme.textSecondary }]}>{r.count}</Text>
-                  </Pressable>
+                  />
                 ))}
               </View>
             ) : null}
@@ -322,6 +335,7 @@ export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
     a.content === b.content &&
     a.isDeleted === b.isDeleted &&
     a.isPinned === b.isPinned &&
+    a.isStarred === b.isStarred &&
     a.mediaUrl === b.mediaUrl &&
     a.reactions === b.reactions &&
     a.deliveredCount === b.deliveredCount &&

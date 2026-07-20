@@ -81,7 +81,7 @@ const ALL: EmojiItem[] = CATEGORIES.flatMap((c) => c.emojis);
 const DEFAULT_RECENT = ['❤️', '😂', '👍', '🔥', '😍', '🙏', '😮', '😢'];
 
 /** Lightweight emoji picker: recent + categories + search grid. No heavy deps. */
-export function EmojiPicker({ onSelect }: { onSelect: (emoji: string) => void }) {
+export function EmojiPicker({ onSelect, height }: { onSelect: (emoji: string) => void; height?: number }) {
   const { theme } = useTheme();
   const [cat, setCat] = useState(CATEGORIES[0].id);
   const [query, setQuery] = useState('');
@@ -99,7 +99,7 @@ export function EmojiPicker({ onSelect }: { onSelect: (emoji: string) => void })
   }, [query, cat]);
 
   return (
-    <View style={[styles.wrap, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+    <View style={[styles.wrap, height ? { height } : null, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
       <View style={[styles.search, { backgroundColor: theme.surfaceElevated }]}>
         <Ionicons name="search" size={16} color={theme.textTertiary} />
         <TextInput

@@ -14,39 +14,82 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../../theme';
 
-const TENOR_KEY = process.env.EXPO_PUBLIC_TENOR_API_KEY ?? '';
+// Strip any surrounding quotes — a quote-wrapped value in .env would otherwise
+// travel into the request path and KLIPY rejects it as an invalid key.
+const KLIPY_KEY = (process.env.EXPO_PUBLIC_KLIPY_API_KEY ?? '').replace(/^["']|["']$/g, '');
 const GAP = 6;
 
 export interface GifResult {
   id: string;
   url: string; // full gif to send
-  preview: string; // tinygif preview
+  preview: string; // thumbnail preview
   aspect: number; // width / height
 }
 
-interface TenorMediaFormat {
+// Raw KLIPY API response shapes. Each item's media lives under
+// `file.<size>.<format>` (e.g. file.md.gif.url); the list itself is wrapped as
+// { result, data: { data: [...] } }. We also tolerate a couple of legacy/flat
+// shapes so a KLIPY response tweak degrades gracefully instead of showing empty.
+interface KlipyMediaFormat {
   url: string;
-  dims?: [number, number];
+  width: number;
+  height: number;
+  size?: number;
 }
-interface TenorItem {
-  id: string;
-  media_formats?: { gif?: TenorMediaFormat; tinygif?: TenorMediaFormat };
+type KlipyFileSize = { gif?: KlipyMediaFormat; webp?: KlipyMediaFormat; jpg?: KlipyMediaFormat };
+interface KlipyGifItem {
+  id?: string | number;
+  title?: string;
+  slug?: string;
+  file?: { hd?: KlipyFileSize; md?: KlipyFileSize; sm?: KlipyFileSize; xs?: KlipyFileSize };
+  // Legacy/flat fallbacks.
+  gif?: KlipyMediaFormat;
+  preview?: KlipyMediaFormat;
+  url?: string;
+}
+interface KlipyResponse {
+  result?: boolean;
+  data?: { data?: KlipyGifItem[] } | KlipyGifItem[];
 }
 
-function mapResults(items: TenorItem[]): GifResult[] {
-  return items
-    .map((it) => {
-      const gif = it.media_formats?.gif;
-      const tiny = it.media_formats?.tinygif ?? gif;
-      if (!gif?.url) return null;
-      const dims = gif.dims ?? tiny?.dims ?? [1, 1];
-      const aspect = dims[0] && dims[1] ? dims[0] / dims[1] : 1;
-      return { id: it.id, url: gif.url, preview: tiny?.url ?? gif.url, aspect };
-    })
-    .filter((x): x is GifResult => x !== null);
+// Choose a mid-size gif to send and a small one to preview. Falls back across
+// sizes and finally to any legacy/flat url so we never drop a renderable item.
+function pickFormats(item: KlipyGifItem): { full?: KlipyMediaFormat; preview?: KlipyMediaFormat } {
+  const f = item.file;
+  if (f) {
+    const full = f.md?.gif ?? f.hd?.gif ?? f.sm?.gif ?? f.xs?.gif;
+    const preview = f.sm?.gif ?? f.xs?.gif ?? f.md?.gif ?? full;
+    if (full) return { full, preview };
+  }
+  if (item.gif?.url) return { full: item.gif, preview: item.preview ?? item.gif };
+  if (item.url) return { full: { url: item.url, width: 0, height: 0 } };
+  return {};
 }
 
-/** Bottom-sheet Tenor GIF search + trending picker. */
+function adaptKlipyGif(item: KlipyGifItem): GifResult | null {
+  const { full, preview } = pickFormats(item);
+  if (!full?.url) return null;
+  const width = preview?.width || full.width;
+  const height = preview?.height || full.height;
+  return {
+    id: String(item.id ?? item.slug ?? full.url),
+    url: full.url,
+    preview: preview?.url ?? full.url,
+    aspect: width && height ? width / height : 1,
+  };
+}
+
+function extractItems(json: KlipyResponse): KlipyGifItem[] | null {
+  if (Array.isArray(json.data)) return json.data;
+  if (json.data && Array.isArray(json.data.data)) return json.data.data;
+  return null;
+}
+
+function mapResults(items: KlipyGifItem[]): GifResult[] {
+  return items.map(adaptKlipyGif).filter((g): g is GifResult => g !== null);
+}
+
+/** Bottom-sheet KLIPY GIF search + trending picker. */
 export function GifPicker({
   visible,
   onClose,
@@ -63,24 +106,59 @@ export function GifPicker({
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState<GifResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchGifs = useCallback(async (q: string) => {
-    if (!TENOR_KEY) return;
+    if (!KLIPY_KEY) return;
     setLoading(true);
-    setError(false);
+    setError(null);
     try {
-      const base = q.trim()
-        ? `https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(q.trim())}`
-        : 'https://tenor.googleapis.com/v2/featured?';
-      const url = `${base}&key=${TENOR_KEY}&limit=24&media_filter=gif,tinygif`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Tenor ${res.status}`);
-      const json = (await res.json()) as { results?: TenorItem[] };
-      setGifs(mapResults(json.results ?? []));
-    } catch {
-      setError(true);
+      const url = q.trim()
+        ? `https://api.klipy.com/api/v1/${KLIPY_KEY}/gifs/search?q=${encodeURIComponent(q.trim())}`
+        : `https://api.klipy.com/api/v1/${KLIPY_KEY}/gifs/trending`;
+
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(8000),
+        });
+      } catch (networkError: unknown) {
+        const message = networkError instanceof Error ? networkError.message : 'Unknown error';
+        if (message.includes('Abort') || message.toLowerCase().includes('timeout')) {
+          throw new Error('Request timed out. Check your internet connection.');
+        }
+        throw new Error(`Network error: ${message}`);
+      }
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          throw new Error('Invalid KLIPY API key. Check EXPO_PUBLIC_KLIPY_API_KEY in .env');
+        }
+        if (res.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait before searching again.');
+        }
+        if (res.status >= 500) {
+          throw new Error(`KLIPY server error (${res.status}). Try again later.`);
+        }
+        if (__DEV__) console.warn('[GifPicker]', res.status, url.replace(KLIPY_KEY, '***'));
+        throw new Error(`API error: ${res.status} ${res.statusText}`);
+      }
+
+      let json: KlipyResponse;
+      try {
+        json = (await res.json()) as KlipyResponse;
+      } catch {
+        throw new Error('Invalid response from KLIPY. Could not parse JSON.');
+      }
+      const items = extractItems(json);
+      if (!items) {
+        throw new Error('Unexpected KLIPY response format.');
+      }
+      setGifs(mapResults(items));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load GIFs');
       setGifs([]);
     } finally {
       setLoading(false);
@@ -89,7 +167,7 @@ export function GifPicker({
 
   // Load trending on open; refetch (debounced) as the query changes.
   useEffect(() => {
-    if (!visible || !TENOR_KEY) return;
+    if (!visible || !KLIPY_KEY) return;
     if (debounce.current) clearTimeout(debounce.current);
     debounce.current = setTimeout(() => fetchGifs(query), query.trim() ? 400 : 0);
     return () => {
@@ -102,7 +180,7 @@ export function GifPicker({
     if (!visible) setQuery('');
   }, [visible]);
 
-  const configured = !!TENOR_KEY;
+  const configured = !!KLIPY_KEY;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -124,7 +202,7 @@ export function GifPicker({
                 <TextInput
                   value={query}
                   onChangeText={setQuery}
-                  placeholder="Search Tenor"
+                  placeholder="Search GIFs"
                   placeholderTextColor={theme.textTertiary}
                   style={[styles.searchInput, { color: theme.textPrimary }]}
                   autoCorrect={false}
@@ -164,21 +242,28 @@ export function GifPicker({
                     </Pressable>
                   )}
                   ListEmptyComponent={
-                    <Text style={[styles.empty, { color: theme.textTertiary }]}>
-                      {error ? 'Could not load GIFs — check your connection' : 'No GIFs found'}
-                    </Text>
+                    <View>
+                      <Text style={[styles.empty, { color: theme.textTertiary }]}>
+                        {error ? 'Could not load GIFs' : 'No GIFs found'}
+                      </Text>
+                      {error && __DEV__ ? (
+                        <Text style={[styles.empty, { color: theme.textTertiary, marginTop: spacing.sm, fontSize: 12 }]}>
+                          {error}
+                        </Text>
+                      ) : null}
+                    </View>
                   }
                 />
               )}
 
-              <Text style={[styles.attribution, { color: theme.textTertiary }]}>Powered by Tenor</Text>
+              <Text style={[styles.attribution, { color: theme.textTertiary }]}>Powered by KLIPY</Text>
             </>
           ) : (
             <View style={styles.center}>
               <Ionicons name="film-outline" size={48} color={theme.textTertiary} />
               <Text style={[styles.placeholderTitle, { color: theme.textSecondary }]}>GIF support coming soon</Text>
               <Text style={[styles.placeholderBody, { color: theme.textTertiary }]}>
-                Set EXPO_PUBLIC_TENOR_API_KEY in .env to enable GIF search.
+                Set EXPO_PUBLIC_KLIPY_API_KEY in .env to enable GIF search.
               </Text>
             </View>
           )}

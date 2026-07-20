@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { CustomAlert } from '../../src/components/CustomAlert';
@@ -291,6 +291,19 @@ export default function Settings() {
             <AiToggle label="AI Compatibility Score" aiKey="compatibility" />
             <AiToggle label="AI Daily Top 10" aiKey="dailyTop10" />
             <AiToggle label="AI Profile Optimizer" aiKey="profileOptimizer" />
+          </Group>
+
+          <Group title="CHATS">
+            <Pressable style={styles.actionRow} onPress={() => router.push('/starred-messages' as Href)}>
+              <Ionicons name="star-outline" size={20} color={theme.textPrimary} />
+              <Text style={[styles.actionText, { color: theme.textPrimary }]}>Starred Messages</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} style={{ marginLeft: 'auto' }} />
+            </Pressable>
+            <Pressable style={styles.actionRow} onPress={() => router.push('/settings/notifications' as Href)}>
+              <Ionicons name="notifications-outline" size={20} color={theme.textPrimary} />
+              <Text style={[styles.actionText, { color: theme.textPrimary }]}>Notifications</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} style={{ marginLeft: 'auto' }} />
+            </Pressable>
           </Group>
 
           <Group title="APPEARANCE">

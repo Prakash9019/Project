@@ -7,9 +7,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Avatar } from '../../src/components/Avatar';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { useTheme, FontFamily, DisplayFont, spacing } from '../../src/theme';
+import { MemberListSkeleton } from '../../src/components/Skeleton';
 import { listRoomMembers } from '../../src/services/api';
 import { toastApiError } from '../../src/lib/toast';
 import type { RoomMemberCard, RoomUserCard } from '../../src/types/api';
+
+const PAGE = 50;
 
 export default function RoomMembers() {
   const { theme } = useTheme();
@@ -19,6 +22,7 @@ export default function RoomMembers() {
   const [members, setMembers] = useState<RoomMemberCard[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState('');
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
@@ -26,7 +30,7 @@ export default function RoomMembers() {
     if (!roomId) return;
     setLoading(true);
     try {
-      const res = await listRoomMembers(String(roomId), { limit: 100 });
+      const res = await listRoomMembers(String(roomId), { limit: PAGE, offset: 0 });
       setMembers(res.members);
       setTotal(res.total);
     } catch (e) {
@@ -35,6 +39,24 @@ export default function RoomMembers() {
       setLoading(false);
     }
   }, [roomId]);
+
+  // Append the next page when the user scrolls to the end.
+  const loadMore = useCallback(async () => {
+    if (loadingMore || loading || !roomId || members.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const res = await listRoomMembers(String(roomId), { limit: PAGE, offset: members.length });
+      setMembers((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        return [...prev, ...res.members.filter((m) => !seen.has(m.id))];
+      });
+      setTotal(res.total);
+    } catch (e) {
+      toastApiError(e, 'Could not load more members');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [roomId, members.length, total, loadingMore, loading]);
 
   useEffect(() => {
     load();
@@ -82,9 +104,7 @@ export default function RoomMembers() {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.brand} />
-        </View>
+        <MemberListSkeleton rows={8} />
       ) : (
         <FlashList
           data={rows}
@@ -97,6 +117,11 @@ export default function RoomMembers() {
             )
           }
           contentContainerStyle={{ paddingBottom: spacing.xxxl }}
+          onEndReached={query.trim() ? undefined : loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? <ActivityIndicator color={theme.brand} style={{ marginVertical: spacing.lg }} /> : null
+          }
           ListEmptyComponent={<Text style={[styles.empty, { color: theme.textTertiary }]}>No members found.</Text>}
         />
       )}

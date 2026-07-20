@@ -9,16 +9,26 @@ import {
   ActivityIndicator,
   useWindowDimensions,
   ScrollView,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
 import { useChatStore } from '../../src/store/chatStore';
 import { inboxDateLabel, formatLastMessagePreview } from '../../src/lib/format';
+import { showInfo } from '../../src/lib/toast';
 import { ListSkeleton } from '../../src/components/Skeleton';
-import { listAlbums } from '../../src/services/api';
+import {
+  listAlbums,
+  listConversations,
+  archiveConversation,
+  pinConversation,
+  deleteConversationThread,
+} from '../../src/services/api';
 import type { ConversationSummary, AlbumSummary, UserCard } from '../../src/types/api';
 
 type InboxFilter = 'all' | 'unread' | 'pinned' | 'online';
@@ -54,10 +64,82 @@ export default function Inbox() {
   const tile = (width - 44) / 2;
   const [seg, setSeg] = useState<'inbox' | 'albums'>('inbox');
   const [filter, setFilter] = useState<InboxFilter>('all');
+  const [query, setQuery] = useState('');
   const { conversations, loading, refreshing, error, fetchConversations } = useChatStore();
 
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
+  const [viewArchived, setViewArchived] = useState(false);
+  const [archivedList, setArchivedList] = useState<ConversationSummary[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+
+  const loadArchived = useCallback(async () => {
+    setArchivedLoading(true);
+    try {
+      const res = await listConversations('inbox', true);
+      setArchivedList(res.conversations);
+    } catch {
+      /* ignore */
+    } finally {
+      setArchivedLoading(false);
+    }
+  }, []);
+
+  // ── Multi-select mode (long-press a conversation to enter) ────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const isSelecting = selectedIds.size > 0;
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const enterSelection = useCallback((id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setSelectedIds((prev) => new Set(prev).add(id));
+  }, []);
+
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Run an action over every selected conversation, then refresh + exit selection.
+  const runOnSelected = useCallback(
+    async (fn: (id: string) => Promise<unknown>) => {
+      const ids = [...selectedIds];
+      clearSelection();
+      try {
+        await Promise.all(ids.map((id) => fn(id).catch(() => {})));
+      } finally {
+        await fetchConversations('inbox', true);
+        if (viewArchived) await loadArchived();
+      }
+    },
+    [selectedIds, clearSelection, fetchConversations, viewArchived, loadArchived],
+  );
+
+  const pinSelected = useCallback(() => runOnSelected((id) => pinConversation(id, true)), [runOnSelected]);
+  const muteSelected = useCallback(() => {
+    clearSelection();
+    showInfo('Muting chats is coming soon!');
+  }, [clearSelection]);
+  const archiveSelected = useCallback(
+    () => runOnSelected((id) => archiveConversation(id, !viewArchived)),
+    [runOnSelected, viewArchived],
+  );
+  const deleteSelected = useCallback(() => {
+    const count = selectedIds.size;
+    Alert.alert(
+      `Delete ${count} ${count === 1 ? 'chat' : 'chats'}?`,
+      'This removes the conversation from your inbox. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => runOnSelected(deleteConversationThread) },
+      ],
+    );
+  }, [selectedIds, runOnSelected]);
 
   const loadAlbums = useCallback(async () => {
     setAlbumsLoading(true);
@@ -88,24 +170,39 @@ export default function Inbox() {
   // straight from the shared chat store, so it reflects those updates live.
 
   const filtered = useMemo(() => {
+    let list = conversations;
     switch (filter) {
-      case 'unread': return conversations.filter((c) => (c.unreadCount ?? 0) > 0);
-      case 'pinned': return conversations.filter((c) => c.isPinned);
-      case 'online': return conversations.filter((c) => isPeerOnline(c.peer));
-      default: return conversations;
+      case 'unread': list = list.filter((c) => (c.unreadCount ?? 0) > 0); break;
+      case 'pinned': list = list.filter((c) => c.isPinned); break;
+      case 'online': list = list.filter((c) => isPeerOnline(c.peer)); break;
     }
-  }, [conversations, filter]);
+    const q = query.trim().toLowerCase();
+    if (q) {
+      list = list.filter((c) => {
+        const name = (c.peer.firstName ?? '').toLowerCase();
+        const last = typeof c.lastMessage === 'string' ? c.lastMessage : c.lastMessage?.content ?? '';
+        return name.includes(q) || last.toLowerCase().includes(q);
+      });
+    }
+    return list;
+  }, [conversations, filter, query]);
 
   const renderRow = ({ item }: { item: ConversationSummary }) => {
     const online = isPeerOnline(item.peer);
     const dateLabel = inboxDateLabel(item.lastMessageAt);
     const unread = item.unreadCount ?? 0;
+    const selected = selectedIds.has(item.id);
     return (
       <Pressable
-        style={styles.row}
-        onPress={() =>
-          router.push({ pathname: '/chat/[id]', params: { id: item.id, peerName: item.peer.firstName ?? '', peerPhoto: item.peer.profilePhoto ?? '' } })
-        }
+        style={[styles.row, isSelecting && !selected && { opacity: 0.6 }]}
+        onPress={() => {
+          if (isSelecting) {
+            toggleSelection(item.id);
+            return;
+          }
+          router.push({ pathname: '/chat/[id]', params: { id: item.id, peerName: item.peer.firstName ?? '', peerPhoto: item.peer.profilePhoto ?? '' } });
+        }}
+        onLongPress={() => (isSelecting ? toggleSelection(item.id) : enterSelection(item.id))}
       >
         <View>
           {item.peer.profilePhoto ? (
@@ -115,7 +212,12 @@ export default function Inbox() {
               <Ionicons name="person" size={26} color={theme.textTertiary} />
             </View>
           )}
-          {online && <View style={[styles.onlineDot, { backgroundColor: theme.online, borderColor: theme.background }]} />}
+          {online && !selected && <View style={[styles.onlineDot, { backgroundColor: theme.online, borderColor: theme.background }]} />}
+          {selected && (
+            <View style={[styles.selectCheck, { backgroundColor: theme.brand, borderColor: theme.background }]}>
+              <Ionicons name="checkmark" size={13} color="#fff" />
+            </View>
+          )}
         </View>
 
         <View style={styles.rowBody}>
@@ -170,21 +272,75 @@ export default function Inbox() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
-      <View style={styles.titleRow}>
-        <Pressable onPress={() => setSeg('inbox')}>
-          <Text style={[styles.title, { color: seg === 'inbox' ? theme.textPrimary : theme.textTertiary }]}>Inbox</Text>
-        </Pressable>
-        <Pressable onPress={() => setSeg('albums')}>
-          <Text style={[styles.title, { color: seg === 'albums' ? theme.textPrimary : theme.textTertiary }]}>Albums</Text>
-        </Pressable>
-        {seg === 'albums' && (
-          <Pressable style={styles.addAlbum} onPress={() => router.push('/albums/create')} hitSlop={8}>
-            <Ionicons name="add-circle" size={28} color={theme.brand} />
+      {isSelecting ? (
+        <View style={styles.selectionBar}>
+          <Pressable onPress={clearSelection} hitSlop={10}>
+            <Ionicons name="close" size={26} color={theme.textPrimary} />
           </Pressable>
-        )}
-      </View>
+          <Text style={[styles.selectionCount, { color: theme.textPrimary }]}>{selectedIds.size} selected</Text>
+          <View style={styles.selectionActions}>
+            <Pressable onPress={pinSelected} hitSlop={8}>
+              <Ionicons name="pin" size={22} color={theme.textPrimary} />
+            </Pressable>
+            <Pressable onPress={muteSelected} hitSlop={8}>
+              <Ionicons name="notifications-off" size={22} color={theme.textPrimary} />
+            </Pressable>
+            <Pressable onPress={archiveSelected} hitSlop={8}>
+              <Ionicons name={viewArchived ? 'chatbubbles' : 'archive'} size={22} color={theme.textPrimary} />
+            </Pressable>
+            <Pressable onPress={deleteSelected} hitSlop={8}>
+              <Ionicons name="trash" size={22} color={theme.error} />
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.titleRow}>
+          <Pressable onPress={() => setSeg('inbox')}>
+            <Text style={[styles.title, { color: seg === 'inbox' ? theme.textPrimary : theme.textTertiary }]}>Inbox</Text>
+          </Pressable>
+          <Pressable onPress={() => setSeg('albums')}>
+            <Text style={[styles.title, { color: seg === 'albums' ? theme.textPrimary : theme.textTertiary }]}>Albums</Text>
+          </Pressable>
+          {seg === 'inbox' && (
+            <Pressable
+              style={styles.addAlbum}
+              hitSlop={8}
+              onPress={() => {
+                const next = !viewArchived;
+                setViewArchived(next);
+                if (next) loadArchived();
+              }}
+            >
+              <Ionicons name={viewArchived ? 'chatbubbles' : 'archive-outline'} size={24} color={viewArchived ? theme.brand : theme.textSecondary} />
+            </Pressable>
+          )}
+          {seg === 'albums' && (
+            <Pressable style={styles.addAlbum} onPress={() => router.push('/albums/create')} hitSlop={8}>
+              <Ionicons name="add-circle" size={28} color={theme.brand} />
+            </Pressable>
+          )}
+        </View>
+      )}
 
-      {seg === 'inbox' && (
+      {seg === 'inbox' && !viewArchived && !isSelecting && (
+        <View style={[styles.searchBar, { backgroundColor: theme.surfaceElevated }]}>
+          <Ionicons name="search" size={16} color={theme.textTertiary} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search conversations"
+            placeholderTextColor={theme.textTertiary}
+            style={[styles.searchInput, { color: theme.textPrimary }]}
+          />
+          {query.length > 0 ? (
+            <Pressable onPress={() => setQuery('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={theme.textTertiary} />
+            </Pressable>
+          ) : null}
+        </View>
+      )}
+
+      {seg === 'inbox' && !viewArchived && !isSelecting && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -236,23 +392,33 @@ export default function Inbox() {
       ) : (
         <FlatList
           key="conversations"
-          data={filtered}
+          data={viewArchived ? archivedList : filtered}
           keyExtractor={(c) => c.id}
           ItemSeparatorComponent={() => <View style={[styles.sep, { backgroundColor: theme.border }]} />}
           renderItem={renderRow}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => fetchConversations('inbox', true)} tintColor={theme.brand} />
+            <RefreshControl
+              refreshing={viewArchived ? archivedLoading : refreshing}
+              onRefresh={() => (viewArchived ? loadArchived() : fetchConversations('inbox', true))}
+              tintColor={theme.brand}
+            />
           }
           ListEmptyComponent={
             <View style={styles.center}>
-              <Ionicons name="chatbubbles-outline" size={48} color={theme.textTertiary} />
-              <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>{EMPTY_COPY[filter]}</Text>
+              <Ionicons name={viewArchived ? 'archive-outline' : 'chatbubbles-outline'} size={48} color={theme.textTertiary} />
+              <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>
+                {viewArchived ? 'No archived chats' : EMPTY_COPY[filter]}
+              </Text>
               <Text style={[styles.emptyBody, { color: theme.textSecondary }]}>
-                {filter === 'all' ? (error ?? 'Tap someone on the grid to start chatting.') : 'Try a different filter.'}
+                {viewArchived
+                  ? 'Long-press a conversation to archive it.'
+                  : filter === 'all'
+                    ? (error ?? 'Tap someone on the grid to start chatting.')
+                    : 'Try a different filter.'}
               </Text>
             </View>
           }
-          contentContainerStyle={filtered.length === 0 ? { flex: 1 } : { paddingBottom: 24 }}
+          contentContainerStyle={(viewArchived ? archivedList : filtered).length === 0 ? { flex: 1 } : { paddingBottom: 24 }}
         />
       )}
     </SafeAreaView>
@@ -266,9 +432,17 @@ const styles = StyleSheet.create({
   title: { fontSize: FontSize.xxl, fontFamily: DisplayFont.bold, fontWeight: '800' },
   addAlbum: { marginLeft: 'auto' },
 
+  selectionBar: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
+  selectionCount: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  selectionActions: { flexDirection: 'row', alignItems: 'center', gap: 22, marginLeft: 'auto' },
+  selectCheck: { position: 'absolute', left: -2, top: -2, width: 20, height: 20, borderRadius: 10, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+
   // A horizontal ScrollView stretches to fill its flex-column parent's vertical
   // space unless capped — flexGrow:0 makes it wrap to the chip row's height so
   // the conversation list starts immediately below it.
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 12, paddingHorizontal: 12, height: 40, borderRadius: 12 },
+  searchInput: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular },
+
   chipsScroll: { flexGrow: 0 },
   chipsRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingBottom: 12 },
   chip: { height: 36, borderRadius: 999, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },

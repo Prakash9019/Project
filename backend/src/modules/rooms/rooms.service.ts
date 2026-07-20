@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Prisma, RoomCategory } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
@@ -6,7 +7,7 @@ import { moderation } from '../../adapters/moderation';
 import { signUrl } from '../../utils/signUrl';
 import { distanceLabel } from '../../utils/geo';
 import { emitToRoom, emitToUser } from '../../realtime/emitter';
-import { sendPush } from '../../services/push';
+import { sendTypedPush } from '../../services/push';
 import type { SendMessageBody } from './rooms.schema';
 
 // ── Presence / distance helpers ─────────────────────────────────────────────
@@ -82,6 +83,7 @@ export async function serializeRoom(room: any, isJoined: boolean, onlineCount?: 
     country: room.country,
     isOfficial: room.isOfficial,
     isVerifiedOnly: room.isVerifiedOnly,
+    isPrivate: room.isPrivate ?? false,
     // R2 objects are private, so the stored key/private URL must be presigned
     // before the client can load it. listInvites already signs; every room
     // list/detail must too, or the cover 403s on refetch (icon disappears).
@@ -133,6 +135,8 @@ export async function listRooms(
 ) {
   const where: Prisma.RoomWhereInput = {
     isActive: true,
+    // Private groups are invite-link/admin-add only — never surfaced in Discover.
+    isPrivate: false,
     // WhatsApp-style Discover: never surface rooms the user has already joined —
     // they live in "My Groups", so they must not appear here or offer "Join" again.
     members: { none: { userId } },
@@ -260,7 +264,23 @@ export async function getRoomDetail(userId: string, roomId: string) {
     ...(await serializeRoom(room, !!member, onlineCount)),
     myRole: member?.role ?? null,
     isCreator: room.creatorId === userId,
+    // The shareable invite link is only handed to members (any member can share
+    // it; anyone holding it can join, which is the point of a private-group link).
+    inviteCode: member ? room.inviteCode ?? null : null,
   };
+}
+
+/**
+ * Generate a URL-safe, collision-checked invite-link token. base64url of 9
+ * random bytes → 12 chars; retries on the (astronomically unlikely) unique clash.
+ */
+async function generateInviteCode(): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = randomBytes(9).toString('base64url');
+    const clash = await prisma.room.findUnique({ where: { inviteCode: code }, select: { id: true } });
+    if (!clash) return code;
+  }
+  throw new HttpError(500, 'invite_code_generation_failed', 'Could not generate an invite link');
 }
 
 // ── Create (user-generated group) ──────────────────────────────────────────────
@@ -279,8 +299,12 @@ export async function createRoom(
     category: RoomCategory;
     coverImageUrl?: string;
     isVerifiedOnly?: boolean;
+    isPrivate?: boolean;
   },
 ) {
+  // Every room gets a shareable invite link. For private rooms it's the only way
+  // in besides an admin add; for public rooms it's a convenient share shortcut.
+  const inviteCode = await generateInviteCode();
   const room = await prisma.room.create({
     data: {
       name: body.name,
@@ -288,6 +312,8 @@ export async function createRoom(
       category: body.category,
       coverImageUrl: body.coverImageUrl ?? null,
       isVerifiedOnly: body.isVerifiedOnly ?? false,
+      isPrivate: body.isPrivate ?? false,
+      inviteCode,
       creatorId: userId,
       isOfficial: false,
       isActive: true,
@@ -341,6 +367,18 @@ export async function bulkAddMembers(requesterId: string, roomId: string, userId
 export async function joinRoom(userId: string, roomId: string) {
   const room = await getRoomOrThrow(roomId);
 
+  // Private groups can't be joined directly by roomId — only via the invite link
+  // (joinRoomByCode) or an admin add. Already-members fall through harmlessly.
+  if (room.isPrivate) {
+    const alreadyMember = await prisma.roomMember.findUnique({
+      where: { roomId_userId: { roomId, userId } },
+      select: { id: true },
+    });
+    if (!alreadyMember) {
+      throw new HttpError(403, 'private_room', 'This is a private group — join with an invite link');
+    }
+  }
+
   if (room.isVerifiedOnly) {
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { isVerified: true } });
     if (!user?.isVerified) {
@@ -359,11 +397,13 @@ export async function joinRoom(userId: string, roomId: string) {
     ]);
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, name: true } });
     const updated = await prisma.room.findUnique({ where: { id: roomId } });
+    const memberName = user?.firstName ?? user?.name ?? 'Someone';
     emitToRoom(roomId, 'room:member_joined', {
       userId,
       firstName: user?.firstName ?? user?.name ?? null,
       memberCount: updated?.memberCount ?? room.memberCount + 1,
     });
+    void notifyRoomMembership(roomId, userId, memberName, 'room_member_join');
   }
 
   return getRoomDetail(userId, roomId);
@@ -374,6 +414,7 @@ export async function leaveRoom(userId: string, roomId: string): Promise<void> {
     where: { roomId_userId: { roomId, userId } },
   });
   if (!existing) return;
+  const leaver = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, name: true } });
   const [, updated] = await prisma.$transaction([
     prisma.roomMember.delete({ where: { roomId_userId: { roomId, userId } } }),
     prisma.room.update({
@@ -382,6 +423,71 @@ export async function leaveRoom(userId: string, roomId: string): Promise<void> {
     }),
   ]);
   emitToRoom(roomId, 'room:member_left', { userId, memberCount: Math.max(0, updated.memberCount) });
+  void notifyRoomMembership(roomId, userId, leaver?.firstName ?? leaver?.name ?? 'Someone', 'room_member_left');
+}
+
+// ── Join by invite link ──────────────────────────────────────────────────────
+
+async function getRoomByCodeOrThrow(code: string) {
+  const room = await prisma.room.findUnique({ where: { inviteCode: code } });
+  if (!room || !room.isActive) throw Errors.notFound('Invite link is invalid or expired');
+  return room;
+}
+
+/**
+ * Preview a room from its invite link (no membership required). Lets the client
+ * show a "Join <group>?" confirmation before the user commits. Returns the room
+ * card plus whether the caller is already a member.
+ */
+export async function getRoomByCode(userId: string, code: string) {
+  const room = await getRoomByCodeOrThrow(code);
+  const member = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId: room.id, userId } },
+    select: { id: true },
+  });
+  const onlineCount = await computeOnlineCount(room.id);
+  return { ...(await serializeRoom(room, !!member, onlineCount)) };
+}
+
+/**
+ * Join a room via its shareable invite link. This is the ONLY self-serve way
+ * into a private group. Still enforces the verified-only gate.
+ */
+export async function joinRoomByCode(userId: string, code: string) {
+  const room = await getRoomByCodeOrThrow(code);
+  return joinViaLink(userId, room);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function joinViaLink(userId: string, room: any) {
+  if (room.isVerifiedOnly) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { isVerified: true } });
+    if (!user?.isVerified) {
+      throw new HttpError(403, 'verified_only_room', 'This room is for verified users only');
+    }
+  }
+
+  const existing = await prisma.roomMember.findUnique({
+    where: { roomId_userId: { roomId: room.id, userId } },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    await prisma.$transaction([
+      prisma.roomMember.create({ data: { roomId: room.id, userId, role: 'member' } }),
+      prisma.room.update({ where: { id: room.id }, data: { memberCount: { increment: 1 } } }),
+    ]);
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, name: true } });
+    const updated = await prisma.room.findUnique({ where: { id: room.id }, select: { memberCount: true } });
+    emitToRoom(room.id, 'room:member_joined', {
+      userId,
+      firstName: user?.firstName ?? user?.name ?? null,
+      memberCount: updated?.memberCount ?? room.memberCount + 1,
+    });
+    void notifyRoomMembership(room.id, userId, user?.firstName ?? user?.name ?? 'Someone', 'room_member_join');
+  }
+
+  return getRoomDetail(userId, room.id);
 }
 
 // ── Invite / direct-add ────────────────────────────────────────────────────────
@@ -406,6 +512,9 @@ async function conversationExists(userA: string, userB: string): Promise<boolean
  */
 export async function inviteOrAddMember(requesterId: string, roomId: string, targetUserId: string) {
   const room = await getRoomOrThrow(roomId);
+  // In a private group only admins/creator may add or invite members. (Public
+  // groups keep the open policy: any member can invite/add someone they chat with.)
+  if (room.isPrivate) await assertRoomAdmin(requesterId, roomId);
   const target = await prisma.user.findUnique({
     where: { id: targetUserId },
     select: { id: true, groupsAvailable: true },
@@ -440,6 +549,7 @@ export async function inviteOrAddMember(requesterId: string, roomId: string, tar
       firstName: addedUser?.firstName ?? addedUser?.name ?? null,
       memberCount: updated?.memberCount ?? room.memberCount + 1,
     });
+    void notifyRoomMembership(roomId, targetUserId, addedUser?.firstName ?? addedUser?.name ?? 'Someone', 'room_member_join');
     return { status: 201 as const, body: { added: true, method: 'direct' as const } };
   }
 
@@ -546,6 +656,7 @@ export async function acceptInvite(userId: string, inviteId: string) {
       firstName: user?.firstName ?? user?.name ?? null,
       memberCount: updated?.memberCount ?? 0,
     });
+    void notifyRoomMembership(invite.roomId, userId, user?.firstName ?? user?.name ?? 'Someone', 'room_member_join');
   }
 
   return { ok: true as const, roomId: invite.roomId };
@@ -617,6 +728,8 @@ interface SerializeMsgCtx {
   reactions: Map<string, { emoji: string; count: number; userReacted: boolean }[]>;
   /** messageId → number of OTHER members who have received the message. */
   deliveries: Map<string, number>;
+  /** messageIds the viewer has starred. */
+  starred?: Set<string>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -634,6 +747,7 @@ async function serializeMessage(msg: any, ctx: SerializeMsgCtx) {
     content: msg.isDeleted ? 'Message removed' : msg.content,
     mediaUrl: msg.isDeleted ? null : await signUrl(msg.mediaUrl),
     isPinned: msg.isPinned,
+    isStarred: ctx.starred?.has(msg.id) ?? false,
     isDeleted: msg.isDeleted,
     replyTo: msg.replyTo
       ? {
@@ -673,13 +787,15 @@ export async function listMessages(
   const page = hasMore ? messages.slice(0, opts.limit) : messages;
 
   const senderIds = [...new Set(page.map((m) => m.senderId))];
-  const [online, distances, reactions, deliveries] = await Promise.all([
+  const [online, distances, reactions, deliveries, starredRows] = await Promise.all([
     presenceSet(senderIds),
     distanceMap(userId, senderIds),
     reactionsByMessage(page.map((m) => m.id), userId),
     deliveriesByMessage(page.map((m) => m.id)),
+    prisma.starredMessage.findMany({ where: { userId, messageId: { in: page.map((m) => m.id) } }, select: { messageId: true } }),
   ]);
-  const ctx: SerializeMsgCtx = { viewerId: userId, online, distances, reactions, deliveries };
+  const starred = new Set(starredRows.map((s) => s.messageId));
+  const ctx: SerializeMsgCtx = { viewerId: userId, online, distances, reactions, deliveries, starred };
 
   const serialized = await Promise.all(page.map((m) => serializeMessage(m, ctx)));
   const nextCursor = hasMore ? page[page.length - 1].createdAt.toISOString() : null;
@@ -844,6 +960,18 @@ export async function sendMessage(userId: string, roomId: string, body: SendMess
   return card;
 }
 
+/** Short push preview for a room message by type. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function roomMessagePreview(card: any): string {
+  if (card.type === 'image') return card.mediaUrl ? '📷 Photo' : (card.content || 'Photo');
+  if (card.type === 'voice') return '🎤 Voice message';
+  const content = card.content ?? '';
+  if (content.startsWith('📄')) return content;
+  if (content.startsWith('🎵')) return content;
+  if (content.startsWith('📍')) return '📍 Location';
+  return content.slice(0, 80) || 'New message';
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function notifyRoomMembers(roomId: string, senderId: string, card: any): Promise<void> {
   try {
@@ -851,15 +979,59 @@ async function notifyRoomMembers(roomId: string, senderId: string, card: any): P
       prisma.room.findUnique({ where: { id: roomId }, select: { name: true } }),
       prisma.roomMember.findMany({
         where: { roomId, isMuted: false, userId: { not: senderId } },
-        select: { userId: true },
+        select: { userId: true, user: { select: { firstName: true, name: true } } },
         take: 1000,
       }),
     ]);
-    const title = room?.name ?? 'Room';
-    const body = `${card.sender?.firstName ?? 'Someone'}: ${card.content}`;
+    const roomName = room?.name ?? 'Room';
+    const senderName = card.sender?.firstName ?? 'Someone';
+    const preview = roomMessagePreview(card);
+
+    // Mention detection: any @token in the content that matches a member's
+    // firstName (case-insensitive) turns that member's push into a mention.
+    const content: string = card.content ?? '';
+    const mentionTokens = new Set(
+      (content.match(/@([\p{L}\p{N}_]+)/gu) ?? []).map((t) => t.slice(1).toLowerCase()),
+    );
+
+    await Promise.all(
+      members.map((m) => {
+        const first = (m.user?.firstName ?? m.user?.name ?? '').toLowerCase();
+        const mentioned = first.length > 0 && mentionTokens.has(first);
+        const payload = mentioned
+          ? { type: 'room_mention' as const, roomId, roomName, senderName, preview }
+          : { type: 'room_message' as const, roomId, roomName, senderName, preview };
+        return sendTypedPush(m.userId, payload).catch(() => {});
+      }),
+    );
+  } catch {
+    /* push is best-effort */
+  }
+}
+
+/**
+ * Best-effort push to existing members when someone joins/leaves. Capped at 50
+ * recipients to avoid spamming very large rooms.
+ */
+async function notifyRoomMembership(
+  roomId: string,
+  actorId: string,
+  memberName: string,
+  kind: 'room_member_join' | 'room_member_left',
+): Promise<void> {
+  try {
+    const [room, members] = await Promise.all([
+      prisma.room.findUnique({ where: { id: roomId }, select: { name: true } }),
+      prisma.roomMember.findMany({
+        where: { roomId, isMuted: false, userId: { not: actorId } },
+        select: { userId: true },
+        take: 50,
+      }),
+    ]);
+    const roomName = room?.name ?? 'Room';
     await Promise.all(
       members.map((m) =>
-        sendPush(m.userId, { title, body, data: { type: 'room_message', roomId } }).catch(() => {}),
+        sendTypedPush(m.userId, { type: kind, roomId, roomName, memberName }).catch(() => {}),
       ),
     );
   } catch {
@@ -887,6 +1059,23 @@ export async function toggleReaction(userId: string, roomId: string, messageId: 
   const count = await prisma.roomMessageReaction.count({ where: { messageId, emoji } });
   emitToRoom(roomId, 'room:message_reaction', { messageId, emoji, count, userId, added });
   return { added, emoji, count };
+}
+
+/** Grouped reaction detail for a room message: who reacted with each emoji. */
+export async function listMessageReactions(userId: string, roomId: string, messageId: string) {
+  await assertRoomMember(userId, roomId);
+  const reactions = await prisma.roomMessageReaction.findMany({
+    where: { messageId },
+    orderBy: { createdAt: 'asc' },
+    include: { user: { include: PHOTO_INCLUDE } },
+  });
+  const online = await presenceSet(reactions.map((r) => r.userId));
+  const grouped = new Map<string, Awaited<ReturnType<typeof buildUserCard>>[]>();
+  for (const r of reactions) {
+    if (!grouped.has(r.emoji)) grouped.set(r.emoji, []);
+    grouped.get(r.emoji)!.push(await buildUserCard(r.user, { online: online.has(r.userId) }));
+  }
+  return [...grouped.entries()].map(([emoji, users]) => ({ emoji, users }));
 }
 
 export async function listMembers(

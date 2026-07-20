@@ -1,7 +1,7 @@
 import { initializeApp, getApps, cert, type App } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 
-function getApp(): App {
+export function getApp(): App {
   if (getApps().length > 0) return getApps()[0];
   const projectId = process.env.FIREBASE_PROJECT_ID;
   if (!projectId) throw new Error('FIREBASE_PROJECT_ID is not set');

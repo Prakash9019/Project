@@ -64,6 +64,7 @@ export default function CreateGroupDetails() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<RoomCategory | null>(null);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [progress, setProgress] = useState<ProgressStep | null>(null);
@@ -127,6 +128,7 @@ export default function CreateGroupDetails() {
         name: name.trim(),
         description: description.trim() || undefined,
         category,
+        isPrivate,
       });
 
       // 2. Upload the cover photo now that we have a roomId, then attach it.
@@ -311,6 +313,62 @@ export default function CreateGroupDetails() {
             ) : null}
           </Animated.View>
 
+          {/* Privacy — public vs private group */}
+          <View style={styles.labelRow}>
+            <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>PRIVACY</Text>
+          </View>
+          <View style={styles.privacyWrap}>
+            {([
+              {
+                value: false,
+                icon: 'earth' as const,
+                title: 'Public',
+                desc: 'Anyone can find and join this group from Discover.',
+              },
+              {
+                value: true,
+                icon: 'lock-closed' as const,
+                title: 'Private',
+                desc: 'Hidden from Discover. Only admins can add people, or join via invite link.',
+              },
+            ]).map((opt) => {
+              const active = isPrivate === opt.value;
+              return (
+                <Pressable
+                  key={opt.title}
+                  onPress={() => {
+                    setIsPrivate(opt.value);
+                    Haptics.selectionAsync().catch(() => {});
+                  }}
+                  style={[
+                    styles.privacyCard,
+                    {
+                      borderColor: active ? theme.brand : theme.border,
+                      backgroundColor: active ? theme.brand + '12' : theme.surfaceElevated,
+                    },
+                  ]}
+                >
+                  <View style={[styles.privacyIcon, { backgroundColor: active ? theme.brand : theme.border + '55' }]}>
+                    <Ionicons name={opt.icon} size={16} color={active ? '#fff' : theme.textSecondary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.privacyTitle, { color: theme.textPrimary }]}>{opt.title}</Text>
+                    <Text style={[styles.privacyDesc, { color: theme.textSecondary }]}>{opt.desc}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.radio,
+                      { borderColor: active ? theme.brand : theme.border },
+                      active ? { backgroundColor: theme.brand } : null,
+                    ]}
+                  >
+                    {active ? <Ionicons name="checkmark" size={13} color="#fff" /> : null}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+
           {/* Description */}
           <View style={styles.labelRow}>
             <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>DESCRIPTION</Text>
@@ -468,6 +526,27 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   chipText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
+
+  privacyWrap: { paddingHorizontal: spacing.xl, gap: spacing.sm },
+  privacyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+  },
+  privacyIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  privacyTitle: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
+  privacyDesc: { fontSize: FontSize.xs, fontFamily: FontFamily.regular, marginTop: 2, lineHeight: 16 },
+  radio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   editLink: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   memberStrip: { gap: spacing.md, paddingHorizontal: spacing.xl },

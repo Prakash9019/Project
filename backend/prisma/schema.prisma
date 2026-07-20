@@ -298,6 +298,9 @@ model User {
   voiceClipUrl String?
   videoClipUrl String?
 
+  // ── Push notifications (FCM) ──
+  fcmToken String?
+
   // ── NearMe v2: trust & verification ──
   verifiedBadge     Boolean @default(false)
   isCollegeVerified Boolean @default(false)
@@ -417,6 +420,8 @@ model User {
   roomMemberships RoomMember[]
   roomMessages    RoomMessage[]
   roomReactions   RoomMessageReaction[]
+  messageReactions MessageReaction[]
+  starredMessages StarredMessage[]
   sentRoomInvites     RoomInvite[] @relation("SentRoomInvites")
   receivedRoomInvites RoomInvite[] @relation("ReceivedRoomInvites")
 
@@ -520,6 +525,10 @@ model Conversation {
   aDeletedAt  DateTime?
   bDeletedAt  DateTime?
 
+  // Disappearing messages: null | '24h' | '7d' | '90d'. Filtered from responses
+  // once older than the window (no destructive delete — MVP).
+  disappearingMessages String?
+
   createdAt     DateTime @default(now())
   lastMessageAt DateTime @default(now())
 
@@ -542,8 +551,10 @@ model Message {
 
   ciphertext String?
   content    String?
+  caption    String?   @db.VarChar(1000)
   mediaUrls  String[]
   mediaUrl   String?
+  replyToId  String?
 
   viewOnce         Boolean   @default(false)
   expiresInSeconds Int?
@@ -552,6 +563,15 @@ model Message {
 
   isUnsent    Boolean   @default(false)
   unsentAt    DateTime?
+
+  // Pin a message to the 1:1 conversation (mirrors room pinning).
+  isPinned    Boolean   @default(false)
+
+  // "Delete for me" — hides the message from one side only. deletedByA hides it
+  // from userA, deletedByB from userB. Distinct from deletedAt (delete-for-me of
+  // an own message historically) and isUnsent (delete-for-everyone).
+  deletedByA  Boolean   @default(false)
+  deletedByB  Boolean   @default(false)
 
   isEdited        Boolean   @default(false)
   editedAt        DateTime?
@@ -567,11 +587,42 @@ model Message {
 
   createdAt DateTime @default(now())
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo      Message?          @relation("MessageReply", fields: [replyToId], references: [id])
+  replies      Message[]         @relation("MessageReply")
+  reactions    MessageReaction[]
 
   @@index([conversationId, createdAt])
   @@map("messages")
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String   @db.VarChar(10)
+  createdAt DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@map("message_reactions")
+}
+
+model StarredMessage {
+  id        String   @id @default(uuid())
+  userId    String
+  messageId String
+  // 'chat' (1:1 Message) or 'room' (RoomMessage) — no FK, so a starred message
+  // survives independent of which table it points at.
+  type      String   @default("chat")
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId])
+  @@map("starred_messages")
 }
 
 model Call {
@@ -700,6 +751,8 @@ model Album {
   userId       String
   title        String    @db.VarChar(50)
   coverPhotoId String?   @unique // nullable FK to AlbumPhoto; a photo can be cover of at most one album
+  // 'everyone' | 'matches' | 'chats_only' | 'nobody' — validated at app layer
+  privacy      String    @default("chats_only")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime? // soft delete
@@ -1017,6 +1070,12 @@ model Room {
   country         String        @default("India")
   isOfficial      Boolean       @default(false)
   isVerifiedOnly  Boolean       @default(false)
+  // Private groups are hidden from Discover, can only be joined via invite link
+  // or an admin add, and only admins may add/invite members.
+  isPrivate       Boolean       @default(false)
+  // Shareable join-link token. Present for every room; the sole way to join a
+  // private room without an admin add. Unique so it can be looked up directly.
+  inviteCode      String?       @unique
   coverImageUrl   String?
   creatorId       String?
   memberCount     Int           @default(0)

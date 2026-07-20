@@ -57,6 +57,16 @@ export async function joinRoom(req: Request, res: Response): Promise<void> {
   res.status(200).json({ ok: true, room });
 }
 
+export async function getRoomByCode(req: Request, res: Response): Promise<void> {
+  const room = await svc.getRoomByCode(req.user!.sub, req.params.code);
+  res.status(200).json({ room });
+}
+
+export async function joinRoomByCode(req: Request, res: Response): Promise<void> {
+  const room = await svc.joinRoomByCode(req.user!.sub, req.params.code);
+  res.status(200).json({ ok: true, room });
+}
+
 export async function leaveRoom(req: Request, res: Response): Promise<void> {
   await svc.leaveRoom(req.user!.sub, req.params.roomId);
   res.status(204).send();
@@ -113,6 +123,11 @@ export async function reactToMessage(req: Request, res: Response): Promise<void>
   const { emoji } = req.body as ReactBody;
   const result = await svc.toggleReaction(req.user!.sub, req.params.roomId, req.params.messageId, emoji);
   res.status(200).json(result);
+}
+
+export async function listMessageReactions(req: Request, res: Response): Promise<void> {
+  const reactions = await svc.listMessageReactions(req.user!.sub, req.params.roomId, req.params.messageId);
+  res.status(200).json({ reactions });
 }
 
 export async function listMembers(req: Request, res: Response): Promise<void> {

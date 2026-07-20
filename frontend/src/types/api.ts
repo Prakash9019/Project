@@ -390,6 +390,7 @@ export interface Message {
   type: MessageType;
   ciphertext: string | null;
   content: string | null;
+  caption: string | null;
   mediaUrls: string[];
   mediaUrl: string | null;
   viewOnce: boolean;
@@ -398,6 +399,8 @@ export interface Message {
   expiresAfterView: boolean;
   isUnsent: boolean;
   unsentAt: string | null;
+  isPinned?: boolean;
+  isStarred?: boolean;
   isEdited: boolean;
   editedAt: string | null;
   translatedContent: string | null;
@@ -407,6 +410,9 @@ export interface Message {
   readAt: string | null;
   deletedAt: string | null;
   createdAt: string;
+  replyToId?: string | null;
+  replyTo?: { id: string; senderId: string; content: string } | null;
+  reactions: { emoji: string; count: number; userReacted: boolean }[];
 }
 
 /** Call model (frontendVisible fields — agora* omitted from stored model). */
@@ -467,12 +473,17 @@ export interface Album {
   deletedAt: string | null;
 }
 
+export type AlbumPrivacy = 'everyone' | 'matches' | 'chats_only' | 'nobody';
+
 /** Album summary with cover + count (list responses). */
 export interface AlbumSummary {
   id: string;
   title: string;
   coverPhoto: AlbumPhoto | null;
   photoCount: number;
+  privacy?: AlbumPrivacy;
+  /** Only present on GET /api/v1/users/:userId/albums (viewing someone else's albums). */
+  locked?: boolean;
 }
 
 /** A photo within an album. */
@@ -548,6 +559,8 @@ export interface RoomCard {
   country: string;
   isOfficial: boolean;
   isVerifiedOnly: boolean;
+  /** Private groups are hidden from Discover; join only via invite link or admin add. */
+  isPrivate: boolean;
   coverImageUrl: string | null;
   memberCount: number;
   onlineCount: number;
@@ -562,6 +575,8 @@ export interface RoomDetail extends RoomCard {
   myRole?: RoomRole | null;
   /** True when the caller created this room. */
   isCreator?: boolean;
+  /** Shareable invite-link token — only returned to members (null otherwise). */
+  inviteCode?: string | null;
 }
 
 export interface JoinedRoomCard extends RoomCard {
@@ -603,6 +618,7 @@ export interface RoomMessageCard {
   content: string;
   mediaUrl: string | null;
   isPinned: boolean;
+  isStarred?: boolean;
   isDeleted: boolean;
   replyTo: RoomReplyPreview | null;
   reactions: RoomReaction[];

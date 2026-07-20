@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
-import { Errors } from '../../utils/httpError';
+import { Errors, HttpError } from '../../utils/httpError';
 import { isBlocked } from '../../utils/blocks';
 import { moderateImage } from '../../services/imageModeration';
 import { signUrl } from '../../utils/signUrl';
@@ -16,7 +16,28 @@ export const createAlbumSchema = z.object({
 export const updateAlbumSchema = z.object({
   title:       z.string().min(1).max(50).optional(),
   coverPhotoId: z.string().uuid().optional().nullable(),
+  privacy:     z.enum(['everyone', 'matches', 'chats_only', 'nobody']).optional(),
 });
+
+/**
+ * Whether `viewerId` may see `ownerId`'s albums given `privacy`.
+ * 'chats_only' (default) and 'matches' both require the owner to have replied
+ * at least once in a conversation with the viewer — there is no separate
+ * match concept in this app, so a two-way conversation stands in for it.
+ */
+async function canViewAlbums(viewerId: string, ownerId: string, privacy: string): Promise<boolean> {
+  if (viewerId === ownerId) return true;
+  if (privacy === 'everyone') return true;
+  if (privacy === 'nobody') return false;
+
+  const [userAId, userBId] = ownerId < viewerId ? [ownerId, viewerId] : [viewerId, ownerId];
+  const convo = await prisma.conversation.findUnique({
+    where: { userAId_userBId: { userAId, userBId } },
+    select: { aHasReplied: true, bHasReplied: true },
+  });
+  if (!convo) return false;
+  return convo.aHasReplied || convo.bHasReplied;
+}
 
 export const reorderPhotosSchema = z.object({
   order: z.array(z.object({
@@ -42,6 +63,7 @@ export async function listAlbums(req: Request, res: Response): Promise<void> {
     albums.map(async (a) => ({
       id: a.id,
       title: a.title,
+      privacy: a.privacy,
       photoCount: a._count.photos,
       coverPhoto: a.coverPhoto ? { id: a.coverPhoto.id, url: await signUrl(a.coverPhoto.photoUrl) } : null,
       createdAt: a.createdAt,
@@ -114,7 +136,7 @@ export async function getAlbum(req: Request, res: Response): Promise<void> {
 export async function updateAlbum(req: Request, res: Response): Promise<void> {
   const userId = req.user!.sub;
   const { albumId } = req.params;
-  const { title, coverPhotoId } = req.body as z.infer<typeof updateAlbumSchema>;
+  const { title, coverPhotoId, privacy } = req.body as z.infer<typeof updateAlbumSchema>;
 
   const album = await prisma.album.findFirst({ where: { id: albumId, userId, deletedAt: null } });
   if (!album) throw Errors.notFound('Album not found');
@@ -127,13 +149,18 @@ export async function updateAlbum(req: Request, res: Response): Promise<void> {
 
   const updated = await prisma.album.update({
     where: { id: albumId },
-    data: { ...(title ? { title } : {}), ...(coverPhotoId !== undefined ? { coverPhotoId } : {}) },
+    data: {
+      ...(title ? { title } : {}),
+      ...(coverPhotoId !== undefined ? { coverPhotoId } : {}),
+      ...(privacy ? { privacy } : {}),
+    },
     include: { coverPhoto: { select: { id: true, photoUrl: true } } },
   });
 
   res.status(200).json({
     id: updated.id,
     title: updated.title,
+    privacy: updated.privacy,
     coverPhoto: updated.coverPhoto
       ? { id: updated.coverPhoto.id, url: await signUrl(updated.coverPhoto.photoUrl) }
       : null,
@@ -241,6 +268,10 @@ export async function viewUserAlbumDetail(req: Request, res: Response): Promise<
   });
   if (!album) throw Errors.notFound('Album not found');
 
+  if (!(await canViewAlbums(viewerId, userId, album.privacy))) {
+    throw new HttpError(403, 'album_locked', 'Start a conversation to unlock this album');
+  }
+
   const photos = await prisma.albumPhoto.findMany({
     where: { albumId, ...(cursor ? { id: { gt: cursor } } : {}) },
     orderBy: [{ order: 'asc' }, { id: 'asc' }],
@@ -291,13 +322,17 @@ export async function viewUserAlbums(req: Request, res: Response): Promise<void>
   });
 
   const serialized = await Promise.all(
-    albums.map(async (a) => ({
-      id: a.id,
-      title: a.title,
-      photoCount: a._count.photos,
-      coverPhoto: a.coverPhoto ? { id: a.coverPhoto.id, url: await signUrl(a.coverPhoto.photoUrl) } : null,
-      createdAt: a.createdAt,
-    }))
+    albums.map(async (a) => {
+      const locked = !(await canViewAlbums(viewerId, userId, a.privacy));
+      return {
+        id: a.id,
+        title: a.title,
+        photoCount: a._count.photos,
+        locked,
+        coverPhoto: !locked && a.coverPhoto ? { id: a.coverPhoto.id, url: await signUrl(a.coverPhoto.photoUrl) } : null,
+        createdAt: a.createdAt,
+      };
+    })
   );
   res.status(200).json({ albums: serialized });
 }

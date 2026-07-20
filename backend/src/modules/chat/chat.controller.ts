@@ -5,9 +5,18 @@ import { emitToUser } from '../../realtime/emitter';
 import { translation } from '../../adapters/translation';
 import { Errors, HttpError } from '../../utils/httpError';
 import { serializeGridCard, signUserPhotos } from '../profile/profile.serializer';
-import { sendPush, isMuted } from '../../services/push';
+import { sendTypedPush, isMuted } from '../../services/push';
 import { updateReplyRate } from '../../utils/replyRate';
 import * as svc from './chat.service';
+
+/** One-line push preview for a 1:1 message by type. */
+function messagePreview(type: string, content: string | null | undefined): string {
+  if (type === 'photo' || type === 'expiring_photo') return '📷 Photo';
+  if (type === 'voice' || type === 'voice_note') return '🎤 Voice message';
+  if (type === 'video') return '🎥 Video';
+  if (type === 'text' && content?.startsWith('📍')) return '📍 Location';
+  return (content ?? '').slice(0, 80) || 'New message';
+}
 
 export const startConversationSchema = z.object({ userId: z.string().uuid() });
 
@@ -15,10 +24,14 @@ export const sendMessageSchema = z.object({
   type:             z.enum(['text', 'photo', 'video', 'voice', 'expiring_photo', 'voice_note']).default('text'),
   ciphertext:       z.string().max(8192).optional(),
   content:          z.string().max(4096).optional(),
+  caption:          z.string().max(1000).optional(),
   mediaUrls:        z.array(z.string().min(1)).max(10).optional(),
   viewOnce:         z.boolean().optional(),
   expiresInSeconds: z.number().int().min(1).max(60).optional(),
+  replyToId:        z.string().uuid().optional(),
 });
+
+export const reactSchema = z.object({ emoji: z.string().min(1).max(10) });
 
 export const editMessageSchema = z.object({
   content: z.string().min(1).max(2000),
@@ -31,7 +44,10 @@ export const listMessagesQuerySchema = z.object({
 
 export const listConversationsQuerySchema = z.object({
   folder: z.enum(['inbox', 'requests']).default('inbox'),
+  archived: z.coerce.boolean().optional(),
 });
+
+export const archiveSchema = z.object({ archived: z.boolean() });
 
 export const savedPhraseSchema   = z.object({ text: z.string().min(1).max(500) });
 export const templateSchema      = z.object({ content: z.string().min(1).max(500) });
@@ -49,9 +65,9 @@ export async function startConversation(req: Request, res: Response): Promise<vo
 }
 
 export async function listConversations(req: Request, res: Response): Promise<void> {
-  const { folder } = req.query as unknown as z.infer<typeof listConversationsQuerySchema>;
+  const { folder, archived } = req.query as unknown as z.infer<typeof listConversationsQuerySchema>;
   const userId = req.user!.sub;
-  const convos = await svc.listConversations(userId, folder);
+  const convos = await svc.listConversations(userId, folder, archived ?? false);
 
   const conversations = await Promise.all(convos.map(async (c) => {
     const isA = c.userAId === userId;
@@ -93,7 +109,7 @@ export async function listMessages(req: Request, res: Response): Promise<void> {
   const { before, limit } = req.query as unknown as z.infer<typeof listMessagesQuerySchema>;
   const { messages, hasMore, nextCursor } = await svc.listMessages(conversationId, before, limit, req.user!.sub);
   const flags = svc.callFlags(convo, req.user!.sub);
-  res.status(200).json({ messages, hasMore, nextCursor, ...flags });
+  res.status(200).json({ messages, hasMore, nextCursor, ...flags, disappearingMessages: convo.disappearingMessages ?? null });
 }
 
 export async function sendMessage(req: Request, res: Response): Promise<void> {
@@ -103,12 +119,13 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
   const limits = req.effectiveLimits;
   const plan = limits?.plan ?? 'free';
 
-  // Get planExpiresAt for plan checks — load from user record
+  // Get planExpiresAt for plan checks — load from user record (+ firstName for push title)
   const userRecord = await prisma.user.findUnique({
     where: { id: userId },
-    select: { planExpiresAt: true },
+    select: { planExpiresAt: true, firstName: true, name: true },
   });
   const planExpiresAt = userRecord?.planExpiresAt ?? null;
+  const senderName = userRecord?.firstName ?? userRecord?.name ?? 'Someone';
 
   const { message, convo, peerId, delivered, peerPlan, peerPlanExpiresAt } = await svc.sendMessage(
     conversationId, userId, plan, planExpiresAt, payload,
@@ -118,9 +135,11 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
   emitToUser(peerId, 'message.created', {
     id: message.id, conversationId, senderId: userId,
     type: message.type, ciphertext: message.ciphertext, content: message.content,
+    caption: message.caption,
     mediaUrls: message.mediaUrls, mediaUrl: message.mediaUrl,
     viewOnce: message.viewOnce, expiresInSeconds: message.expiresInSeconds,
     expiresAfterView: message.expiresAfterView, createdAt: message.createdAt,
+    replyToId: message.replyToId, replyTo: message.replyTo, reactions: message.reactions,
   });
 
   // If the recipient was online at send time, tell the sender it's delivered
@@ -131,13 +150,14 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
     });
   }
 
-  // Push notification (non-blocking, skip if muted)
+  // Push notification (non-blocking, skip if muted). Preview varies by type.
   isMuted(peerId, userId).then((muted) => {
     if (!muted) {
-      sendPush(peerId, {
-        title: 'New message',
-        body: message.type === 'text' ? (message.content?.slice(0, 100) ?? 'sent a message') : `sent a ${message.type}`,
-        data: { conversationId, type: 'message' },
+      sendTypedPush(peerId, {
+        type: 'new_message',
+        conversationId,
+        senderName,
+        preview: messagePreview(message.type, message.content),
       }).catch(() => {});
     }
   }).catch(() => {});
@@ -182,11 +202,103 @@ export async function unsendMessage(req: Request, res: Response): Promise<void> 
   res.status(200).json({ id: msg.id, isUnsent: msg.isUnsent, unsentAt: msg.unsentAt });
 }
 
+export async function reactToMessage(req: Request, res: Response): Promise<void> {
+  const { conversationId, messageId } = req.params;
+  const { emoji } = req.body as z.infer<typeof reactSchema>;
+  const userId = req.user!.sub;
+
+  const convo = await svc.getParticipantConversation(userId, conversationId);
+  const result = await svc.toggleReaction(userId, conversationId, messageId, emoji);
+
+  const peerId = svc.otherParty(convo, userId);
+  const payload = { conversationId, messageId, ...result, userId };
+  emitToUser(userId, 'message.reaction', payload);
+  emitToUser(peerId, 'message.reaction', payload);
+
+  // Push the reaction to the original message's sender (only when a reaction was
+  // added, and never a self-reaction on your own message).
+  if (result.added) {
+    const [msg, reactor] = await Promise.all([
+      prisma.message.findUnique({ where: { id: messageId }, select: { senderId: true } }),
+      prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, name: true } }),
+    ]);
+    if (msg && msg.senderId !== userId) {
+      const reactorName = reactor?.firstName ?? reactor?.name ?? 'Someone';
+      isMuted(msg.senderId, userId).then((muted) => {
+        if (!muted) {
+          sendTypedPush(msg.senderId, { type: 'reaction', conversationId, senderName: reactorName, emoji }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }
+
+  res.status(200).json(result);
+}
+
+/** DELETE /:conversationId/messages/:messageId — "Delete for me" (per-side hide). */
 export async function deleteMessageHandler(req: Request, res: Response): Promise<void> {
   const { conversationId, messageId } = req.params;
-  await svc.getParticipantConversation(req.user!.sub, conversationId);
-  await svc.deleteMessageForSelf(messageId, req.user!.sub);
+  await svc.deleteMessageForMe(conversationId, messageId, req.user!.sub);
   res.status(204).send();
+}
+
+export const pinMessageSchema = z.object({ isPinned: z.boolean() });
+
+/** POST /:conversationId/messages/:messageId/pin — pin/unpin in a 1:1 chat. */
+export async function pinMessageHandler(req: Request, res: Response): Promise<void> {
+  const { conversationId, messageId } = req.params;
+  const { isPinned } = req.body as z.infer<typeof pinMessageSchema>;
+  const convo = await svc.getParticipantConversation(req.user!.sub, conversationId);
+  const msg = await svc.setMessagePinned(conversationId, messageId, req.user!.sub, isPinned);
+  const payload = { conversationId, messageId, isPinned };
+  emitToUser(req.user!.sub, 'message.pinned', payload);
+  emitToUser(svc.otherParty(convo, req.user!.sub), 'message.pinned', payload);
+  res.status(200).json({ id: msg.id, isPinned: msg.isPinned });
+}
+
+export const disappearingSchema = z.object({
+  disappearingMessages: z.union([z.enum(['24h', '7d', '90d']), z.null()]),
+});
+
+/** PATCH /:conversationId — currently only sets the disappearing-messages window. */
+export async function updateConversation(req: Request, res: Response): Promise<void> {
+  const { conversationId } = req.params;
+  const { disappearingMessages } = req.body as z.infer<typeof disappearingSchema>;
+  const convo = await svc.setDisappearingMessages(conversationId, req.user!.sub, disappearingMessages);
+  const peerId = svc.otherParty(convo, req.user!.sub);
+  const payload = { conversationId, disappearingMessages };
+  emitToUser(req.user!.sub, 'conversation.disappearing_updated', payload);
+  emitToUser(peerId, 'conversation.disappearing_updated', payload);
+  res.status(200).json({ id: convo.id, disappearingMessages: convo.disappearingMessages });
+}
+
+/** GET /:conversationId/messages/:messageId/reactions — who reacted, grouped by emoji. */
+export async function listMessageReactions(req: Request, res: Response): Promise<void> {
+  const { conversationId, messageId } = req.params;
+  const reactions = await svc.listMessageReactions(conversationId, messageId, req.user!.sub);
+  res.status(200).json({ reactions });
+}
+
+// ── Starred messages (mounted at /api/v1/messages) ────────
+
+export const starSchema = z.object({ type: z.enum(['chat', 'room']).default('chat') });
+
+export async function starMessage(req: Request, res: Response): Promise<void> {
+  const { messageId } = req.params;
+  const { type } = req.body as z.infer<typeof starSchema>;
+  await svc.starMessage(req.user!.sub, messageId, type);
+  res.status(201).json({ ok: true, messageId });
+}
+
+export async function unstarMessage(req: Request, res: Response): Promise<void> {
+  const { messageId } = req.params;
+  await svc.unstarMessage(req.user!.sub, messageId);
+  res.status(204).send();
+}
+
+export async function listStarredMessages(req: Request, res: Response): Promise<void> {
+  const result = await svc.listStarredMessages(req.user!.sub);
+  res.status(200).json(result);
 }
 
 export async function consumeExpiringPhoto(req: Request, res: Response): Promise<void> {
@@ -224,6 +336,12 @@ export async function markRead(req: Request, res: Response): Promise<void> {
     emitToUser(peerId, 'message.read', { conversationId, readerId });
   }
   res.status(200).json({ ok: true });
+}
+
+export async function archiveConversation(req: Request, res: Response): Promise<void> {
+  const { archived } = req.body as z.infer<typeof archiveSchema>;
+  const convo = await svc.archiveConversation(req.params.conversationId, req.user!.sub, archived);
+  res.status(200).json({ id: convo.id, archived });
 }
 
 export async function deleteThreadHandler(req: Request, res: Response): Promise<void> {

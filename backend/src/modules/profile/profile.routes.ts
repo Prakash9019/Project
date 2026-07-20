@@ -14,6 +14,7 @@ router.use(requireAuth, requireVerifiedPhone);
 router.patch('/me', validate(c.updateProfileSchema), asyncHandler(c.updateProfile));
 router.patch('/me/settings', validate(c.settingsSchema), asyncHandler(c.updateSettings));
 router.post('/me/location', validate(c.locationSchema), asyncHandler(c.updateLocation));
+router.post('/me/fcm-token', validate(c.fcmTokenSchema), asyncHandler(c.setFcmToken));
 
 // ── Photos ───────────────────────────────────────────────
 router.post('/me/photos', validate(c.addPhotoSchema), asyncHandler(c.addPhoto));

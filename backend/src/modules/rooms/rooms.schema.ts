@@ -31,6 +31,9 @@ export const createRoomSchema = z.object({
   // Accepts a hosted URL or a bare R2 object key (signUrl presigns keys on read).
   coverImageUrl: z.string().trim().min(1).max(2048).optional(),
   isVerifiedOnly: z.boolean().optional().default(false),
+  // Private groups are hidden from Discover and can only be joined via the
+  // invite link or an admin add.
+  isPrivate: z.boolean().optional().default(false),
 });
 
 export const bulkAddMembersSchema = z.object({
