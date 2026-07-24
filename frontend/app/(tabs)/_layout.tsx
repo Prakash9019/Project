@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
 import { Tabs } from 'expo-router';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
+import { PressableScale } from '../../src/components/ui/PressableScale';
 import { RightNowIcon } from '../../src/components/icons';
 import { useChatStore } from '../../src/store/chatStore';
 import { useGroupsStore } from '../../src/store/groupsStore';
@@ -70,9 +71,10 @@ function CustomTabBar({ state, navigation }: any) {
           const active = state.index === routeIndex;
           const color = active ? theme.tabBarActive : theme.tabBarInactive;
           return (
-            <Pressable
+            <PressableScale
               key={route.key}
               style={s.tab}
+              ripple={false}
               onPress={() => {
                 const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!active && !event.defaultPrevented) navigation.navigate(route.name);
@@ -91,7 +93,7 @@ function CustomTabBar({ state, navigation }: any) {
               >
                 {meta.label}
               </Text>
-            </Pressable>
+            </PressableScale>
           );
         })}
     </View>
@@ -150,7 +152,14 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: theme.background } }}
+      // freezeOnBlur: inactive tab screens are suspended from re-rendering while
+      // backgrounded (no CPU / no effects firing off-screen). lazy: a tab's
+      // screen isn't mounted until first visited. Safe here because the ONLY
+      // always-on background feature — the unread-count socket listener — lives
+      // in this TabsLayout (above the navigator), not in the tab screens, so it
+      // stays alive regardless; Browse's GPS interval is already gated by
+      // useFocusEffect (cleared on blur). (F4)
+      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: theme.background }, freezeOnBlur: true, lazy: true }}
       tabBar={(props) => <CustomTabBar {...props} />}
     >
       <Tabs.Screen name="index" />

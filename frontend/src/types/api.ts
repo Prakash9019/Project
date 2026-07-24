@@ -403,6 +403,7 @@ export interface Message {
   isStarred?: boolean;
   isEdited: boolean;
   editedAt: string | null;
+  isForwarded?: boolean;
   translatedContent: string | null;
   flaggedOffensive: boolean;
   moderationFlagged: boolean;
@@ -413,6 +414,13 @@ export interface Message {
   replyToId?: string | null;
   replyTo?: { id: string; senderId: string; content: string } | null;
   reactions: { emoji: string; count: number; userReacted: boolean }[];
+  /**
+   * Client-only optimistic-send flag. An unsent `tmp-` bubble whose server call
+   * failed is kept in the list with `isFailed: true` so it can show a retry
+   * affordance. ("Sending" itself is already represented by the `tmp-` id →
+   * MessageTick 'sending' state, so no separate isSending flag is needed.)
+   */
+  isFailed?: boolean;
 }
 
 /** Call model (frontendVisible fields — agora* omitted from stored model). */
@@ -626,6 +634,7 @@ export interface RoomMessageCard {
   deliveredCount: number;
   createdAt: string;
   editedAt: string | null;
+  isEdited?: boolean;
 }
 
 export interface RoomMemberCard {

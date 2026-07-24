@@ -300,6 +300,9 @@ function MessageBubbleBase({
                 <Ionicons name="star" size={11} color={theme.brand} style={{ marginRight: 2 }} />
               ) : null}
               <Text style={[styles.time, { color: theme.textTertiary }]}>{timeLabel(message.createdAt)}</Text>
+              {message.isEdited && !deleted ? (
+                <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
+              ) : null}
               {isOwn && !deleted ? (
                 <MessageTick status={deliveryStatus ?? 'sent'} isPremium={false} />
               ) : null}
@@ -339,6 +342,7 @@ export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
     a.mediaUrl === b.mediaUrl &&
     a.reactions === b.reactions &&
     a.deliveredCount === b.deliveredCount &&
+    a.isEdited === b.isEdited &&
     prev.isOwn === next.isOwn &&
     prev.isAdmin === next.isAdmin &&
     prev.deliveryStatus === next.deliveryStatus &&

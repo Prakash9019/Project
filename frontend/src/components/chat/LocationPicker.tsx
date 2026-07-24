@@ -5,9 +5,7 @@ import {
   Text,
   StyleSheet,
   Pressable,
-  TextInput,
   ActivityIndicator,
-  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { type Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../theme';
+import { AppBottomSheet, BottomSheetScrollView, BottomSheetTextInput } from '../ui/AppBottomSheet';
 import { showInfo, showError } from '../../lib/toast';
 
 type SearchResult = { label: string; lat: number; lng: number };
@@ -152,83 +151,80 @@ export function LocationPicker({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={[styles.backdrop, { backgroundColor: theme.overlay }]} onPress={close}>
-        <Pressable style={[styles.sheet, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
-          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
-          <Text style={[styles.title, { color: theme.textPrimary }]}>Share Location</Text>
+    <AppBottomSheet visible={visible} onClose={close}>
+      <View style={styles.content}>
+        <Text style={[styles.title, { color: theme.textPrimary }]}>Share Location</Text>
 
-          {/* Search field (expands inline) */}
-          {searchOpen ? (
-            <View style={{ marginBottom: spacing.sm }}>
-              <View style={[styles.searchWrap, { backgroundColor: theme.inputBackground }]}>
-                <Ionicons name="search" size={18} color={theme.textTertiary} />
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  onSubmitEditing={runSearch}
-                  returnKeyType="search"
-                  autoFocus
-                  placeholder="Search a place or address"
-                  placeholderTextColor={theme.textTertiary}
-                  style={[styles.searchInput, { color: theme.textPrimary }]}
-                />
-                {searching ? <ActivityIndicator size="small" color={theme.brand} /> : null}
-              </View>
-              <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
-                {results.map((r, i) => (
-                  <Pressable key={`${r.lat}-${i}`} style={styles.resultRow} onPress={() => send(r.lat, r.lng, r.label)}>
-                    <Ionicons name="location-outline" size={20} color={theme.brand} />
-                    <Text style={[styles.resultText, { color: theme.textPrimary }]} numberOfLines={1}>{r.label}</Text>
-                  </Pressable>
-                ))}
-                {!searching && query.trim() && results.length === 0 ? (
-                  <Text style={[styles.emptyText, { color: theme.textTertiary }]}>No matching places</Text>
-                ) : null}
-              </ScrollView>
+        {/* Search field (expands inline) */}
+        {searchOpen ? (
+          <View style={{ marginBottom: spacing.sm }}>
+            <View style={[styles.searchWrap, { backgroundColor: theme.inputBackground }]}>
+              <Ionicons name="search" size={18} color={theme.textTertiary} />
+              <BottomSheetTextInput
+                value={query}
+                onChangeText={setQuery}
+                onSubmitEditing={runSearch}
+                returnKeyType="search"
+                autoFocus
+                placeholder="Search a place or address"
+                placeholderTextColor={theme.textTertiary}
+                style={[styles.searchInput, { color: theme.textPrimary }]}
+              />
+              {searching ? <ActivityIndicator size="small" color={theme.brand} /> : null}
             </View>
-          ) : null}
-
-          {/* Current location */}
-          <Row icon="navigate" iconColor={theme.success} label="Send Current Location" onPress={sendCurrent} busy={busy} theme={theme} />
-
-          {/* Search */}
-          <Row
-            icon="search"
-            iconColor={theme.brand}
-            label="Search Location"
-            onPress={() => setSearchOpen((v) => !v)}
-            theme={theme}
-          />
-
-          {/* Pin on map */}
-          <Row icon="pin" iconColor={theme.brandSecondary} label="Pin on Map" onPress={openMap} theme={theme} />
-
-          {/* Live location (coming soon) */}
-          <Pressable style={styles.row} onPress={() => setLiveOpen((v) => !v)}>
-            <View style={[styles.iconCircle, { backgroundColor: theme.info + '22' }]}>
-              <Ionicons name="radio" size={20} color={theme.info} />
-            </View>
-            <Text style={[styles.rowLabel, { color: theme.textPrimary, flex: 1 }]}>Share Live Location</Text>
-            <View style={[styles.soonPill, { backgroundColor: theme.surfaceElevated }]}>
-              <Text style={[styles.soonText, { color: theme.textTertiary }]}>Coming soon</Text>
-            </View>
-          </Pressable>
-          {liveOpen ? (
-            <View style={styles.liveDurations}>
-              {LIVE_DURATIONS.map((d) => (
-                <Pressable
-                  key={d}
-                  style={[styles.durationChip, { borderColor: theme.border, opacity: 0.5 }]}
-                  onPress={() => showInfo('Live location coming soon')}
-                >
-                  <Text style={[styles.durationText, { color: theme.textSecondary }]}>{d}</Text>
+            <BottomSheetScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
+              {results.map((r, i) => (
+                <Pressable key={`${r.lat}-${i}`} style={styles.resultRow} onPress={() => send(r.lat, r.lng, r.label)}>
+                  <Ionicons name="location-outline" size={20} color={theme.brand} />
+                  <Text style={[styles.resultText, { color: theme.textPrimary }]} numberOfLines={1}>{r.label}</Text>
                 </Pressable>
               ))}
-            </View>
-          ) : null}
+              {!searching && query.trim() && results.length === 0 ? (
+                <Text style={[styles.emptyText, { color: theme.textTertiary }]}>No matching places</Text>
+              ) : null}
+            </BottomSheetScrollView>
+          </View>
+        ) : null}
+
+        {/* Current location */}
+        <Row icon="navigate" iconColor={theme.success} label="Send Current Location" onPress={sendCurrent} busy={busy} theme={theme} />
+
+        {/* Search */}
+        <Row
+          icon="search"
+          iconColor={theme.brand}
+          label="Search Location"
+          onPress={() => setSearchOpen((v) => !v)}
+          theme={theme}
+        />
+
+        {/* Pin on map */}
+        <Row icon="pin" iconColor={theme.brandSecondary} label="Pin on Map" onPress={openMap} theme={theme} />
+
+        {/* Live location (coming soon) */}
+        <Pressable style={styles.row} onPress={() => setLiveOpen((v) => !v)}>
+          <View style={[styles.iconCircle, { backgroundColor: theme.info + '22' }]}>
+            <Ionicons name="radio" size={20} color={theme.info} />
+          </View>
+          <Text style={[styles.rowLabel, { color: theme.textPrimary, flex: 1 }]}>Share Live Location</Text>
+          <View style={[styles.soonPill, { backgroundColor: theme.surfaceElevated }]}>
+            <Text style={[styles.soonText, { color: theme.textTertiary }]}>Coming soon</Text>
+          </View>
         </Pressable>
-      </Pressable>
+        {liveOpen ? (
+          <View style={styles.liveDurations}>
+            {LIVE_DURATIONS.map((d) => (
+              <Pressable
+                key={d}
+                style={[styles.durationChip, { borderColor: theme.border, opacity: 0.5 }]}
+                onPress={() => showInfo('Live location coming soon')}
+              >
+                <Text style={[styles.durationText, { color: theme.textSecondary }]}>{d}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
 
       {/* Pin-on-map picker */}
       <Modal visible={mapOpen} animationType="slide" onRequestClose={() => setMapOpen(false)}>
@@ -259,7 +255,7 @@ export function LocationPicker({
           </View>
         </SafeAreaView>
       </Modal>
-    </Modal>
+    </AppBottomSheet>
   );
 }
 
@@ -291,10 +287,8 @@ function Row({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: spacing.xxxl, paddingHorizontal: spacing.lg },
-  grabber: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: spacing.md },
-  title: { fontSize: 18, fontFamily: FontFamily.bold, marginTop: spacing.lg, marginBottom: spacing.md },
+  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.xs },
+  title: { fontSize: 18, fontFamily: FontFamily.bold, marginBottom: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
   iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   rowLabel: { fontSize: FontSize.md, fontFamily: FontFamily.medium },

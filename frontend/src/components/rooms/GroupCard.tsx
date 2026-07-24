@@ -10,6 +10,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../../theme';
+import { PressableScale } from '../ui/PressableScale';
 import { categoryMeta, formatCount, relativeTime } from '../../lib/rooms';
 import type { RoomCard, JoinedRoomCard } from '../../types/api';
 
@@ -80,7 +81,7 @@ function GroupCardBase({
 
   return (
     <Animated.View style={pulseStyle}>
-      <Pressable
+      <PressableScale
         onPress={onPress}
         style={
           isJoined
@@ -161,7 +162,7 @@ function GroupCardBase({
             </LinearGradient>
           </Pressable>
         ) : null}
-      </Pressable>
+      </PressableScale>
     </Animated.View>
   );
 }

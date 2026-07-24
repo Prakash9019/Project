@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,19 @@ import {
   Pressable,
   ActivityIndicator,
   FlatList,
+  Share,
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as MediaLibrary from 'expo-media-library';
+// SDK 56 moved the classic download/cache API under the /legacy subpath (the new
+// top-level API is File/Directory classes). downloadAsync + cacheDirectory live here.
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Haptics from 'expo-haptics';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -20,7 +26,10 @@ import Animated, {
   withTiming,
   runOnJS,
 } from 'react-native-reanimated';
+import { showSuccess, showError } from '../lib/toast';
 import { FontFamily, FontSize } from '../theme';
+
+const CONTROLS_AUTO_HIDE_MS = 3000;
 
 export type MediaViewerImage = {
   uri: string;
@@ -54,12 +63,14 @@ function ImagePage({
   height,
   active,
   onZoomChange,
+  onSingleTap,
 }: {
   image: MediaViewerImage;
   width: number;
   height: number;
   active: boolean;
   onZoomChange: (zoomed: boolean) => void;
+  onSingleTap: () => void;
 }) {
   const [loading, setLoading] = useState(true);
 
@@ -130,7 +141,18 @@ function ImagePage({
       savedTranslateY.value = translateY.value;
     });
 
-  const composed = Gesture.Race(doubleTap, Gesture.Simultaneous(pinch, pan));
+  // Single tap toggles the toolbar — only fires once a double-tap has been ruled
+  // out (Exclusive), so zooming never also toggles the controls.
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd(() => {
+      runOnJS(onSingleTap)();
+    });
+
+  const composed = Gesture.Race(
+    Gesture.Exclusive(doubleTap, singleTap),
+    Gesture.Simultaneous(pinch, pan),
+  );
 
   const imageStyle = useAnimatedStyle(() => ({
     transform: [
@@ -176,30 +198,116 @@ export function MediaViewer({
   images,
   initialIndex,
   onClose,
+  currentUserId,
+  onDelete,
 }: {
   visible: boolean;
   images: MediaViewerImage[];
   initialIndex: number;
   onClose: () => void;
+  /** Enables the Delete action for images the current user sent (opt-in). */
+  currentUserId?: string;
+  /** Invoked when the user deletes the current image — caller runs its own
+   *  unsend/delete flow. Only wired if provided; existing callers are unaffected. */
+  onDelete?: (image: MediaViewerImage) => void;
 }) {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<MediaViewerImage>>(null);
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [zoomed, setZoomed] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // Keep the header/dots in sync when (re)opening at a different image.
+  // Toolbar visibility — auto-hides after 3s of no interaction, toggles on tap.
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const controlsOpacity = useSharedValue(1);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimer.current) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  }, []);
+
+  const showControls = useCallback(() => {
+    clearHideTimer();
+    setControlsVisible(true);
+    hideTimer.current = setTimeout(() => setControlsVisible(false), CONTROLS_AUTO_HIDE_MS);
+  }, [clearHideTimer]);
+
+  const toggleControls = useCallback(() => {
+    setControlsVisible((prev) => {
+      const next = !prev;
+      clearHideTimer();
+      if (next) hideTimer.current = setTimeout(() => setControlsVisible(false), CONTROLS_AUTO_HIDE_MS);
+      return next;
+    });
+  }, [clearHideTimer]);
+
+  // Fade the toolbar in/out (200ms) whenever visibility flips.
+  useEffect(() => {
+    controlsOpacity.value = withTiming(controlsVisible ? 1 : 0, { duration: 200 });
+  }, [controlsVisible, controlsOpacity]);
+
+  // Keep the header/dots in sync when (re)opening at a different image, and
+  // start visible with a fresh auto-hide timer.
   useEffect(() => {
     if (visible) {
       setCurrentIndex(initialIndex);
       setZoomed(false);
+      showControls();
     }
-  }, [visible, initialIndex]);
+    return clearHideTimer;
+  }, [visible, initialIndex, showControls, clearHideTimer]);
+
+  const toolbarStyle = useAnimatedStyle(() => ({ opacity: controlsOpacity.value }));
+
+  const current = images[currentIndex] ?? images[0];
+
+  const handleSave = useCallback(async () => {
+    if (!current || saving) return;
+    setSaving(true);
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted) {
+        showError('Allow photo access to save');
+        return;
+      }
+      // Remote signed URL → download to cache → save the local file to the gallery.
+      const name = `nearme-${Date.now()}.jpg`;
+      const localUri = FileSystem.cacheDirectory + name;
+      const dl = await FileSystem.downloadAsync(current.uri, localUri);
+      await MediaLibrary.saveToLibraryAsync(dl.uri);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      showSuccess('Saved to gallery');
+    } catch {
+      showError('Could not save image');
+    } finally {
+      setSaving(false);
+    }
+  }, [current, saving]);
+
+  const handleShare = useCallback(async () => {
+    if (!current) return;
+    try {
+      await Share.share({ url: current.uri, message: current.uri });
+    } catch {
+      /* user dismissed the share sheet — no-op */
+    }
+  }, [current]);
+
+  const handleDelete = useCallback(() => {
+    if (!current || !onDelete) return;
+    onDelete(current);
+    onClose();
+  }, [current, onDelete, onClose]);
 
   if (!visible) return null;
-  const current = images[currentIndex] ?? images[0];
   if (!current) return null;
 
   const useDots = images.length > 1 && images.length <= MAX_DOTS;
+  const canDelete = !!onDelete && !!currentUserId && current.senderId === currentUserId;
 
   return (
     <View style={styles.root}>
@@ -231,6 +339,7 @@ export function MediaViewer({
               height={height}
               active={index === currentIndex}
               onZoomChange={setZoomed}
+              onSingleTap={toggleControls}
             />
           )}
         />
@@ -275,6 +384,32 @@ export function MediaViewer({
             )}
           </LinearGradient>
         ) : null}
+
+        {/* Bottom action toolbar — Save / Share / (Delete). Auto-hides after 3s;
+            tap the image to toggle. */}
+        <Animated.View
+          style={[styles.toolbar, { bottom: insets.bottom + 16 }, toolbarStyle]}
+          pointerEvents={controlsVisible ? 'auto' : 'none'}
+        >
+          <Pressable style={styles.toolBtn} onPress={handleSave} disabled={saving} hitSlop={8}>
+            {saving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="download-outline" size={22} color="#fff" />
+            )}
+            <Text style={styles.toolLabel}>Save</Text>
+          </Pressable>
+          <Pressable style={styles.toolBtn} onPress={handleShare} hitSlop={8}>
+            <Ionicons name="share-outline" size={22} color="#fff" />
+            <Text style={styles.toolLabel}>Share</Text>
+          </Pressable>
+          {canDelete ? (
+            <Pressable style={styles.toolBtn} onPress={handleDelete} hitSlop={8}>
+              <Ionicons name="trash-outline" size={22} color="#fff" />
+              <Text style={styles.toolLabel}>Delete</Text>
+            </Pressable>
+          ) : null}
+        </Animated.View>
       </SafeAreaView>
     </View>
   );
@@ -327,6 +462,18 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   counter: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  toolbar: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  toolBtn: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, gap: 4, minWidth: 64 },
+  toolLabel: { color: '#fff', fontSize: FontSize.xs, fontFamily: FontFamily.medium },
   dots: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dotActive: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
   dotInactive: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },

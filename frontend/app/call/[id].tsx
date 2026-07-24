@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Pressable, BackHandler } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../src/theme';
 import { updateCall } from '../../src/services/api';
 import { connectSocket } from '../../src/services/socket';
@@ -80,6 +81,11 @@ export default function CallScreen() {
     }, 15000);
     return () => clearTimeout(t);
   }, [joined, connectError, missingConfig, attempt]);
+
+  // Error haptic when the call fails to connect (F50 map: call failed → Error).
+  useEffect(() => {
+    if (connectError) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+  }, [connectError]);
 
   // Elapsed timer.
   useEffect(() => {

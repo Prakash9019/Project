@@ -577,6 +577,11 @@ model Message {
   editedAt        DateTime?
   originalContent String?
 
+  // Forwarded from another conversation's message. forwardedFromId is a loose
+  // reference (no FK) — the source message may later be unsent/deleted for me.
+  isForwarded      Boolean @default(false)
+  forwardedFromId  String?
+
   translatedContent String?
 
   flaggedOffensive  Boolean   @default(false)
@@ -1125,6 +1130,11 @@ model RoomMessage {
   deliveredAt       DateTime?
   createdAt         DateTime              @default(now())
   editedAt          DateTime?
+  isEdited          Boolean               @default(false)
+  originalContent   String?               @db.Text
+  // "Delete for me" — per-member hide list (rooms have N members, not two
+  // sides, so this is an array of userIds rather than the 1:1 deletedByA/B pair).
+  hiddenForUserIds  String[]              @default([])
   room              Room                  @relation(fields: [roomId], references: [id])
   sender            User                  @relation(fields: [senderId], references: [id])
   replyTo           RoomMessage?          @relation("RoomMessageReply", fields: [replyToId], references: [id])

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,10 @@ import {
   FlatList,
   TextInput,
   KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   Modal,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { RemoteImage } from '../../src/components/RemoteImage';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Linking } from 'react-native';
@@ -31,6 +30,7 @@ import Animated, {
   runOnJS,
   interpolate,
   Extrapolation,
+  FadeInDown,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
@@ -41,10 +41,15 @@ import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaVi
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
+import { AppBottomSheet } from '../../src/components/ui/AppBottomSheet';
+import { ScrollToBottomButton } from '../../src/components/chat/ScrollToBottomButton';
 import { ChatComposer, type ChatComposerHandle } from '../../src/components/chat/ChatComposer';
 import { SearchPanel, type SearchMessage } from '../../src/components/chat/SearchPanel';
 import { ReactionPill } from '../../src/components/chat/ReactionPill';
 import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
+import { MessageInfo } from '../../src/components/chat/MessageInfo';
+import { ForwardSheet } from '../../src/components/chat/ForwardSheet';
+import { showSuccess, toastApiError } from '../../src/lib/toast';
 import {
   ChatLockScreen,
   ChatLockSetup,
@@ -69,6 +74,7 @@ import {
   getPublicProfile,
   unsendMessage,
   editMessage,
+  forwardMessage,
   getMessageTemplates,
   reactToMessage,
   deleteMessage,
@@ -85,6 +91,7 @@ import { isAgoraAvailable } from '../../src/services/agora';
 import { useAuthStore } from '../../src/store/authStore';
 import { useChatStore } from '../../src/store/chatStore';
 import { clockTime, planAtLeast, chatDateHeader, sameCalendarDay } from '../../src/lib/format';
+import { isNearBottom, classifyMessagesChange, shouldAutoScrollOnAppend } from '../../src/lib/chatScroll';
 import { ChatSkeleton } from '../../src/components/Skeleton';
 import { MessageTick } from '../../src/components/MessageTick';
 import type { Message, AlbumSummary } from '../../src/types/api';
@@ -148,6 +155,369 @@ function SwipeToReply({ onSwipeReply, children }: { onSwipeReply: () => void; ch
   );
 }
 
+type ChatMessageRowProps = {
+  item: Message;
+  mine: boolean;
+  meId: string | undefined;
+  peerName: string | undefined;
+  highlight: boolean;
+  translation: string | undefined;
+  showDisappearing: boolean;
+  canReadReceipts: boolean;
+  onLongPress: (item: Message) => void;
+  onSwipeReply: (item: Message) => void;
+  onReact: (item: Message, emoji: string) => void;
+  onReactionLongPress: (messageId: string) => void;
+  onImagePress: (url: string) => void;
+  onViewOncePress: (item: Message) => void;
+  onRetry: (item: Message) => void;
+  onTap: (item: Message) => void;
+  isSelecting: boolean;
+  isSelected: boolean;
+};
+
+/**
+ * Memoized 1:1 chat message row (mirrors the group-chat MessageBubble pattern).
+ * The comparator below only re-renders a row when THIS message's rendered fields
+ * change — so a typing event, a peer's read receipt on a different message, or a
+ * reaction on another bubble never re-renders unrelated rows. Callback props are
+ * intentionally excluded from the comparator (they may be re-created upstream but
+ * don't affect this row's output), exactly as the rooms MessageBubble does.
+ */
+function ChatMessageRowBase({
+  item,
+  mine,
+  meId,
+  peerName,
+  highlight,
+  translation,
+  showDisappearing,
+  canReadReceipts,
+  onLongPress,
+  onSwipeReply,
+  onReact,
+  onReactionLongPress,
+  onImagePress,
+  onViewOncePress,
+  onRetry,
+  onTap,
+  isSelecting,
+  isSelected,
+}: ChatMessageRowProps) {
+  const { theme } = useTheme();
+
+  const renderBody = () => {
+    if (item.isUnsent) {
+      return <Text style={[styles.removed, { color: mine ? theme.textInverse : theme.textTertiary }]}>message removed</Text>;
+    }
+
+    if (isViewOnce(item)) {
+      const opened = !!item.viewedAt && !mine;
+      const thumb = item.mediaUrls[0] ?? item.mediaUrl;
+      return (
+        <Pressable onPress={() => onViewOncePress(item)} disabled={opened && !mine}>
+          <View style={[styles.snapTile, opened && !mine && styles.snapOpened]}>
+            {thumb && mine ? (
+              <RemoteImage source={{ uri: thumb }} style={styles.snapImage} contentFit="cover" transition={120} />
+            ) : (
+              <View style={[styles.snapPlaceholder, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
+                <Ionicons name="eye-off-outline" size={28} color={mine ? '#fff' : theme.brand} />
+              </View>
+            )}
+            <View style={styles.snapLabel}>
+              <Ionicons name="eye-off-outline" size={14} color={mine ? '#fff' : theme.textPrimary} />
+              <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.sm }}>
+                {opened && !mine ? 'Opened' : mine ? 'View once · Sent' : 'Tap to view'}
+              </Text>
+            </View>
+          </View>
+        </Pressable>
+      );
+    }
+
+    if (item.type === 'photo' && item.mediaUrls.length > 0) {
+      const isAlbum = item.content?.startsWith('📁 ');
+      return (
+        <Pressable onPress={() => onImagePress(item.mediaUrls[0] ?? item.mediaUrl ?? '')}>
+          <View style={styles.photoStack}>
+            <RemoteImage source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} />
+            {item.mediaUrls.length > 1 && (
+              <View style={styles.multiBadge}>
+                <Text style={styles.multiBadgeText}>+{item.mediaUrls.length - 1}</Text>
+              </View>
+            )}
+            {isAlbum && (
+              <Text style={[styles.albumCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
+                {item.content}
+              </Text>
+            )}
+            {item.caption ? (
+              <Text style={[styles.photoCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
+                {item.caption}
+              </Text>
+            ) : null}
+          </View>
+        </Pressable>
+      );
+    }
+
+    if (item.type === 'video') {
+      return (
+        <View style={styles.mediaChip}>
+          <Ionicons name="videocam" size={16} color={mine ? theme.textInverse : theme.textPrimary} />
+          <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Video</Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'voice' || item.type === 'voice_note') {
+      const voiceUrl = item.mediaUrls[0] ?? item.mediaUrl;
+      if (voiceUrl) {
+        return <AudioPlayer mediaUrl={voiceUrl} isOwn={mine} />;
+      }
+      return (
+        <View style={styles.mediaChip}>
+          <Ionicons name="mic" size={16} color={mine ? theme.textInverse : theme.textPrimary} />
+          <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Voice message</Text>
+        </View>
+      );
+    }
+
+    // Location card: a text message with structured content '📍 label|lat|lng'.
+    if (item.type === 'text' && item.content?.startsWith('📍 ') && item.content.includes('|')) {
+      const [labelPart, latStr, lngStr] = item.content.replace(/^📍\s*/, '').split('|');
+      const lat = Number(latStr);
+      const lng = Number(lngStr);
+      const fg = mine ? theme.textInverse : theme.textPrimary;
+      const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
+      return (
+        <Pressable
+          style={styles.locationCard}
+          onPress={() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {})}
+        >
+          <View style={[styles.locationPin, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
+            <Ionicons name="location" size={32} color={mine ? '#fff' : theme.brand} />
+          </View>
+          <View style={styles.locationInfo}>
+            <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{labelPart || 'My Location'}</Text>
+            <Text style={[styles.fileSub, { color: sub }]}>Tap to open in Maps</Text>
+          </View>
+        </Pressable>
+      );
+    }
+
+    // Document / audio file: a text message carrying the file url in mediaUrls
+    // with an emoji-prefixed caption. Documents open externally; audio plays inline.
+    const fileUrl = item.mediaUrls[0];
+    const isDoc = item.type === 'text' && !!fileUrl && item.content?.startsWith('📄');
+    const isAudioFile = item.type === 'text' && !!fileUrl && item.content?.startsWith('🎵');
+    if (isAudioFile && fileUrl) {
+      return <AudioPlayer mediaUrl={fileUrl} isOwn={mine} />;
+    }
+    if (isDoc) {
+      const label = (item.content ?? '').replace(/^📄\s*/, '') || 'Document';
+      const fg = mine ? theme.textInverse : theme.textPrimary;
+      const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
+      return (
+        <Pressable style={styles.fileCard} onPress={() => fileUrl && Linking.openURL(fileUrl).catch(() => {})}>
+          <Ionicons name="document-text" size={22} color={mine ? theme.textInverse : theme.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{label}</Text>
+            <Text style={[styles.fileSub, { color: sub }]}>Tap to open</Text>
+          </View>
+          <Ionicons name="download-outline" size={20} color={fg} />
+        </Pressable>
+      );
+    }
+
+    return (
+      <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.md, fontFamily: FontFamily.regular }}>
+        {item.content}
+      </Text>
+    );
+  };
+
+  const body = renderBody();
+
+  const mediaOnly =
+    !item.isUnsent &&
+    !isViewOnce(item) &&
+    item.type === 'photo' &&
+    item.mediaUrls.length > 0 &&
+    !item.content?.startsWith('📁 ');
+
+  const quote = item.replyTo ? (
+    <View
+      style={[
+        styles.quote,
+        {
+          backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
+          borderLeftColor: mine ? '#fff' : theme.brand,
+        },
+      ]}
+    >
+      <Text style={[styles.quoteName, { color: mine ? '#fff' : theme.brand }]} numberOfLines={1}>
+        {item.replyTo.senderId === meId ? 'You' : peerName || 'Someone'}
+      </Text>
+      <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
+        {item.replyTo.content}
+      </Text>
+    </View>
+  ) : null;
+
+  const highlightStyle = highlight ? { borderWidth: 1.5, borderColor: theme.brandSecondary } : null;
+
+  const translationNode =
+    translation && !item.isUnsent ? (
+      <Text
+        style={[
+          styles.translated,
+          { color: mine ? 'rgba(255,255,255,0.85)' : theme.textTertiary, borderTopColor: mine ? 'rgba(255,255,255,0.25)' : theme.border },
+        ]}
+      >
+        {translation}
+      </Text>
+    ) : null;
+
+  const rowContent = (
+    <SwipeToReply onSwipeReply={() => onSwipeReply(item)}>
+      <Pressable
+        style={[styles.bubbleRow, mine ? styles.right : styles.left, isSelecting && !isSelected ? { opacity: 0.6 } : null]}
+        onLongPress={() => onLongPress(item)}
+        onPress={() => onTap(item)}
+      >
+        {item.isForwarded && !item.isUnsent && (
+          <View style={[styles.forwardedRow, mine ? { justifyContent: 'flex-end' } : null]}>
+            <Ionicons name="arrow-redo-outline" size={14} color={theme.textTertiary} />
+            <Text style={[styles.forwardedText, { color: theme.textTertiary }]}>Forwarded</Text>
+          </View>
+        )}
+        {mediaOnly ? (
+          <View style={[styles.mediaBubble, highlightStyle]}>{body}</View>
+        ) : mine ? (
+          <LinearGradient colors={theme.gradientWarm} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { borderBottomRightRadius: 4 }, highlightStyle]}>
+            {quote}
+            {body}
+            {translationNode}
+          </LinearGradient>
+        ) : (
+          <View style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { backgroundColor: theme.surfaceElevated, borderBottomLeftRadius: 4 }, highlightStyle]}>
+            {quote}
+            {body}
+            {translationNode}
+          </View>
+        )}
+        <View style={styles.metaRow}>
+          {item.isStarred && !item.isUnsent && (
+            <Ionicons name="star" size={11} color={theme.brand} style={{ marginRight: 4 }} />
+          )}
+          <Text style={[styles.time, { color: theme.textTertiary }]}>{clockTime(item.createdAt)}</Text>
+          {showDisappearing && !item.isUnsent && (
+            <Ionicons name="time-outline" size={12} color={theme.textTertiary} style={{ marginLeft: 3 }} />
+          )}
+          {item.isEdited && !item.isUnsent && (
+            <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
+          )}
+          {mine && !item.isUnsent && (
+            item.isFailed ? (
+              <Pressable onPress={() => onRetry(item)} hitSlop={6} style={styles.retryRow}>
+                <Ionicons name="alert-circle" size={13} color={theme.error} style={{ marginLeft: 3 }} />
+                <Text style={[styles.retryText, { color: theme.error }]}>Tap to retry</Text>
+              </Pressable>
+            ) : (
+              <MessageTick
+                status={
+                  item.id.startsWith('tmp-')
+                    ? 'sending'
+                    : !item.deliveredAt
+                      ? 'sent'
+                      : !item.readAt
+                        ? 'delivered'
+                        : 'read'
+                }
+                isPremium={canReadReceipts}
+              />
+            )
+          )}
+        </View>
+        {item.reactions.length > 0 && (
+          <View style={[styles.reactionsRow, mine ? { justifyContent: 'flex-end' } : null]}>
+            {item.reactions.map((r) => (
+              <ReactionPill
+                key={r.emoji}
+                emoji={r.emoji}
+                count={r.count}
+                userReacted={r.userReacted}
+                onPress={() => onReact(item, r.emoji)}
+                onLongPress={() => onReactionLongPress(item.id)}
+              />
+            ))}
+          </View>
+        )}
+      </Pressable>
+    </SwipeToReply>
+  );
+
+  // Only newly appended rows animate in (optimistic `tmp-` bubble, or a message
+  // created within the last 500ms) — never old messages scrolling into view (F31).
+  const isNew = item.id.startsWith('tmp-') || Date.now() - new Date(item.createdAt).getTime() < 500;
+
+  const node = !isSelecting ? (
+    rowContent
+  ) : (
+    <View style={[styles.selectRow, mine ? { flexDirection: 'row-reverse' } : null]}>
+      <View
+        style={[
+          styles.selectCheckbox,
+          {
+            borderColor: isSelected ? theme.brand : theme.border,
+            backgroundColor: isSelected ? theme.brand : 'transparent',
+          },
+        ]}
+      >
+        {isSelected ? <Ionicons name="checkmark" size={13} color="#fff" /> : null}
+      </View>
+      <View style={{ flex: 1 }}>{rowContent}</View>
+    </View>
+  );
+
+  return isNew ? <Animated.View entering={FadeInDown.duration(200)}>{node}</Animated.View> : node;
+}
+
+const ChatMessageRow = memo(ChatMessageRowBase, (prev, next) => {
+  const a = prev.item;
+  const b = next.item;
+  return (
+    a.id === b.id &&
+    a.content === b.content &&
+    a.caption === b.caption &&
+    a.type === b.type &&
+    a.isUnsent === b.isUnsent &&
+    a.isPinned === b.isPinned &&
+    a.isStarred === b.isStarred &&
+    a.isEdited === b.isEdited &&
+    a.isForwarded === b.isForwarded &&
+    a.mediaUrl === b.mediaUrl &&
+    a.mediaUrls === b.mediaUrls &&
+    a.viewOnce === b.viewOnce &&
+    a.viewedAt === b.viewedAt &&
+    a.deliveredAt === b.deliveredAt &&
+    a.readAt === b.readAt &&
+    a.isFailed === b.isFailed &&
+    a.reactions === b.reactions &&
+    a.replyTo === b.replyTo &&
+    prev.mine === next.mine &&
+    prev.meId === next.meId &&
+    prev.peerName === next.peerName &&
+    prev.highlight === next.highlight &&
+    prev.translation === next.translation &&
+    prev.showDisappearing === next.showDisappearing &&
+    prev.canReadReceipts === next.canReadReceipts &&
+    prev.isSelecting === next.isSelecting &&
+    prev.isSelected === next.isSelected
+  );
+});
+
 export default function Chat() {
   const params = useLocalSearchParams<{ id: string; peerName?: string; peerPhoto?: string }>();
   const conversationId = Array.isArray(params.id) ? params.id[0] : params.id ?? '';
@@ -156,7 +526,13 @@ export default function Chat() {
   const router = useRouter();
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const { alertConfig, hideAlert, alertError } = useAlert();
+  // Measured height of everything ABOVE the keyboard-avoiding region (header,
+  // search bar, pinned/disappearing/tooltip/error banners). Combined with the
+  // safe-area top inset this gives KeyboardAvoidingView the exact vertical
+  // offset — replacing the old hardcoded `90` that didn't account for banners
+  // (F27). Re-measures automatically via onLayout when banners toggle.
+  const [topOffset, setTopOffset] = useState(0);
+  const { alertConfig, hideAlert, alertError, confirm, showAlert } = useAlert();
   const me = useAuthStore((s) => s.user);
   const markRead = useChatStore((s) => s.markRead);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
@@ -171,6 +547,14 @@ export default function Chat() {
   // the list doesn't snap back to the bottom (the highlight border resizes the row,
   // which would otherwise fire onContentSizeChange → scrollToEnd).
   const suppressAutoScroll = useRef(false);
+  // Auto-scroll is driven by message ARRIVAL, not by content-size changes.
+  // `nearBottomRef` tracks whether the user is parked at the bottom; the effect
+  // below scrolls only when a genuinely new message is appended (mine, or a
+  // peer's while I'm at the bottom). Layout changes — highlight border, reaction
+  // pills, image loads, the pinned banner — never append, so they never scroll.
+  const nearBottomRef = useRef(true);
+  const prevLastIdRef = useRef<string | null>(null);
+  const prevLenRef = useRef(0);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [peerId, setPeerId] = useState<string | null>(null);
@@ -189,6 +573,11 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const composerRef = useRef<ChatComposerHandle>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  // Floating scroll-to-bottom pill (F26): visible when the user has scrolled up
+  // away from the newest message; `unseenCount` counts peer messages that
+  // arrived while scrolled up.
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [unseenCount, setUnseenCount] = useState(0);
   const [tooltip, setTooltip] = useState<string | null>(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [peerTyping, setPeerTyping] = useState(false);
@@ -221,8 +610,54 @@ export default function Chat() {
   const [lockConfig, setLockConfig] = useState<LockConfig | null>(null);
   const [unlocked, setUnlocked] = useState(false);
   const [lockSetupOpen, setLockSetupOpen] = useState(false);
+  const [infoMessage, setInfoMessage] = useState<Message | null>(null);
+  const [forwardMessages, setForwardMessages] = useState<Message[] | null>(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+  const isSelecting = selectedMessageIds.size > 0;
 
   const rows = useMemo(() => buildRows(messages), [messages]);
+
+  // Event-driven auto-scroll. Runs on every messages change but only scrolls on a
+  // real append: initial load anchors at the bottom; a new appended message
+  // scrolls only if it's mine or I'm already near the bottom. Prepends (older
+  // pages) and non-length changes (edits, reactions, unsend, highlight, pin) are
+  // deliberately ignored — that is what used to yank the view back after a jump.
+  useEffect(() => {
+    if (loading) return;
+    const last = messages[messages.length - 1] ?? null;
+    const change = classifyMessagesChange(prevLastIdRef.current, prevLenRef.current, last?.id ?? null, messages.length);
+    prevLastIdRef.current = last?.id ?? null;
+    prevLenRef.current = messages.length;
+    if (!last) return;
+    if (change === 'initial') {
+      // First render reflows several times (text rows, then images) — anchor a few
+      // times so we reliably land at the newest message on open.
+      const anchor = () => listRef.current?.scrollToEnd({ animated: false });
+      requestAnimationFrame(anchor);
+      setTimeout(anchor, 80);
+      setTimeout(anchor, 220);
+      return;
+    }
+    if (change !== 'appended') return;
+    if (suppressAutoScroll.current) return;
+    const mine = last.senderId === me?.id;
+    if (shouldAutoScrollOnAppend(mine, nearBottomRef.current)) {
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+      setUnseenCount(0);
+    } else if (!mine) {
+      // A peer message arrived while the user is reading history — surface it on
+      // the scroll-to-bottom pill instead of yanking the view.
+      setUnseenCount((c) => c + 1);
+    }
+  }, [messages, loading, me?.id]);
+
+  const scrollToBottom = useCallback(() => {
+    listRef.current?.scrollToEnd({ animated: true });
+    setUnseenCount(0);
+    setShowScrollDown(false);
+    markRead(conversationId);
+    markConversationRead(conversationId).catch(() => {});
+  }, [conversationId, markRead]);
 
   const pinnedMessage = useMemo(
     () => (pinnedDismissed ? null : [...messages].reverse().find((m) => m.isPinned && !m.isUnsent) ?? null),
@@ -312,6 +747,9 @@ export default function Chat() {
     setUnlocked(false);
     setHasMoreOlder(false);
     oldestCursor.current = null;
+    nearBottomRef.current = true;
+    prevLastIdRef.current = null;
+    prevLenRef.current = 0;
     loadLockConfig(conversationId).then(setLockConfig).catch(() => setLockConfig(null));
   }, [conversationId]);
 
@@ -546,9 +984,95 @@ export default function Chat() {
     }
   };
 
+  // Optimistic text send: insert a `tmp-` bubble immediately (renders tick
+  // 'sending'), then reconcile with the server — replace on success, mark
+  // isFailed (→ "Tap to retry" affordance) on a generic/network error, or drop
+  // the bubble + surface the gate on a moderation/limit rejection. No timers:
+  // the bubble is queued on the same tick as the tap.
+  const sendTextOptimistic = useCallback(
+    async (content: string, replyToId?: string, retryId?: string) => {
+      if (!conversationId) return;
+      const tempId = retryId ?? `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      if (retryId) {
+        setMessages((prev) => prev.map((m) => (m.id === retryId ? { ...m, isFailed: false } : m)));
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            conversationId,
+            senderId: me?.id ?? '',
+            type: 'text',
+            ciphertext: null,
+            content,
+            caption: null,
+            mediaUrls: [],
+            mediaUrl: null,
+            viewOnce: false,
+            expiresInSeconds: null,
+            viewedAt: null,
+            expiresAfterView: false,
+            isUnsent: false,
+            unsentAt: null,
+            isEdited: false,
+            editedAt: null,
+            translatedContent: null,
+            flaggedOffensive: false,
+            moderationFlagged: false,
+            deliveredAt: null,
+            readAt: null,
+            deletedAt: null,
+            reactions: [],
+            isFailed: false,
+            createdAt: new Date().toISOString(),
+          } satisfies Message,
+        ]);
+      }
+      setBanner(null);
+      try {
+        const res = await sendMessage(conversationId, { type: 'text', content, replyToId });
+        const { audioCallEnabled, videoCallEnabled, ...msg } = res;
+        // Replace the optimistic entry in place (same list position — no jump).
+        setMessages((prev) => prev.map((m) => (m.id === tempId ? (msg as Message) : m)));
+        setAudioEnabled(audioCallEnabled);
+        setVideoEnabled(videoCallEnabled);
+        fetchConversations('inbox', true).catch(() => {});
+      } catch (e) {
+        const err = e as ApiError;
+        if (err.status === 451) {
+          setBanner('Your message is under review.');
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        } else if (err.status === 403 && (err.code === 'interaction_limit_reached' || err.code === 'plan_required')) {
+          setUpgradeOpen(true);
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        } else {
+          // Message send failed (generic/network) → Error haptic + retry affordance (F50 map).
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+          setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, isFailed: true } : m)));
+        }
+      }
+    },
+    [conversationId, me?.id, fetchConversations],
+  );
+
+  const retryFailedMessage = useCallback(
+    (item: Message) => {
+      if (!item.content) return;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      void sendTextOptimistic(item.content, item.replyToId ?? undefined, item.id);
+    },
+    [sendTextOptimistic],
+  );
+
   // ── ChatComposer send handlers (parent owns API + GCS/R2 upload pipeline) ──
-  const handleSendText = (content: string, replyToId?: string) =>
-    postMessage({ type: 'text', content, replyToId }, true);
+  // Fire-and-forget: the optimistic bubble is already queued inside
+  // sendTextOptimistic before its first await, so the composer clears instantly.
+  const handleSendText = useCallback(
+    async (content: string, replyToId?: string) => {
+      void sendTextOptimistic(content, replyToId);
+    },
+    [sendTextOptimistic],
+  );
 
   const handleSendImages = async (uris: string[], caption: string, replyToId?: string) => {
     setSending(true);
@@ -653,20 +1177,55 @@ export default function Chat() {
     }
   };
 
-  const onLongPressMessage = (item: Message) => {
-    if (item.id.startsWith('tmp-')) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setMenuMessage(item);
+  const confirmUnsend = (item: Message) => {
+    setMenuMessage(null);
+    confirm(
+      'Delete for Everyone?',
+      'This message will be deleted for both of you.',
+      () => runUnsend(item),
+      { destructive: true, confirmLabel: 'Delete for Everyone' },
+    );
   };
 
-  const onSwipeReply = (item: Message) => {
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const enterSelectMode = useCallback((item: Message) => {
+    setMenuMessage(null);
+    setSelectedMessageIds(new Set([item.id]));
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedMessageIds(new Set()), []);
+
+  const onLongPressMessage = useCallback((item: Message) => {
+    if (item.id.startsWith('tmp-')) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    if (isSelecting) {
+      toggleSelect(item.id);
+      return;
+    }
+    setMenuMessage(item);
+  }, [isSelecting, toggleSelect]);
+
+  const onTapMessage = useCallback((item: Message) => {
+    if (!isSelecting || item.id.startsWith('tmp-')) return;
+    toggleSelect(item.id);
+  }, [isSelecting, toggleSelect]);
+
+  const onSwipeReply = useCallback((item: Message) => {
     if (item.isUnsent || item.id.startsWith('tmp-')) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setEditingMessage(null);
     setReplyTo(item);
-  };
+  }, []);
 
-  const onReact = async (item: Message, emoji: string) => {
+  const onReact = useCallback(async (item: Message, emoji: string) => {
     setMenuMessage(null);
     // Optimistic toggle
     setMessages((prev) =>
@@ -692,7 +1251,7 @@ export default function Chat() {
     } catch {
       /* socket event will reconcile on next round-trip */
     }
-  };
+  }, [conversationId]);
 
   const copyMessage = async (item: Message) => {
     setMenuMessage(null);
@@ -732,6 +1291,70 @@ export default function Chat() {
       setMessages((prev) => prev.map((m) => (m.id === item.id ? { ...m, isPinned: !next } : m)));
       alertError('Could not pin', (e as ApiError).message ?? 'Please try again.');
     }
+  };
+
+  const openForward = (items: Message[]) => {
+    setMenuMessage(null);
+    setForwardMessages(items);
+  };
+
+  const runForward = async (targetConversationIds: string[]) => {
+    const items = forwardMessages ?? [];
+    try {
+      for (const item of items) {
+        await forwardMessage(conversationId, item.id, targetConversationIds);
+      }
+      setForwardMessages(null);
+      clearSelection();
+      showSuccess(`Forwarded to ${targetConversationIds.length} chat${targetConversationIds.length > 1 ? 's' : ''}`);
+    } catch (e) {
+      toastApiError(e, 'Could not forward message');
+    }
+  };
+
+  const batchStar = async () => {
+    const ids = [...selectedMessageIds];
+    clearSelection();
+    setMessages((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, isStarred: true } : m)));
+    await Promise.all(ids.map((id) => starMessage(id, 'chat').catch(() => {})));
+  };
+
+  const batchDeleteForMe = async () => {
+    const ids = [...selectedMessageIds];
+    clearSelection();
+    setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+    await Promise.all(ids.map((id) => deleteMessage(conversationId, id).catch(() => {})));
+  };
+
+  const batchDeleteForEveryone = async () => {
+    const ids = [...selectedMessageIds];
+    clearSelection();
+    await Promise.all(
+      ids.map((id) =>
+        unsendMessage(conversationId, id)
+          .then(() => setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isUnsent: true, content: null } : m))))
+          .catch(() => {}),
+      ),
+    );
+  };
+
+  const confirmBatchDelete = () => {
+    const count = selectedMessageIds.size;
+    showAlert({
+      title: 'Delete messages?',
+      message: `${count} message${count > 1 ? 's' : ''} selected.`,
+      icon: 'trash',
+      iconColor: theme.error,
+      buttons: [
+        { label: 'Cancel', style: 'cancel', onPress: hideAlert },
+        { label: 'Delete for Me', style: 'default', onPress: () => { hideAlert(); batchDeleteForMe(); } },
+        {
+          label: 'Delete for Everyone',
+          style: 'destructive',
+          onPress: () => { hideAlert(); batchDeleteForEveryone(); },
+        },
+      ],
+    });
   };
 
   const saveMediaToGallery = async (item: Message) => {
@@ -977,7 +1600,7 @@ export default function Chat() {
     }
   };
 
-  const openViewOnce = async (item: Message) => {
+  const openViewOnce = useCallback(async (item: Message) => {
     const mine = item.senderId === me?.id;
     if (mine) {
       const url = item.mediaUrls[0] ?? item.mediaUrl;
@@ -1002,7 +1625,7 @@ export default function Chat() {
       setExpiringView(null);
       setBanner((e as ApiError).message ?? 'Could not open photo');
     }
-  };
+  }, [conversationId, me?.id]);
 
   // A call button is enabled only when the reply-gate is open AND the peer is
   // accepting that call type. Tooltip differs by which condition fails.
@@ -1052,135 +1675,7 @@ export default function Chat() {
     }
   };
 
-  const renderMessageBody = (item: Message, mine: boolean) => {
-    if (item.isUnsent) {
-      return <Text style={[styles.removed, { color: mine ? theme.textInverse : theme.textTertiary }]}>message removed</Text>;
-    }
-
-    if (isViewOnce(item)) {
-      const opened = !!item.viewedAt && !mine;
-      const thumb = item.mediaUrls[0] ?? item.mediaUrl;
-      return (
-        <Pressable onPress={() => openViewOnce(item)} disabled={opened && !mine}>
-          <View style={[styles.snapTile, opened && !mine && styles.snapOpened]}>
-            {thumb && mine ? (
-              <Image source={{ uri: thumb }} style={styles.snapImage} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-            ) : (
-              <View style={[styles.snapPlaceholder, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
-                <Ionicons name="eye-off-outline" size={28} color={mine ? '#fff' : theme.brand} />
-              </View>
-            )}
-            <View style={styles.snapLabel}>
-              <Ionicons name="eye-off-outline" size={14} color={mine ? '#fff' : theme.textPrimary} />
-              <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.sm }}>
-                {opened && !mine ? 'Opened' : mine ? 'View once · Sent' : 'Tap to view'}
-              </Text>
-            </View>
-          </View>
-        </Pressable>
-      );
-    }
-
-    if (item.type === 'photo' && item.mediaUrls.length > 0) {
-      const isAlbum = item.content?.startsWith('📁 ');
-      return (
-        <Pressable onPress={() => openImageViewer(item.mediaUrls[0] ?? item.mediaUrl ?? '')}>
-          <View style={styles.photoStack}>
-            <Image source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-            {item.mediaUrls.length > 1 && (
-              <View style={styles.multiBadge}>
-                <Text style={styles.multiBadgeText}>+{item.mediaUrls.length - 1}</Text>
-              </View>
-            )}
-            {isAlbum && (
-              <Text style={[styles.albumCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
-                {item.content}
-              </Text>
-            )}
-            {item.caption ? (
-              <Text style={[styles.photoCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
-                {item.caption}
-              </Text>
-            ) : null}
-          </View>
-        </Pressable>
-      );
-    }
-
-    if (item.type === 'video') {
-      return (
-        <View style={styles.mediaChip}>
-          <Ionicons name="videocam" size={16} color={mine ? theme.textInverse : theme.textPrimary} />
-          <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Video</Text>
-        </View>
-      );
-    }
-
-    if (item.type === 'voice' || item.type === 'voice_note') {
-      return (
-        <View style={styles.mediaChip}>
-          <Ionicons name="mic" size={16} color={mine ? theme.textInverse : theme.textPrimary} />
-          <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Voice message</Text>
-        </View>
-      );
-    }
-
-    // Location card: a text message with structured content '📍 label|lat|lng'
-    // (see sendLocation below — the backend has no dedicated 'location' type yet).
-    if (item.type === 'text' && item.content?.startsWith('📍 ') && item.content.includes('|')) {
-      const [labelPart, latStr, lngStr] = item.content.replace(/^📍\s*/, '').split('|');
-      const lat = Number(latStr);
-      const lng = Number(lngStr);
-      const fg = mine ? theme.textInverse : theme.textPrimary;
-      const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
-      return (
-        <Pressable
-          style={styles.locationCard}
-          onPress={() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {})}
-        >
-          <View style={[styles.locationPin, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
-            <Ionicons name="location" size={32} color={mine ? '#fff' : theme.brand} />
-          </View>
-          <View style={styles.locationInfo}>
-            <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{labelPart || 'My Location'}</Text>
-            <Text style={[styles.fileSub, { color: sub }]}>Tap to open in Maps</Text>
-          </View>
-        </Pressable>
-      );
-    }
-
-    // Document / audio file: a text message carrying the file url in mediaUrls
-    // with an emoji-prefixed caption. Documents open externally; audio plays inline.
-    const fileUrl = item.mediaUrls[0];
-    const isDoc = item.type === 'text' && !!fileUrl && item.content?.startsWith('📄');
-    const isAudioFile = item.type === 'text' && !!fileUrl && item.content?.startsWith('🎵');
-    if (isAudioFile && fileUrl) {
-      return <AudioPlayer mediaUrl={fileUrl} isOwn={mine} />;
-    }
-    if (isDoc) {
-      const label = (item.content ?? '').replace(/^📄\s*/, '') || 'Document';
-      const fg = mine ? theme.textInverse : theme.textPrimary;
-      const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
-      return (
-        <Pressable style={styles.fileCard} onPress={() => fileUrl && Linking.openURL(fileUrl).catch(() => {})}>
-          <Ionicons name="document-text" size={22} color={mine ? theme.textInverse : theme.brand} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{label}</Text>
-            <Text style={[styles.fileSub, { color: sub }]}>Tap to open</Text>
-          </View>
-          <Ionicons name="download-outline" size={20} color={fg} />
-        </Pressable>
-      );
-    }
-
-    return (
-      <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.md, fontFamily: FontFamily.regular }}>
-        {item.content}
-      </Text>
-    );
-  };
-
-  const renderRow = ({ item: row }: { item: ChatRow }) => {
+  const renderRow = useCallback(({ item: row }: { item: ChatRow }) => {
     if (row.kind === 'date') {
       return (
         <View style={styles.dateRow}>
@@ -1190,119 +1685,30 @@ export default function Chat() {
         </View>
       );
     }
-
     const item = row.message;
-    const mine = item.senderId === me?.id;
-    const body = renderMessageBody(item, mine);
-    const isSearchHighlight = highlightId === item.id;
-
-    // Bare photo (no album caption, not view-once) renders edge-to-edge with just
-    // rounded corners — no bubble padding, border or background (WhatsApp-style).
-    const mediaOnly =
-      !item.isUnsent &&
-      !isViewOnce(item) &&
-      item.type === 'photo' &&
-      item.mediaUrls.length > 0 &&
-      !item.content?.startsWith('📁 ');
-
-    const quote = item.replyTo ? (
-      <View
-        style={[
-          styles.quote,
-          {
-            backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
-            borderLeftColor: mine ? '#fff' : theme.brand,
-          },
-        ]}
-      >
-        <Text style={[styles.quoteName, { color: mine ? '#fff' : theme.brand }]} numberOfLines={1}>
-          {item.replyTo.senderId === me?.id ? 'You' : peerName || 'Someone'}
-        </Text>
-        <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
-          {item.replyTo.content}
-        </Text>
-      </View>
-    ) : null;
-
-    const highlightStyle = isSearchHighlight ? { borderWidth: 1.5, borderColor: theme.brandSecondary } : null;
-
-    const translationNode =
-      translations[item.id] && !item.isUnsent ? (
-        <Text
-          style={[
-            styles.translated,
-            { color: mine ? 'rgba(255,255,255,0.85)' : theme.textTertiary, borderTopColor: mine ? 'rgba(255,255,255,0.25)' : theme.border },
-          ]}
-        >
-          {translations[item.id]}
-        </Text>
-      ) : null;
-
     return (
-      <SwipeToReply onSwipeReply={() => onSwipeReply(item)}>
-        <Pressable
-          style={[styles.bubbleRow, mine ? styles.right : styles.left]}
-          onLongPress={() => onLongPressMessage(item)}
-        >
-          {mediaOnly ? (
-            <View style={[styles.mediaBubble, highlightStyle]}>{body}</View>
-          ) : mine ? (
-            <LinearGradient colors={theme.gradientWarm} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { borderBottomRightRadius: 4 }, highlightStyle]}>
-              {quote}
-              {body}
-              {translationNode}
-            </LinearGradient>
-          ) : (
-            <View style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { backgroundColor: theme.surfaceElevated, borderBottomLeftRadius: 4 }, highlightStyle]}>
-              {quote}
-              {body}
-              {translationNode}
-            </View>
-          )}
-          <View style={styles.metaRow}>
-            {item.isStarred && !item.isUnsent && (
-              <Ionicons name="star" size={11} color={theme.brand} style={{ marginRight: 4 }} />
-            )}
-            <Text style={[styles.time, { color: theme.textTertiary }]}>{clockTime(item.createdAt)}</Text>
-            {disappearing && !item.isUnsent && (
-              <Ionicons name="time-outline" size={12} color={theme.textTertiary} style={{ marginLeft: 3 }} />
-            )}
-            {item.isEdited && !item.isUnsent && (
-              <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
-            )}
-            {mine && !item.isUnsent && (
-              <MessageTick
-                status={
-                  item.id.startsWith('tmp-')
-                    ? 'sending'
-                    : !item.deliveredAt
-                      ? 'sent'
-                      : !item.readAt
-                        ? 'delivered'
-                        : 'read'
-                }
-                isPremium={canReadReceipts}
-              />
-            )}
-          </View>
-          {item.reactions.length > 0 && (
-            <View style={[styles.reactionsRow, mine ? { justifyContent: 'flex-end' } : null]}>
-              {item.reactions.map((r) => (
-                <ReactionPill
-                  key={r.emoji}
-                  emoji={r.emoji}
-                  count={r.count}
-                  userReacted={r.userReacted}
-                  onPress={() => onReact(item, r.emoji)}
-                  onLongPress={() => setReactionDetailsFor(item.id)}
-                />
-              ))}
-            </View>
-          )}
-        </Pressable>
-      </SwipeToReply>
+      <ChatMessageRow
+        item={item}
+        mine={item.senderId === me?.id}
+        meId={me?.id}
+        peerName={peerName}
+        highlight={highlightId === item.id}
+        translation={translations[item.id]}
+        showDisappearing={!!disappearing}
+        canReadReceipts={canReadReceipts}
+        onLongPress={onLongPressMessage}
+        onSwipeReply={onSwipeReply}
+        onReact={onReact}
+        onReactionLongPress={setReactionDetailsFor}
+        onImagePress={openImageViewer}
+        onViewOncePress={openViewOnce}
+        onRetry={retryFailedMessage}
+        onTap={onTapMessage}
+        isSelecting={isSelecting}
+        isSelected={selectedMessageIds.has(item.id)}
+      />
     );
-  };
+  }, [theme, me?.id, peerName, highlightId, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openImageViewer, openViewOnce, retryFailedMessage, onTapMessage, isSelecting, selectedMessageIds]);
 
   const CallButton = ({ type }: { type: 'audio' | 'video' }) => {
     const { enabled, tip } = callState(type);
@@ -1342,7 +1748,33 @@ export default function Chat() {
   }
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
+    <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
+      {/* Everything above the composer/list is measured so the KeyboardAvoidingView
+          offset stays exact as banners appear/disappear (F27). */}
+      <View onLayout={(e) => setTopOffset(e.nativeEvent.layout.height)}>
+      {isSelecting ? (
+        <View style={[styles.header, { borderBottomColor: theme.border }]}>
+          <Pressable onPress={clearSelection} hitSlop={12}>
+            <Ionicons name="close" size={24} color={theme.textPrimary} />
+          </Pressable>
+          <Text style={[styles.headName, { color: theme.textPrimary, flex: 1 }]}>
+            {selectedMessageIds.size} selected
+          </Text>
+          <Pressable
+            onPress={() => openForward(messages.filter((m) => selectedMessageIds.has(m.id)))}
+            hitSlop={10}
+            style={styles.callBtn}
+          >
+            <Ionicons name="arrow-redo-outline" size={22} color={theme.textPrimary} />
+          </Pressable>
+          <Pressable onPress={batchStar} hitSlop={10} style={styles.callBtn}>
+            <Ionicons name="star-outline" size={22} color={theme.textPrimary} />
+          </Pressable>
+          <Pressable onPress={confirmBatchDelete} hitSlop={10} style={styles.callBtn}>
+            <Ionicons name="trash-outline" size={22} color={theme.error} />
+          </Pressable>
+        </View>
+      ) : (
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         <Pressable onPress={() => router.back()} hitSlop={12}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
@@ -1359,7 +1791,7 @@ export default function Chat() {
           }
         >
           {peerPhoto ? (
-            <Image source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+            <RemoteImage source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} />
           ) : (
             <View style={[styles.headAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
               <Ionicons name="person" size={20} color={theme.textTertiary} />
@@ -1393,6 +1825,7 @@ export default function Chat() {
           <Ionicons name="ellipsis-vertical" size={20} color={theme.textPrimary} />
         </Pressable>
       </View>
+      )}
 
       {searchOpen && (
         <View style={[styles.searchBar, { backgroundColor: theme.surfaceElevated, borderBottomColor: theme.border }]}>
@@ -1450,8 +1883,18 @@ export default function Chat() {
           <Text style={[styles.tooltipText, { color: theme.warning }]}>{banner}</Text>
         </View>
       )}
+      </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0} style={{ flex: 1 }}>
+      {/* F27: `padding` on both platforms (Android `height` was jank-prone); the
+          offset is the measured header/banner block height + top safe-area inset
+          (no more hardcoded 90). The list below deliberately does NOT set
+          `automaticallyAdjustKeyboardInsets` — that stacked with this KAV and
+          double-applied the keyboard inset (the dead-zone/gap bug). */}
+      <KeyboardAvoidingView
+        behavior="padding"
+        keyboardVerticalOffset={insets.top + topOffset}
+        style={{ flex: 1 }}
+      >
         {searchOpen ? (
           <SearchPanel
             query={searchQuery}
@@ -1468,27 +1911,59 @@ export default function Chat() {
             keyExtractor={(r) => (r.kind === 'date' ? r.id : r.message.id)}
             contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, gap: 10 }}
             renderItem={renderRow}
-            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            keyboardShouldPersistTaps="handled"
             // Keep older messages visually anchored when a previous page is
             // prepended so the list doesn't jump to the top.
             maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
             scrollEventThrottle={64}
             onScroll={(e) => {
-              if (e.nativeEvent.contentOffset.y <= 60 && hasMoreOlder && !loadingOlder) loadOlder();
+              const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+              // Remember whether the user is parked at the bottom — the auto-scroll
+              // effect uses this to decide whether an incoming peer message should
+              // scroll into view or stay put (so we never yank a user who has
+              // scrolled up to read history).
+              const near = isNearBottom(contentOffset.y, contentSize.height, layoutMeasurement.height);
+              nearBottomRef.current = near;
+              // Drive the floating scroll-to-bottom pill (F26).
+              setShowScrollDown(!near);
+              if (near) setUnseenCount(0);
+              // Don't paginate older messages while a programmatic jump is in
+              // flight — landing near the top would otherwise prepend a page and
+              // shift the list (maintainVisibleContentPosition), pulling the view
+              // away from the message we just jumped to.
+              if (suppressAutoScroll.current) return;
+              if (contentOffset.y <= 60 && hasMoreOlder && !loadingOlder) loadOlder();
             }}
             ListHeaderComponent={
               loadingOlder ? <ActivityIndicator color={theme.brand} style={{ marginVertical: 12 }} /> : null
             }
-            onContentSizeChange={() => {
-              if (suppressAutoScroll.current) return;
-              listRef.current?.scrollToEnd({ animated: true });
+            // NOTE: intentionally NO onContentSizeChange auto-scroll. That fired on
+            // every layout change (highlight border, reaction pill, image load,
+            // pinned banner) and was the real cause of the "pin jumps back" bug.
+            // Auto-scroll is now driven purely by message arrival (effect above).
+            onScrollToIndexFailed={(info) => {
+              // The target row isn't measured yet (pinned/searched message is far
+              // outside the rendered window). Jump to an approximate offset, let
+              // the row lay out, then retry the exact scroll. suppressAutoScroll is
+              // still true here (set by jumpToMessage) so this can't snap to bottom.
+              listRef.current?.scrollToOffset({
+                offset: info.averageItemLength * info.index,
+                animated: false,
+              });
+              setTimeout(() => {
+                if (info.index < rows.length) {
+                  listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+                }
+              }, 250);
             }}
-            onScrollToIndexFailed={() => {}}
           />
         )}
 
+        {!searchOpen && !loading ? (
+          <ScrollToBottomButton visible={showScrollDown} count={unseenCount} onPress={scrollToBottom} />
+        ) : null}
+
         {!searchOpen ? (
-        <View style={{ paddingBottom: Platform.OS === 'ios' ? insets.bottom : 8, backgroundColor: theme.surface }}>
         <ChatComposer
           ref={composerRef}
           conversationId={conversationId}
@@ -1521,7 +1996,6 @@ export default function Chat() {
           onOpenTemplates={openTemplatePicker}
           placeholder="Say something…"
         />
-        </View>
         ) : null}
       </KeyboardAvoidingView>
 
@@ -1606,34 +2080,47 @@ export default function Chat() {
         const withinEditWindow = Date.now() - new Date(item.createdAt).getTime() < EDIT_WINDOW_MS;
         const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '🔥'];
         const isImage = !item.isUnsent && !isViewOnce(item) && item.type === 'photo' && item.mediaUrls.length > 0;
+        // Documents/audio files ride on a `text` message carrying a file url with an
+        // emoji-prefixed caption (see renderBody above) — they're not plain text, so
+        // Copy/Edit/Translate must not treat them as such.
+        const isFileCard = item.type === 'text' && !!item.mediaUrls?.length && (item.content?.startsWith('📄') || item.content?.startsWith('🎵'));
+        const isPlainText = item.type === 'text' && !isFileCard;
         const actions: { key: string; label: string; icon: React.ComponentProps<typeof Ionicons>['name']; onPress: () => void; destructive?: boolean }[] = [
           { key: 'reply', label: 'Reply', icon: 'arrow-undo-outline', onPress: () => { onSwipeReply(item); setMenuMessage(null); } },
         ];
-        if (!item.isUnsent && item.content) {
+        if (!item.isUnsent && isPlainText && item.content) {
           actions.push({ key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: () => copyMessage(item) });
         }
-        actions.push({ key: 'forward', label: 'Forward (soon)', icon: 'arrow-redo-outline', onPress: () => setMenuMessage(null) });
+        if (!item.isUnsent) {
+          actions.push({ key: 'forward', label: 'Forward', icon: 'arrow-redo-outline', onPress: () => openForward([item]) });
+        }
         if (!item.isUnsent) {
           actions.push({ key: 'star', label: item.isStarred ? 'Unstar' : 'Star', icon: item.isStarred ? 'star' : 'star-outline', onPress: () => toggleStar(item) });
           actions.push({ key: 'pin', label: item.isPinned ? 'Unpin' : 'Pin', icon: item.isPinned ? 'pin' : 'pin-outline', onPress: () => togglePin(item) });
         }
-        if (mine && item.type === 'text' && canEdit && withinEditWindow && !item.isUnsent) {
+        if (mine && isPlainText && canEdit && withinEditWindow && !item.isUnsent) {
           actions.push({ key: 'edit', label: 'Edit', icon: 'create-outline', onPress: () => { setMenuMessage(null); startEditing(item); } });
         }
-        if (!mine && item.type === 'text' && item.content && canEdit) {
+        if (!mine && isPlainText && item.content && canEdit) {
           actions.push({ key: 'translate', label: translations[item.id] ? 'Hide translation' : 'Translate', icon: 'language-outline', onPress: () => translateMessageText(item) });
         }
         if (isImage) {
           actions.push({ key: 'save', label: 'Save to Gallery', icon: 'download-outline', onPress: () => saveMediaToGallery(item) });
         }
+        if (!item.isUnsent && !item.id.startsWith('tmp-')) {
+          actions.push({ key: 'select', label: 'Select', icon: 'checkmark-circle-outline', onPress: () => enterSelectMode(item) });
+        }
         // Delete for me — available on any message.
         actions.push({ key: 'delete_me', label: 'Delete for Me', icon: 'trash-outline', destructive: true, onPress: () => runDeleteSelf(item) });
         // Delete for everyone — own messages, plan-gated (Premium before read, Gold anytime).
         if (mine && canUnsend && (canUnsendAnytime || !item.readAt) && !item.isUnsent) {
-          actions.push({ key: 'delete_all', label: 'Delete for Everyone', icon: 'trash-bin-outline', destructive: true, onPress: () => { setMenuMessage(null); runUnsend(item); } });
+          actions.push({ key: 'delete_all', label: 'Delete for Everyone', icon: 'trash-bin-outline', destructive: true, onPress: () => confirmUnsend(item) });
         }
         if (!mine) {
           actions.push({ key: 'report', label: 'Report', icon: 'flag-outline', onPress: openReportFromMenu });
+        }
+        if (mine && !item.isUnsent) {
+          actions.push({ key: 'info', label: 'Message Info', icon: 'information-circle-outline', onPress: () => { setMenuMessage(null); setInfoMessage(item); } });
         }
 
         return (
@@ -1672,18 +2159,18 @@ export default function Chat() {
         );
       })()}
 
-      <Modal visible={emojiPickerOpen} transparent animationType="slide" onRequestClose={() => setEmojiPickerOpen(false)}>
-        <Pressable style={[styles.sheetOverlay, { backgroundColor: theme.overlay }]} onPress={() => setEmojiPickerOpen(false)}>
-          <Pressable onPress={(e) => e.stopPropagation()}>
-            <EmojiPicker
-              onSelect={(emoji) => {
-                if (menuMessage) onReact(menuMessage, emoji);
-                setEmojiPickerOpen(false);
-              }}
-            />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <AppBottomSheet
+        visible={emojiPickerOpen}
+        onClose={() => setEmojiPickerOpen(false)}
+        enableContentPanningGesture={false}
+      >
+        <EmojiPicker
+          onSelect={(emoji) => {
+            if (menuMessage) onReact(menuMessage, emoji);
+            setEmojiPickerOpen(false);
+          }}
+        />
+      </AppBottomSheet>
 
       {peerId && (
         <ReportSheet visible={reportOpen} userId={peerId} onClose={() => setReportOpen(false)} />
@@ -1768,6 +2255,19 @@ export default function Chat() {
 
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
 
+      <MessageInfo
+        message={infoMessage}
+        isOwn={infoMessage ? infoMessage.senderId === me?.id : false}
+        onClose={() => setInfoMessage(null)}
+      />
+
+      <ForwardSheet
+        visible={!!forwardMessages}
+        onClose={() => setForwardMessages(null)}
+        onForward={runForward}
+        excludeConversationId={conversationId}
+      />
+
       {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );
@@ -1798,6 +2298,10 @@ const styles = StyleSheet.create({
   dateRow: { alignItems: 'center', marginVertical: 8 },
   dateLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' },
   bubbleRow: { maxWidth: '82%' },
+  selectRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  selectCheckbox: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  forwardedRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 2, marginHorizontal: 4 },
+  forwardedText: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, fontStyle: 'italic' },
   left: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   right: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   bubble: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18 },
@@ -1824,6 +2328,8 @@ const styles = StyleSheet.create({
   albumCaption: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   photoCaption: { fontSize: FontSize.md, fontFamily: FontFamily.regular, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 2, maxWidth: 260 },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, marginHorizontal: 4 },
+  retryRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  retryText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold, marginLeft: 1 },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
   quote: { borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 8, borderRadius: 6, marginBottom: 4 },
   quoteName: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },

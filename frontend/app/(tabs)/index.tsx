@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -46,6 +46,30 @@ const QUICK_FILTERS: QuickFilter[] = [
   { key: 'fresh', label: 'Fresh', patch: { sort: 'fresh' } },
 ];
 
+/**
+ * One grid row (COLS tiles). Memoized so an unrelated Browse re-render (e.g.
+ * `loadingMore` flipping during pagination) doesn't re-render already-visible
+ * rows: `row` keeps its reference while `cards` is unchanged, and `tile`/`onOpen`
+ * are stable — so `UserCardTile`'s own React.memo is finally effective (F12).
+ */
+const GridRow = memo(function GridRow({
+  row,
+  tile,
+  onOpen,
+}: {
+  row: UserCard[];
+  tile: number;
+  onOpen: (card: UserCard) => void;
+}) {
+  return (
+    <View style={styles.gridRow}>
+      {row.map((card) => (
+        <UserCardTile key={card.id} card={card} size={tile} onPress={() => onOpen(card)} />
+      ))}
+    </View>
+  );
+});
+
 export default function Browse() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -53,21 +77,30 @@ export default function Browse() {
   const tile = (width - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const rowHeight = tile + GAP;
 
-  const { cards, loading, refreshing, loadingMore, error, total, fetchGrid, fetchMore, hydrateCache } = useGridStore();
+  // Per-field selectors: Browse re-renders only when a slice it actually reads
+  // changes, instead of on every gridStore set() (F11). Zustand actions are
+  // referentially stable, so selecting them individually is safe.
+  const cards = useGridStore((s) => s.cards);
+  const loading = useGridStore((s) => s.loading);
+  const refreshing = useGridStore((s) => s.refreshing);
+  const loadingMore = useGridStore((s) => s.loadingMore);
+  const error = useGridStore((s) => s.error);
+  const total = useGridStore((s) => s.total);
+  const fetchGrid = useGridStore((s) => s.fetchGrid);
+  const fetchMore = useGridStore((s) => s.fetchMore);
+  const hydrateCache = useGridStore((s) => s.hydrateCache);
   const exploreLocation = useGridStore((s) => s.exploreLocation);
   const clearExploreLocation = useGridStore((s) => s.clearExploreLocation);
   const me = useAuthStore((s) => s.user);
   const plan = me?.plan ?? 'free';
   const canSeeViews = planAtLeast(plan, 'gold');
 
-  const {
-    views,
-    taps,
-    loading: interestLoading,
-    refreshing: interestRefreshing,
-    error: interestError,
-    fetchInterest,
-  } = useInterestStore();
+  const views = useInterestStore((s) => s.views);
+  const taps = useInterestStore((s) => s.taps);
+  const interestLoading = useInterestStore((s) => s.loading);
+  const interestRefreshing = useInterestStore((s) => s.refreshing);
+  const interestError = useInterestStore((s) => s.error);
+  const fetchInterest = useInterestStore((s) => s.fetchInterest);
 
   const [coords, setCoords] = useState<Coords | null>(null);
   const [permDenied, setPermDenied] = useState(false);
@@ -223,6 +256,13 @@ export default function Browse() {
     for (let i = 0; i < cards.length; i += COLS) out.push(cards.slice(i, i + COLS));
     return out;
   }, [cards]);
+
+  // Stable renderItem so the FlatList doesn't re-render every cell whenever
+  // Browse re-renders (F12). `tile` and `openProfile` are both stable.
+  const renderGridRow = useCallback(
+    ({ item }: { item: UserCard[] }) => <GridRow row={item} tile={tile} onOpen={openProfile} />,
+    [tile, openProfile],
+  );
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
@@ -419,18 +459,7 @@ export default function Browse() {
           ListFooterComponent={
             loadingMore ? <ActivityIndicator color={theme.brand} style={{ marginVertical: 16 }} /> : null
           }
-          renderItem={({ item }) => (
-            <View style={{ flexDirection: 'row', gap: GAP, marginBottom: GAP, paddingHorizontal: PAD }}>
-              {item.map((card) => (
-                <UserCardTile
-                  key={card.id}
-                  card={card}
-                  size={tile}
-                  onPress={() => openProfile(card)}
-                />
-              ))}
-            </View>
-          )}
+          renderItem={renderGridRow}
         />
       )}
 
@@ -448,6 +477,7 @@ export default function Browse() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  gridRow: { flexDirection: 'row', gap: GAP, marginBottom: GAP, paddingHorizontal: PAD },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 8 },
   avatarBtn: { width: 38, height: 38 },
   avatar: { width: 38, height: 38, borderRadius: 19 },

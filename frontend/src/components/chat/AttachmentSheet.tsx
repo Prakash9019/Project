@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Modal, View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, spacing } from '../../theme';
+import { AppBottomSheet } from '../ui/AppBottomSheet';
 import { GifPicker, type GifResult } from '../rooms/GifPicker';
 
 export type AttachmentKind =
@@ -73,10 +74,9 @@ export function AttachmentSheet({
   });
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={[styles.backdrop, { backgroundColor: theme.overlay }]} onPress={onClose}>
-        <Pressable style={[styles.sheet, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
-          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
+    <>
+      <AppBottomSheet visible={visible} onClose={onClose}>
+        <View style={styles.content}>
           <Text style={[styles.title, { color: theme.textPrimary }]}>Share</Text>
           <View style={styles.grid}>
             {options.map((o) => {
@@ -102,8 +102,8 @@ export function AttachmentSheet({
               );
             })}
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </AppBottomSheet>
 
       {/* KLIPY GIF picker (stacked above the attachment sheet) */}
       <GifPicker
@@ -115,15 +115,13 @@ export function AttachmentSheet({
           onGifSelected(gif);
         }}
       />
-    </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: spacing.xxxl, paddingHorizontal: spacing.lg },
-  grabber: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: spacing.md },
-  title: { fontSize: 18, fontFamily: DisplayFont.bold, marginTop: spacing.lg, marginBottom: spacing.lg },
+  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  title: { fontSize: 18, fontFamily: DisplayFont.bold, marginBottom: spacing.lg },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   option: { width: '25%', alignItems: 'center', marginBottom: spacing.xl, gap: 6 },
   iconCircle: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center' },

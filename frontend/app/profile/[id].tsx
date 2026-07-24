@@ -13,7 +13,8 @@ import {
   Keyboard,
   Platform,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { RemoteImage } from '../../src/components/RemoteImage';
+import { Skeleton } from '../../src/components/Skeleton';
 import { Linking } from 'react-native';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
@@ -51,6 +52,15 @@ import type { PublicProfile, AlbumSummary } from '../../src/types/api';
 
 type SharedLink = { id: string; url: string };
 
+// In-memory profile cache (module-scoped, session-lifetime). Lets a re-opened
+// profile render instantly from the last-seen data while it revalidates in the
+// background, instead of showing a cold skeleton every visit (F44/Fix 8C).
+const profileCache = new Map<string, PublicProfile>();
+
+// How many hero photos to eagerly load on mount; the rest load as the user
+// swipes toward them (F52 progressive photo loading).
+const INITIAL_PHOTOS = 4;
+
 export default function ProfileDetail() {
   const params = useLocalSearchParams<{ id: string; fromChat?: string; peerName?: string }>();
   const rawId = params.id;
@@ -62,7 +72,7 @@ export default function ProfileDetail() {
   const { alertConfig, hideAlert, confirm, alertError } = useAlert();
   const me = useAuthStore((s) => s.user);
   const patchCard = useGridStore((s) => s.patchCard);
-  const { fetchConversations } = useChatStore();
+  const fetchConversations = useChatStore((s) => s.fetchConversations);
 
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,13 +94,26 @@ export default function ProfileDetail() {
   const [mutualGroups, setMutualGroups] = useState<UserRoomCard[]>([]);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  // Number of hero photos currently permitted to load (grows as the user swipes).
+  const [visiblePhotos, setVisiblePhotos] = useState(INITIAL_PHOTOS);
 
   useEffect(() => {
     hasLoadedRef.current = false;
-    setLoading(true);
-    setProfile(null);
     setNotFound(false);
     setDraft('');
+    setVisiblePhotos(INITIAL_PHOTOS);
+    // Instant paint from cache on a repeat visit, then revalidate silently.
+    const cached = profileCache.get(peerId);
+    if (cached) {
+      setProfile(cached);
+      setLiked(!!cached.isLiked);
+      setShortlisted(!!cached.isShortlisted);
+      setLoading(false);
+      hasLoadedRef.current = true; // don't flip back to the skeleton while revalidating
+    } else {
+      setProfile(null);
+      setLoading(true);
+    }
   }, [peerId]);
 
   useEffect(() => {
@@ -112,6 +135,7 @@ export default function ProfileDetail() {
     if (!hasLoadedRef.current) setLoading(true);
     try {
       const p = await getPublicProfile(peerId);
+      profileCache.set(peerId, p);
       setProfile(p);
       setLiked(!!p.isLiked);
       setShortlisted(!!p.isShortlisted);
@@ -261,9 +285,26 @@ export default function ProfileDetail() {
   };
 
   if (loading) {
+    // Skeleton mirroring the profile layout (hero → name → chips → bio → 2×2
+    // photo grid) so navigating in never flashes blank (Fix 3 / Fix 8A).
     return (
-      <View style={[styles.center, { backgroundColor: theme.background }]}>
-        <ActivityIndicator color={theme.brand} size="large" />
+      <View style={[styles.root, { backgroundColor: theme.background }]}>
+        <Skeleton width={width} height={width} radius={0} />
+        <View style={{ padding: 20, gap: 14 }}>
+          <Skeleton width="60%" height={24} radius={6} />
+          <Skeleton width="40%" height={16} radius={6} />
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+            <Skeleton width={70} height={28} radius={14} />
+            <Skeleton width={90} height={28} radius={14} />
+            <Skeleton width={60} height={28} radius={14} />
+          </View>
+          <Skeleton width="100%" height={72} radius={12} style={{ marginTop: 8 }} />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} width={(width - 48) / 2} height={(width - 48) / 2} radius={12} />
+            ))}
+          </View>
+        </View>
       </View>
     );
   }
@@ -312,10 +353,27 @@ export default function ProfileDetail() {
         {/* Hero / gallery */}
         <View style={{ width, height: width }}>
           {gallery.length > 0 ? (
-            <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
-              {gallery.map((uri, i) => (
-                <Image key={i} source={{ uri }} style={{ width, height: width }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-              ))}
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              scrollEventThrottle={16}
+              onScroll={(e) => {
+                // Grow the loaded window as the user swipes toward the tail so we
+                // never mount every hero photo up-front (F52 progressive loading).
+                const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+                if (idx + 2 > visiblePhotos) {
+                  setVisiblePhotos((n) => Math.min(gallery.length, Math.max(n, idx + 2)));
+                }
+              }}
+            >
+              {gallery.map((uri, i) =>
+                i < visiblePhotos ? (
+                  <RemoteImage key={i} source={{ uri }} style={{ width, height: width }} contentFit="cover" transition={120} />
+                ) : (
+                  <View key={i} style={{ width, height: width, backgroundColor: theme.backgroundTertiary }} />
+                ),
+              )}
             </ScrollView>
           ) : (
             <View style={[StyleSheet.absoluteFill, styles.noPhoto, { backgroundColor: theme.backgroundTertiary }]}>
@@ -527,7 +585,7 @@ export default function ProfileDetail() {
                           <Ionicons name="lock-closed" size={28} color={theme.textTertiary} />
                         </View>
                       ) : a.coverPhoto ? (
-                        <Image source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                        <RemoteImage source={{ uri: a.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
                       ) : (
                         <View style={[StyleSheet.absoluteFill, styles.noPhoto]}>
                           <Ionicons name="images" size={28} color={theme.textTertiary} />
@@ -562,7 +620,7 @@ export default function ProfileDetail() {
               <View style={styles.sharedStrip}>
                 {sharedImages.slice(0, 3).map((img, i) => (
                   <Pressable key={`${img.uri}-${i}`} onPress={() => { setViewerIndex(i); setViewerOpen(true); }}>
-                    <Image source={{ uri: img.uri }} style={[styles.sharedThumb, { backgroundColor: theme.surfaceElevated }]} contentFit="cover" cachePolicy="memory-disk" />
+                    <RemoteImage source={{ uri: img.uri }} style={[styles.sharedThumb, { backgroundColor: theme.surfaceElevated }]} contentFit="cover" />
                   </Pressable>
                 ))}
               </View>

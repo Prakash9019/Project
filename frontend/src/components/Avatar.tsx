@@ -1,7 +1,7 @@
 import { View, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
+import { RemoteImage } from './RemoteImage';
 
 /**
  * Reusable profile avatar. Falls back to an Ionicons `person-circle` placeholder
@@ -34,12 +34,11 @@ export function Avatar({
   const inner = (
     <View style={{ width: size, height: size }}>
       {photo ? (
-        <Image
+        <RemoteImage
           source={{ uri: photo }}
           style={{ width: size, height: size, borderRadius: r, backgroundColor: theme.backgroundTertiary }}
           contentFit="cover"
           transition={120}
-          cachePolicy="memory-disk"
         />
       ) : (
         <View style={[styles.center, { width: size, height: size, borderRadius: r, backgroundColor: theme.backgroundTertiary }]}>

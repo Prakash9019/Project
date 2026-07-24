@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../src/theme';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
@@ -221,9 +222,11 @@ export default function EditProfile() {
     try {
       const updated = await updateProfile(body);
       setUser(updated);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.back();
     } catch (e) {
       const err = e as ApiError;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       if (err.status === 422) alertError('Check your details', err.message ?? 'Some fields are invalid.');
       else alertError('Could not save', err.message ?? 'Please try again.');
     } finally {

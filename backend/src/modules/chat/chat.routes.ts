@@ -41,6 +41,11 @@ router.patch(
   asyncHandler(c.editMessage),
 );
 router.post('/:conversationId/messages/:messageId/unsend', asyncHandler(c.unsendMessage));
+router.post(
+  '/:conversationId/messages/:messageId/forward',
+  validate(c.forwardMessageSchema),
+  asyncHandler(c.forwardMessage),
+);
 router.post('/:conversationId/messages/:messageId/react', validate(c.reactSchema), asyncHandler(c.reactToMessage));
 router.get('/:conversationId/messages/:messageId/reactions', asyncHandler(c.listMessageReactions));
 router.post('/:conversationId/messages/:messageId/pin', validate(c.pinMessageSchema), asyncHandler(c.pinMessageHandler));

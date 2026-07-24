@@ -7,7 +7,7 @@ import {
   FlatList,
   RefreshControl,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { RemoteImage } from '../RemoteImage';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -76,7 +76,7 @@ export function TapsList({ taps, loading, refreshing, error, onRefresh, onLimitR
         return (
           <Pressable style={styles.tapRow} onPress={() => openProfile(s.id)}>
             {s.profilePhoto ? (
-              <Image source={{ uri: s.profilePhoto }} style={[styles.tapThumb, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+              <RemoteImage source={{ uri: s.profilePhoto }} stableId={s.id} style={[styles.tapThumb, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} />
             ) : (
               <View style={[styles.tapThumb, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
                 <Ionicons name="person" size={32} color={theme.textTertiary} />

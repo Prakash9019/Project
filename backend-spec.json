@@ -2076,6 +2076,43 @@
       }
     },
     {
+      "id": "rooms-message-delete-for-me",
+      "method": "DELETE",
+      "path": "/api/rooms/:roomId/messages/:messageId/hide",
+      "auth": "bearer+verified",
+      "summary": "\"Delete for me\" \u2014 hides a room message from the caller's own view only (RoomMessage.hiddenForUserIds). Any member. No socket broadcast (only the caller's view changes).",
+      "responses": {
+        "204": {
+          "schema": {}
+        }
+      }
+    },
+    {
+      "id": "rooms-message-edit",
+      "method": "PATCH",
+      "path": "/api/rooms/:roomId/messages/:messageId",
+      "auth": "bearer+verified",
+      "summary": "Edit own room message \u2014 text only, within a 5-minute window, same content-rule + AI moderation gates as sendMessage. Emits room:message_edited to the room.",
+      "body": {
+        "content": "string (1-2000 chars)"
+      },
+      "responses": {
+        "200": {
+          "schema": {
+            "id": "string",
+            "content": "string",
+            "isEdited": "boolean",
+            "editedAt": "string | null"
+          }
+        },
+        "403": {
+          "schema": {
+            "error": "edit_window_expired | forbidden"
+          }
+        }
+      }
+    },
+    {
       "id": "rooms-update",
       "method": "PATCH",
       "path": "/api/rooms/:roomId",
@@ -2465,6 +2502,21 @@
       "summary": "Delete for me \u2014 hides a message from the caller's side only (deletedByA/deletedByB). Delete-for-everyone uses the /unsend endpoint.",
       "responses": {
         "204": {}
+      }
+    },
+    {
+      "id": "forward-message",
+      "method": "POST",
+      "path": "/api/v1/conversations/:conversationId/messages/:messageId/forward",
+      "auth": "bearer+verified",
+      "summary": "Forward a message into one or more of the caller's other conversations. Verifies the caller is a participant of every target conversation; creates a copy of the message (isForwarded=true, forwardedFromId=original id) in each and emits message.created to each target's peer.",
+      "body": {
+        "targetConversationIds": "string[] (uuid, min 1, max 20)"
+      },
+      "responses": {
+        "201": {
+          "forwarded": "number"
+        }
       }
     },
     {
@@ -3295,6 +3347,15 @@
           "name": "deletedByB",
           "type": "boolean",
           "notes": "delete-for-me: hidden from userB, default false"
+        },
+        {
+          "name": "isForwarded",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "name": "forwardedFromId",
+          "type": "string | null"
         }
       ]
     },
@@ -3712,6 +3773,20 @@
           "name": "editedAt",
           "type": "iso8601",
           "nullable": true
+        },
+        {
+          "name": "isEdited",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "name": "originalContent",
+          "type": "string | null"
+        },
+        {
+          "name": "hiddenForUserIds",
+          "type": "string[]",
+          "notes": "delete-for-me: userIds hiding this message from their own view, default []"
         }
       ]
     },

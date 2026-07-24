@@ -14,6 +14,7 @@ import { AppState, View } from 'react-native';
 import * as Location from 'expo-location';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {
@@ -280,12 +281,17 @@ function RootStack() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.background }}>
       <SafeAreaProvider>
+        <BottomSheetModalProvider>
         <StatusBar style={isDark ? 'light' : 'dark'} />
         <Stack
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: theme.background },
-            animation: 'slide_from_right',
+            // Native iOS interactive push (with swipe-back) on both platforms —
+            // feels native rather than the default RN slide (F45). Modal screens
+            // below opt into `presentation: 'modal'` for the native sheet slide-up;
+            // expo-router Tabs switch instantly with no transition.
+            animation: 'ios_from_right',
           }}
         >
           <Stack.Screen name="index" />
@@ -319,6 +325,7 @@ function RootStack() {
             Accept/Decline) via the socket listener above — no separate sheet. */}
         <OfflineBanner />
         <Toast config={ToastConfig} position="top" topOffset={50} visibilityTime={4000} />
+        </BottomSheetModalProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -24,6 +24,7 @@ export function ContextMenu({
   message,
   isOwn,
   isAdmin,
+  canEdit,
   onClose,
   onReact,
   onOpenEmojiPicker,
@@ -32,6 +33,8 @@ export function ContextMenu({
   onForward,
   onPin,
   onStar,
+  onEdit,
+  onDeleteForMe,
   onDelete,
   onReport,
   onInfo,
@@ -39,6 +42,8 @@ export function ContextMenu({
   message: RoomMessageCard | null;
   isOwn: boolean;
   isAdmin?: boolean;
+  /** Own text message, not deleted, within the 5-minute edit window. */
+  canEdit?: boolean;
   onClose: () => void;
   onReact: (emoji: string) => void;
   onOpenEmojiPicker: () => void;
@@ -47,6 +52,10 @@ export function ContextMenu({
   onForward: () => void;
   onPin: () => void;
   onStar?: () => void;
+  onEdit?: () => void;
+  /** "Delete for me" — hides the message from the caller's own view only. */
+  onDeleteForMe: () => void;
+  /** "Delete for everyone" (own messages, or moderator/admin override). */
   onDelete: () => void;
   onReport: () => void;
   onInfo: () => void;
@@ -72,7 +81,9 @@ export function ContextMenu({
       onPress: onPin,
       show: !!isAdmin && !message?.isDeleted,
     },
-    { key: 'delete', label: 'Delete', icon: 'trash-outline', onPress: onDelete, show: isOwn || !!isAdmin, destructive: true },
+    { key: 'edit', label: 'Edit', icon: 'create-outline', onPress: () => onEdit?.(), show: !!canEdit },
+    { key: 'delete_me', label: 'Delete for Me', icon: 'trash-outline', onPress: onDeleteForMe, show: !message?.isDeleted, destructive: true },
+    { key: 'delete', label: 'Delete for Everyone', icon: 'trash-bin-outline', onPress: onDelete, show: (isOwn || !!isAdmin) && !message?.isDeleted, destructive: true },
     { key: 'report', label: 'Report', icon: 'flag-outline', onPress: onReport, show: !isOwn },
     { key: 'info', label: 'Info', icon: 'information-circle-outline', onPress: onInfo, show: isOwn },
   ];

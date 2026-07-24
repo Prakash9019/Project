@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
@@ -226,11 +227,15 @@ export default function Store() {
       }
       await refreshUser();
       await loadSub();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       alertSuccess('Welcome to ' + plan, 'Your plan is now active.');
     } catch (e) {
       const err = e as ApiError;
       // Razorpay cancel throws a non-API error; only surface real failures.
-      if (err.status) alertError('Payment failed', err.message ?? 'Please try again.');
+      if (err.status) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        alertError('Payment failed', err.message ?? 'Please try again.');
+      }
     } finally {
       setBusy(null);
     }

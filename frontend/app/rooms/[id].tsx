@@ -7,11 +7,10 @@ import {
   TextInput,
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   Modal,
 } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -21,11 +20,13 @@ import { MiniProfile } from '../../src/components/MiniProfile';
 import { RoomHeader } from '../../src/components/rooms/RoomHeader';
 import { MessageBubble } from '../../src/components/rooms/MessageBubble';
 import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
+import { AppBottomSheet } from '../../src/components/ui/AppBottomSheet';
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { ContextMenu } from '../../src/components/rooms/ContextMenu';
 import { ChatComposer } from '../../src/components/chat/ChatComposer';
 import { SearchPanel, type SearchMessage } from '../../src/components/chat/SearchPanel';
 import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
+import { ScrollToBottomButton } from '../../src/components/chat/ScrollToBottomButton';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { ChatSkeleton } from '../../src/components/Skeleton';
@@ -38,6 +39,8 @@ import {
   sendRoomMessage,
   reactToRoomMessage,
   deleteRoomMessage,
+  deleteRoomMessageForMe,
+  editRoomMessage,
   reportRoomMessage,
   muteRoom,
   reportRoom,
@@ -59,6 +62,7 @@ import { toastApiError, showSuccess, showError } from '../../src/lib/toast';
 import type { RoomDetail, RoomMessageCard, RoomReaction, RoomUserCard } from '../../src/types/api';
 
 const PAGE = 30;
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 function dayKey(iso: string): string {
   return new Date(iso).toDateString();
@@ -84,6 +88,10 @@ function isRoomGifUrl(url: string): boolean {
 
 export default function RoomChat() {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  // Measured height of the header + pinned banner above the list, so the
+  // KeyboardAvoidingView offset is exact instead of a hardcoded 90 (F27).
+  const [topOffset, setTopOffset] = useState(0);
   const router = useRouter();
   const me = useAuthStore((s) => s.user);
   const params = useLocalSearchParams<{ id: string; unread?: string }>();
@@ -101,6 +109,7 @@ export default function RoomChat() {
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMsg, setContextMsg] = useState<RoomMessageCard | null>(null);
+  const [editingMessage, setEditingMessage] = useState<RoomMessageCard | null>(null);
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
   const [reactTarget, setReactTarget] = useState<RoomMessageCard | null>(null);
@@ -111,6 +120,12 @@ export default function RoomChat() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+
+  // Floating scroll-to-bottom pill (F26). The list is inverted (index 0 = newest
+  // at the visual bottom), so "at bottom" is scroll offset ≈ 0.
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const atBottomRef = useRef(true);
 
   // Search-in-chat
   const [searchMode, setSearchMode] = useState(false);
@@ -178,6 +193,8 @@ export default function RoomChat() {
         // Report delivery for other members' messages so their tick goes double-grey.
         if (msg.senderId !== me?.id) emitRoomMessageDelivered(roomId, msg.id);
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
+        // Count messages that land while the user is reading older history.
+        if (msg.senderId !== me?.id && !atBottomRef.current) setUnseenCount((c) => c + 1);
       };
       const onDelivered = (p: { messageId: string }) => {
         setMessages((prev) =>
@@ -196,6 +213,11 @@ export default function RoomChat() {
       const onDeleted = (p: { messageId: string }) => {
         setMessages((prev) =>
           prev.map((m) => (m.id === p.messageId ? { ...m, isDeleted: true, content: 'Message removed' } : m)),
+        );
+      };
+      const onEdited = (p: { messageId: string; content: string; isEdited: boolean }) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === p.messageId ? { ...m, content: p.content, isEdited: p.isEdited } : m)),
         );
       };
       const onTyping = (p: { userId: string; firstName: string | null; isTyping: boolean }) => {
@@ -259,6 +281,7 @@ export default function RoomChat() {
       socket.on('room:message_delivered', onDelivered);
       socket.on('room:message_reaction', onReaction);
       socket.on('room:message_deleted', onDeleted);
+      socket.on('room:message_edited', onEdited);
       socket.on('room:typing', onTyping);
       socket.on('room:info_updated', onInfoUpdated);
       socket.on('room:message_pinned', onPinned);
@@ -272,6 +295,7 @@ export default function RoomChat() {
         socket.off('room:message_delivered', onDelivered);
         socket.off('room:message_reaction', onReaction);
         socket.off('room:message_deleted', onDeleted);
+        socket.off('room:message_edited', onEdited);
         socket.off('room:typing', onTyping);
         socket.off('room:info_updated', onInfoUpdated);
         socket.off('room:message_pinned', onPinned);
@@ -460,6 +484,30 @@ export default function RoomChat() {
     }
   };
 
+  // "Delete for me" — no socket broadcast (only the caller's view changes), so
+  // the local list is updated optimistically here.
+  const doDeleteForMe = async (msg: RoomMessageCard) => {
+    setContextMsg(null);
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    try {
+      await deleteRoomMessageForMe(roomId, msg.id);
+    } catch (e) {
+      toastApiError(e, 'Could not delete');
+    }
+  };
+
+  const doEdit = async (messageId: string, content: string) => {
+    try {
+      const res = await editRoomMessage(roomId, messageId, content);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, content: res.content, isEdited: res.isEdited } : m)),
+      );
+      setEditingMessage(null);
+    } catch (e) {
+      toastApiError(e, 'Could not save edit');
+    }
+  };
+
   const doReport = async (msg: RoomMessageCard) => {
     setContextMsg(null);
     try {
@@ -553,6 +601,14 @@ export default function RoomChat() {
     },
     [messages],
   );
+
+  const scrollToBottom = useCallback(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    setUnseenCount(0);
+    setShowScrollDown(false);
+    atBottomRef.current = true;
+    useGroupsStore.getState().markRoomRead(roomId);
+  }, [roomId]);
 
   const typingText = (() => {
     const names = Object.values(typingUsers);
@@ -659,6 +715,8 @@ export default function RoomChat() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
+      {/* Header + pinned banner measured for the KeyboardAvoidingView offset (F27). */}
+      <View onLayout={(e) => setTopOffset(e.nativeEvent.layout.height)}>
       {/* Header or search bar */}
       {searchMode ? (
         <View style={[styles.searchHeader, { borderBottomColor: theme.border }]}>
@@ -710,10 +768,13 @@ export default function RoomChat() {
           </Pressable>
         </Pressable>
       ) : null}
+      </View>
 
+      {/* F27: `padding` on both platforms + measured offset; the list below drops
+          `automaticallyAdjustKeyboardInsets` (it double-applied with this KAV). */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        behavior="padding"
+        keyboardVerticalOffset={insets.top + topOffset}
         style={{ flex: 1 }}
       >
         {searchMode ? (
@@ -743,9 +804,20 @@ export default function RoomChat() {
               ) : null
             }
             keyboardShouldPersistTaps="handled"
-            automaticallyAdjustKeyboardInsets
+            scrollEventThrottle={64}
+            onScroll={(e) => {
+              // Inverted list: offset ≈ 0 means the newest message is visible.
+              const near = e.nativeEvent.contentOffset.y < 200;
+              atBottomRef.current = near;
+              setShowScrollDown(!near);
+              if (near) setUnseenCount(0);
+            }}
           />
         )}
+
+        {!searchMode && !loading ? (
+          <ScrollToBottomButton visible={showScrollDown} count={unseenCount} onPress={scrollToBottom} />
+        ) : null}
 
         {typingText ? <Text style={[styles.typing, { color: theme.textTertiary }]}>{typingText}</Text> : null}
 
@@ -758,8 +830,9 @@ export default function RoomChat() {
                 ? { id: replyTo.id, senderName: replyTo.sender.firstName ?? 'Someone', content: replyTo.content || 'Photo' }
                 : null
             }
+            editingMessage={editingMessage ? { id: editingMessage.id, content: editingMessage.content } : null}
             onClearReply={() => setReplyTo(null)}
-            onClearEdit={() => {}}
+            onClearEdit={() => setEditingMessage(null)}
             onSendText={handleSendText}
             onSendImages={handleSendImages}
             onSendVideo={handleSendVideo}
@@ -768,7 +841,7 @@ export default function RoomChat() {
             onSendAudioFile={sendAudioFile}
             onSendGif={sendGif}
             onSendLocation={handleSendLocation}
-            onEditConfirm={async () => {}}
+            onEditConfirm={doEdit}
             onTypingStart={handleTypingStart}
             onTypingStop={handleTypingStop}
             mentionCandidates={mentionCandidates}
@@ -803,6 +876,13 @@ export default function RoomChat() {
         message={contextMsg}
         isOwn={contextMsg?.senderId === me?.id}
         isAdmin={isAdmin}
+        canEdit={
+          !!contextMsg &&
+          contextMsg.senderId === me?.id &&
+          contextMsg.type === 'text' &&
+          !contextMsg.isDeleted &&
+          Date.now() - new Date(contextMsg.createdAt).getTime() < EDIT_WINDOW_MS
+        }
         onClose={() => setContextMsg(null)}
         onReact={(e) => contextMsg && toggleReaction(contextMsg, e)}
         onOpenEmojiPicker={() => {
@@ -814,19 +894,26 @@ export default function RoomChat() {
         onForward={() => {}}
         onStar={() => contextMsg && doStar(contextMsg)}
         onPin={() => contextMsg && doPin(contextMsg)}
+        onEdit={() => {
+          if (!contextMsg) return;
+          setReplyTo(null);
+          setEditingMessage(contextMsg);
+          setContextMsg(null);
+        }}
+        onDeleteForMe={() => contextMsg && doDeleteForMe(contextMsg)}
         onDelete={() => contextMsg && doDelete(contextMsg)}
         onReport={() => contextMsg && doReport(contextMsg)}
         onInfo={() => { setContextMsg(null); showSuccess('Delivered'); }}
       />
 
       {/* Full emoji picker for a reaction */}
-      <Modal visible={!!reactTarget} transparent animationType="slide" onRequestClose={() => setReactTarget(null)}>
-        <Pressable style={[styles.menuBackdrop, { backgroundColor: theme.overlay }]} onPress={() => setReactTarget(null)}>
-          <Pressable style={{ width: '100%' }} onPress={(e) => e.stopPropagation()}>
-            <EmojiPicker onSelect={(e) => reactTarget && toggleReaction(reactTarget, e)} />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <AppBottomSheet
+        visible={!!reactTarget}
+        onClose={() => setReactTarget(null)}
+        enableContentPanningGesture={false}
+      >
+        <EmojiPicker onSelect={(e) => reactTarget && toggleReaction(reactTarget, e)} />
+      </AppBottomSheet>
 
       <MiniProfile visible={!!miniUser} member={miniUser} roomId={roomId} onClose={() => setMiniUser(null)} />
 

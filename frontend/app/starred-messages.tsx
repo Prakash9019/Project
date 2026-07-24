@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, SectionList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, SectionList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
 import { Avatar } from '../src/components/Avatar';
+import { ListSkeleton } from '../src/components/Skeleton';
 import { useTheme, FontFamily, FontSize, DisplayFont } from '../src/theme';
 import { getStarredMessages, type StarredMessageItem } from '../src/services/api';
 
@@ -62,9 +63,7 @@ export default function StarredMessages() {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.brand} />
-        </View>
+        <ListSkeleton />
       ) : items.length === 0 ? (
         <View style={styles.center}>
           <Ionicons name="star-outline" size={48} color={theme.textTertiary} />

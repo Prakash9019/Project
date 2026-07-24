@@ -13,7 +13,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { RemoteImage } from '../../src/components/RemoteImage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -244,7 +244,7 @@ export default function RightNow() {
       >
         <View style={styles.avatarWrap}>
           {item.profilePhoto ? (
-            <Image source={{ uri: item.profilePhoto }} style={styles.avatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+            <RemoteImage source={{ uri: item.profilePhoto }} stableId={item.id} style={styles.avatar} contentFit="cover" transition={120} />
           ) : (
             <View style={[styles.avatar, styles.center, { backgroundColor: theme.surfaceElevated }]}>
               <Ionicons name="person" size={22} color={theme.textTertiary} />
@@ -536,7 +536,7 @@ function CreateSheet({
             <View style={styles.inputCard}>
               <View>
                 {user?.primaryPhotoUrl ? (
-                  <Image source={{ uri: user.primaryPhotoUrl }} style={styles.sheetAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                  <RemoteImage source={{ uri: user.primaryPhotoUrl }} stableId={user.id} style={styles.sheetAvatar} contentFit="cover" transition={120} />
                 ) : (
                   <View style={[styles.sheetAvatar, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
                     <Ionicons name="person" size={22} color={theme.textTertiary} />

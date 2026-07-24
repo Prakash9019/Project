@@ -7,7 +7,7 @@ import {
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { RemoteImage } from '../RemoteImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -121,7 +121,7 @@ function PersonCard({ theme, card, timeAgo }: { theme: any; card: UserCard; time
   return (
     <View style={[styles.viewerCard, { backgroundColor: theme.backgroundTertiary }]}>
       {card.profilePhoto ? (
-        <Image source={{ uri: card.profilePhoto }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+        <RemoteImage source={{ uri: card.profilePhoto }} stableId={card.id} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.center]}>
           <Ionicons name="person" size={56} color={theme.textTertiary} />

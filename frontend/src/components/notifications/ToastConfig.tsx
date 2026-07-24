@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Vibration } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -205,13 +205,29 @@ function CallToast({ props }: ToastConfigParams<CallToastProps>) {
   const { theme } = useTheme();
   const router = useRouter();
 
-  // Missed-call auto-dismiss after 30s (autoHide is disabled on this toast).
+  // Incoming-call feedback: loop device vibration so the call is unmissable, and
+  // auto-dismiss as MISSED after 30s (autoHide is disabled on this toast). The
+  // cleanup — cancel vibration + clear the timer — runs on unmount, which covers
+  // every exit path: accept, decline, AND timeout all unmount the toast.
+  //
+  // TODO(F65): no ringtone asset ships with the app yet. When one is added under
+  // assets/, load and loop it here via expo-audio and unload it in the cleanup;
+  // vibration alone is the interim feedback.
   useEffect(() => {
-    const t = setTimeout(() => Toast.hide(), 30000);
-    return () => clearTimeout(t);
-  }, []);
+    // Repeating pattern [wait, vibrate, pause, …] with repeat = true.
+    Vibration.vibrate([0, 700, 1000], true);
+    const t = setTimeout(() => {
+      updateCall(props.callId, 'missed').catch(() => {});
+      Toast.hide();
+    }, 30000);
+    return () => {
+      clearTimeout(t);
+      Vibration.cancel();
+    };
+  }, [props.callId]);
 
   const accept = () => {
+    Vibration.cancel(); // stop feedback immediately, before the exit animation
     Toast.hide();
     updateCall(props.callId, 'answered').catch(() => {});
     router.push({
@@ -228,6 +244,7 @@ function CallToast({ props }: ToastConfigParams<CallToastProps>) {
   };
 
   const decline = () => {
+    Vibration.cancel(); // stop feedback immediately, before the exit animation
     Toast.hide();
     updateCall(props.callId, 'declined').catch(() => {});
   };

@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, type Href } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useTheme, FontFamily, DisplayFont, FontSize, spacing, radius } from '../../src/theme';
 import {
   listRooms,
@@ -255,6 +256,8 @@ export default function Groups() {
   // ── Join (optimistic, no refetch) ──
   const handleJoin = async (room: RoomCard) => {
     if (joiningId) return;
+    // Medium impact — joining a group is a deliberate, meaningful action (F50 map).
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     setJoiningId(room.id);
     try {
       const res = await joinRoom(room.id);
@@ -267,9 +270,11 @@ export default function Groups() {
         role: 'member',
       };
       addRoomToStore(joinedCard);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       // Auto-switch to My Groups after the pulse.
       switchTimer.current = setTimeout(() => setTab('mine'), 600);
     } catch (e) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       toastApiError(e, 'Could not join room');
     } finally {
       setJoiningId(null);

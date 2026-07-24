@@ -35,6 +35,9 @@ export function AudioPlayer({ mediaUrl, isOwn }: { mediaUrl: string; isOwn: bool
   const [positionMs, setPositionMs] = useState(0);
   const [error, setError] = useState(false);
   const [speedIndex, setSpeedIndex] = useState(0);
+  // Measured width of the waveform track so tap-to-seek maps to the real bar
+  // area instead of a hardcoded 150px (F58). Falls back to 150 until measured.
+  const [waveWidth, setWaveWidth] = useState(150);
 
   useEffect(() => {
     return () => {
@@ -114,7 +117,8 @@ export function AudioPlayer({ mediaUrl, isOwn }: { mediaUrl: string; isOwn: bool
       </Pressable>
       <Pressable
         style={styles.wave}
-        onPress={(e) => seekTo(Math.min(1, Math.max(0, e.nativeEvent.locationX / 150)))}
+        onLayout={(e) => setWaveWidth(e.nativeEvent.layout.width)}
+        onPress={(e) => seekTo(Math.min(1, Math.max(0, e.nativeEvent.locationX / waveWidth)))}
       >
         {bars.map((b, i) => {
           const active = i / WAVE_BARS <= progress;

@@ -19,6 +19,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { Avatar } from '../../src/components/Avatar';
+import { Skeleton } from '../../src/components/Skeleton';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { useTheme, FontFamily, FontSize, DisplayFont, spacing, radius } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
@@ -341,11 +342,23 @@ export default function RoomInfo() {
   };
 
   if (loading) {
+    // Skeleton that mirrors the info layout (120px circular cover → name →
+    // subtitle → setting rows) so there's no blank flash on open (F44).
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
         <Header onBack={() => router.back()} />
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.brand} />
+        <View style={styles.hero}>
+          <Skeleton width={120} height={120} radius={60} />
+          <Skeleton width={160} height={20} radius={6} style={{ marginTop: spacing.sm }} />
+          <Skeleton width={110} height={14} radius={6} style={{ marginTop: 8 }} />
+        </View>
+        <View style={{ paddingHorizontal: spacing.lg, gap: 18, marginTop: spacing.lg }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <Skeleton width={24} height={24} radius={12} />
+              <Skeleton width={`${70 - i * 5}%`} height={14} radius={6} />
+            </View>
+          ))}
         </View>
       </SafeAreaView>
     );

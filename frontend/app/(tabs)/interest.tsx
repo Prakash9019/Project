@@ -25,17 +25,15 @@ export default function Interest() {
   const userId = me?.id ?? null;
   const canSeeViews = planAtLeast(plan, 'gold');
 
-  const {
-    views,
-    taps,
-    loading,
-    refreshing,
-    error,
-    fetchInterest,
-    bumpView,
-    bumpTap,
-    reset,
-  } = useInterestStore();
+  const views = useInterestStore((s) => s.views);
+  const taps = useInterestStore((s) => s.taps);
+  const loading = useInterestStore((s) => s.loading);
+  const refreshing = useInterestStore((s) => s.refreshing);
+  const error = useInterestStore((s) => s.error);
+  const fetchInterest = useInterestStore((s) => s.fetchInterest);
+  const bumpView = useInterestStore((s) => s.bumpView);
+  const bumpTap = useInterestStore((s) => s.bumpTap);
+  const reset = useInterestStore((s) => s.reset);
 
   const [tab, setTab] = useState<Tab>('views');
   const [upgradeOpen, setUpgradeOpen] = useState(false);

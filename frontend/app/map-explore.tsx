@@ -75,7 +75,13 @@ export default function MapExplore() {
   const gridTile = (width - 12 * 2 - 6 * 2) / 3;
   const params = useLocalSearchParams<{ lat?: string; lng?: string }>();
   const setExploreLocation = useGridStore((s) => s.setExploreLocation);
-  const { cards, loading, refreshing, loadingMore, total, fetchGrid, fetchMore } = useGridStore();
+  const cards = useGridStore((s) => s.cards);
+  const loading = useGridStore((s) => s.loading);
+  const refreshing = useGridStore((s) => s.refreshing);
+  const loadingMore = useGridStore((s) => s.loadingMore);
+  const total = useGridStore((s) => s.total);
+  const fetchGrid = useGridStore((s) => s.fetchGrid);
+  const fetchMore = useGridStore((s) => s.fetchMore);
 
   const filterVersion = useFilterStore((s) => s.version);
   const toQuery = useFilterStore((s) => s.toQuery);

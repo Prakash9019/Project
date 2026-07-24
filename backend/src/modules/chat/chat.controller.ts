@@ -37,6 +37,10 @@ export const editMessageSchema = z.object({
   content: z.string().min(1).max(2000),
 });
 
+export const forwardMessageSchema = z.object({
+  targetConversationIds: z.array(z.string().uuid()).min(1).max(20),
+});
+
 export const listMessagesQuerySchema = z.object({
   before: z.coerce.date().optional(),
   limit:  z.coerce.number().int().min(1).max(100).default(30),
@@ -184,6 +188,27 @@ export async function editMessage(req: Request, res: Response): Promise<void> {
   emitToUser(peerId, 'message.edited', editPayload);
 
   res.status(200).json({ id: updated.id, content: updated.content, isEdited: updated.isEdited, editedAt: updated.editedAt });
+}
+
+export async function forwardMessage(req: Request, res: Response): Promise<void> {
+  const { conversationId, messageId } = req.params;
+  const { targetConversationIds } = req.body as z.infer<typeof forwardMessageSchema>;
+  const userId = req.user!.sub;
+
+  await svc.getParticipantConversation(userId, conversationId);
+  const results = await svc.forwardMessage(messageId, userId, targetConversationIds);
+
+  for (const r of results) {
+    emitToUser(r.peerId, 'message.created', {
+      id: r.message.id, conversationId: r.conversationId, senderId: userId,
+      type: r.message.type, ciphertext: r.message.ciphertext, content: r.message.content,
+      caption: r.message.caption,
+      mediaUrls: r.message.mediaUrls, mediaUrl: r.message.mediaUrl,
+      isForwarded: true, createdAt: r.message.createdAt, reactions: r.message.reactions,
+    });
+  }
+
+  res.status(201).json({ forwarded: results.length });
 }
 
 export async function unsendMessage(req: Request, res: Response): Promise<void> {

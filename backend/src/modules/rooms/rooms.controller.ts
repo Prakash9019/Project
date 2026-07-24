@@ -15,6 +15,7 @@ import type {
   TransferOwnershipBody,
   CreateRoomBody,
   BulkAddMembersBody,
+  EditMessageBody,
 } from './rooms.schema';
 
 export async function listRooms(req: Request, res: Response): Promise<void> {
@@ -160,6 +161,17 @@ export async function reportMessage(req: Request, res: Response): Promise<void> 
 export async function deleteMessage(req: Request, res: Response): Promise<void> {
   await svc.deleteMessage(req.user!.sub, req.params.roomId, req.params.messageId);
   res.status(204).send();
+}
+
+export async function deleteMessageForMe(req: Request, res: Response): Promise<void> {
+  await svc.deleteMessageForMe(req.user!.sub, req.params.roomId, req.params.messageId);
+  res.status(204).send();
+}
+
+export async function editMessage(req: Request, res: Response): Promise<void> {
+  const { content } = req.body as EditMessageBody;
+  const result = await svc.editMessage(req.user!.sub, req.params.roomId, req.params.messageId, content);
+  res.status(200).json(result);
 }
 
 export async function updateRoom(req: Request, res: Response): Promise<void> {

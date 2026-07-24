@@ -18,7 +18,8 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, withSpring, Easing, runOnJS } from 'react-native-reanimated';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import { Avatar } from '../Avatar';
 import { showError } from '../../lib/toast';
@@ -35,6 +36,21 @@ import { UploadProgressBar } from './UploadProgressBar';
 const DRAFT_DEBOUNCE_MS = 500;
 const TYPING_STOP_MS = 2000;
 const MIN_RECORD_MS = 1000;
+// Number of live waveform samples retained while recording (one bar each).
+const WAVE_SAMPLES = 28;
+// Dev-only voice-recording trace. Reproduce the "recording only starts after
+// multiple attempts / lock / cancel don't work" reports on a physical device and
+// read these lines to see the exact point the lifecycle diverges (gesture fired?
+// permission? record() started? isRecording at stop? uri/duration?).
+const vlog = (...a: unknown[]) => {
+  if (__DEV__) console.log('[voice]', ...a);
+};
+// Horizontal slide-left past this cancels the in-flight recording; vertical
+// slide-up past this locks it (finger can then release and recording continues).
+const CANCEL_DX = -80;
+const LOCK_DY = -60;
+
+type RecordState = 'idle' | 'recording' | 'locked';
 
 export interface ChatComposerProps {
   /** Exactly one of these identifies the thread — used for per-thread draft storage. */
@@ -121,15 +137,54 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const [attachOpen, setAttachOpen] = useState(false);
   const [locationOpen, setLocationOpen] = useState(false);
   const [previewUris, setPreviewUris] = useState<string[] | null>(null);
-  const [recording, setRecording] = useState(false);
+  // Voice recording: idle → recording → (locked). `cancelling` is a live flag
+  // while the finger is dragged left past the cancel threshold.
+  const [recordState, setRecordState] = useState<RecordState>('idle');
+  const [cancelling, setCancelling] = useState(false);
   const [sending, setSending] = useState(false);
+  // Live mic amplitudes (0..1) sampled from the recorder's metering while
+  // recording — drives the real waveform in the overlay (F58/F60). Last N samples.
+  const [amplitudes, setAmplitudes] = useState<number[]>([]);
 
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  // isMeteringEnabled surfaces getStatus().metering (dB) so the waveform reflects
+  // real mic amplitude instead of random bars.
+  const audioRecorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const holdingRef = useRef(false);
   const recordCancelled = useRef(false);
+  const lockedRef = useRef(false);
+  // Wall-clock start of the current recording. expo-audio's getStatus().durationMillis
+  // reads 0 once stop() has resolved, so we time the clip ourselves.
+  const recordStartRef = useRef(0);
+  // UI-thread flags mirroring record/lock state so the pan worklet can read them
+  // without hopping to JS on every frame. `isRecordingSV` gates the pan entirely:
+  // without it the pan fired lock/cancel on stray touches before a hold even
+  // started, which flipped the "release to cancel" hint on when nothing was
+  // recording.
+  const isLockedSV = useSharedValue(false);
+  const isRecordingSV = useSharedValue(false);
+  const isRecording = recordState !== 'idle';
+
+  // Poll mic metering (dB) while recording and normalise to 0..1, keeping the
+  // last WAVE_SAMPLES so the overlay renders a live, real waveform (F60).
+  useEffect(() => {
+    if (recordState !== 'recording' && recordState !== 'locked') return;
+    const id = setInterval(() => {
+      try {
+        const metering = audioRecorder.getStatus().metering;
+        if (typeof metering === 'number') {
+          // -60dB (near silence) → 0, 0dB (loud) → 1.
+          const normalized = Math.max(0, Math.min(1, (metering + 60) / 60));
+          setAmplitudes((prev) => [...prev.slice(-(WAVE_SAMPLES - 1)), normalized]);
+        }
+      } catch {
+        /* recorder not ready yet */
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, [recordState, audioRecorder]);
 
   const hasText = draft.trim().length > 0;
 
@@ -270,6 +325,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const handleSend = async () => {
     const content = draft.trim();
     if (!content || sending) return;
+    playSendFeedback();
     setSending(true);
     try {
       if (editingMessage) {
@@ -354,54 +410,172 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     onClearReply();
   };
 
-  // ── Voice recording ────────────────────────────────────────
+  // ── Voice recording (WhatsApp-style hold / slide-cancel / slide-lock) ──────
+  // The gesture target (the mic circle) stays mounted for the whole recording so
+  // the release event is never lost to an unmount mid-hold.
+  const resetRecordFlags = () => {
+    holdingRef.current = false;
+    recordCancelled.current = false;
+    lockedRef.current = false;
+    isLockedSV.value = false;
+    isRecordingSV.value = false;
+  };
+
   const startRecording = async () => {
+    vlog('gesture: longPress onStart → startRecording');
     holdingRef.current = true;
+    recordCancelled.current = false;
+    lockedRef.current = false;
+    isLockedSV.value = false;
+    setCancelling(false);
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
+      vlog('permission granted:', perm.granted, '| holdingRef after perm:', holdingRef.current);
       if (!perm.granted) {
         showError('Microphone permission needed');
-        holdingRef.current = false;
+        resetRecordFlags();
         return;
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await audioRecorder.prepareToRecordAsync();
+      try {
+        await audioRecorder.prepareToRecordAsync();
+      } catch (e) {
+        // "AudioRecorder has already been prepared" — a previous session wasn't
+        // released before this hold. The recorder is still usable, so swallow it
+        // and go straight to record(); a genuine failure surfaces on record().
+        vlog('prepare warning (continuing):', e instanceof Error ? e.message : String(e));
+      }
+      // The finger may have lifted while we were preparing — bail cleanly.
       if (!holdingRef.current) {
+        vlog('BAILED: finger lifted during prepare (holdingRef=false) — no recording started');
         await audioRecorder.stop().catch(() => {});
         await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
         return;
       }
       audioRecorder.record();
-      recordCancelled.current = false;
-      setRecording(true);
+      recordStartRef.current = Date.now();
+      isRecordingSV.value = true;
+      setAmplitudes([]); // fresh waveform for this clip
+      vlog('record() called | isRecording:', audioRecorder.isRecording);
+      setRecordState('recording');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    } catch {
+    } catch (e) {
+      vlog('EXCEPTION in startRecording:', e instanceof Error ? e.message : String(e));
       showError('Could not start recording');
-      holdingRef.current = false;
+      resetRecordFlags();
+      setRecordState('idle');
     }
   };
 
-  const stopRecording = async () => {
+  // Finger dragged up past the lock threshold — keep recording after release.
+  const lockRecording = () => {
+    vlog('gesture: pan → lockRecording | lockedRef:', lockedRef.current, '| holdingRef:', holdingRef.current);
+    if (lockedRef.current || !holdingRef.current) return;
+    lockedRef.current = true;
+    isLockedSV.value = true;
+    setCancelling(false);
+    setRecordState('locked');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid).catch(() => {});
+  };
+
+  // Toggle the live "release to cancel" hint as the finger crosses the threshold.
+  const updateCancelling = (next: boolean) => {
+    if (lockedRef.current || !holdingRef.current) return;
+    setCancelling((prev) => (prev === next ? prev : next));
+    recordCancelled.current = next;
+  };
+
+  // Stop the recorder and hand the clip to the parent (unless too short).
+  const stopAndSend = async () => {
+    vlog('stopAndSend | isRecording:', audioRecorder.isRecording, '| cancelled:', recordCancelled.current);
     holdingRef.current = false;
-    if (!audioRecorder.isRecording) return;
-    setRecording(false);
+    if (!audioRecorder.isRecording) {
+      vlog('stopAndSend BAILED: recorder was not recording (record() never actually started) — nothing sent');
+      resetRecordFlags();
+      setCancelling(false);
+      setRecordState('idle');
+      return;
+    }
+    setRecordState('idle');
+    // Duration must be captured from our own start timestamp: expo-audio's
+    // getStatus().durationMillis returns 0 after stop() resolves, which was
+    // discarding every clip as "under MIN_RECORD_MS".
+    const durationMs = recordStartRef.current ? Date.now() - recordStartRef.current : 0;
     let uri: string | null = null;
-    let durationMs = 0;
     try {
       await audioRecorder.stop();
-      const status = audioRecorder.getStatus();
-      durationMs = status.durationMillis ?? 0;
       uri = audioRecorder.uri;
     } catch {
       /* already stopped */
     }
     await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
-    if (recordCancelled.current || !uri || durationMs < MIN_RECORD_MS) {
-      recordCancelled.current = false;
+    const cancelled = recordCancelled.current;
+    resetRecordFlags();
+    setCancelling(false);
+    vlog('stop result | uri:', uri, '| durationMs:', durationMs, '| cancelled:', cancelled);
+    if (cancelled || !uri || durationMs < MIN_RECORD_MS) {
+      vlog('NOT sending (cancelled / no uri / under', MIN_RECORD_MS, 'ms)');
       return;
     }
     await onSendAudio(uri, durationMs, replyTo?.id);
   };
+
+  // Discard the recording without sending.
+  const cancelRecording = async () => {
+    holdingRef.current = false;
+    setRecordState('idle');
+    setCancelling(false);
+    try {
+      if (audioRecorder.isRecording) await audioRecorder.stop();
+    } catch {
+      /* already stopped */
+    }
+    await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+    resetRecordFlags();
+    // Warning notification — the recording was discarded / action undone (F50 map).
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+  };
+
+  // Release of the hold: in locked mode keep recording; otherwise cancel-or-send.
+  const onHoldRelease = () => {
+    vlog('gesture: longPress onEnd → onHoldRelease | locked:', lockedRef.current, '| cancelled:', recordCancelled.current);
+    if (lockedRef.current) return;
+    if (recordCancelled.current) cancelRecording();
+    else stopAndSend();
+  };
+
+  // Hold-to-record with slide-left-to-cancel and slide-up-to-lock. A LongPress
+  // starts/ends the hold; a simultaneous Pan reads the drag for cancel/lock.
+  // Disabled in send-mode (there is text) so a tap/long-press on the send arrow
+  // never starts a recording.
+  const holdGesture = Gesture.LongPress()
+    .enabled(!hasText)
+    .minDuration(200)
+    .maxDistance(10000)
+    .shouldCancelWhenOutside(false)
+    .onStart(() => {
+      runOnJS(startRecording)();
+    })
+    .onEnd(() => {
+      runOnJS(onHoldRelease)();
+    });
+
+  const dragGesture = Gesture.Pan()
+    .enabled(!hasText)
+    .minDistance(0)
+    .shouldCancelWhenOutside(false)
+    .onUpdate((e) => {
+      // Only react once a recording is actually in progress and not yet locked —
+      // otherwise stray touches on the mic flip the cancel hint on spuriously.
+      if (!isRecordingSV.value || isLockedSV.value) return;
+      if (e.translationY < LOCK_DY) {
+        runOnJS(lockRecording)();
+        return;
+      }
+      runOnJS(updateCancelling)(e.translationX < CANCEL_DX);
+    });
+
+  const micGesture = Gesture.Simultaneous(holdGesture, dragGesture);
 
   // ── Mic ↔ Send morph + camera fade (150ms) ─────────────────
   // A single 0→1 value drives all three: the send icon grows in, the mic icon
@@ -414,6 +588,21 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const sendStyle = useAnimatedStyle(() => ({ opacity: morph.value, transform: [{ scale: morph.value }] }));
   const micStyle = useAnimatedStyle(() => ({ opacity: 1 - morph.value, transform: [{ scale: 1 - morph.value }] }));
   const cameraStyle = useAnimatedStyle(() => ({ width: 40 * (1 - morph.value), opacity: 1 - morph.value }));
+
+  // ── Send-press feedback (F30) ──────────────────────────────
+  // A quick 1 → 0.85 → 1 spring pop on the arrow plus a brief white flash over the
+  // gradient circle ("brand → lighter → brand") so a tap always registers.
+  const sendPop = useSharedValue(1);
+  const sendPopStyle = useAnimatedStyle(() => ({ transform: [{ scale: sendPop.value }] }));
+  const sendFlash = useSharedValue(0);
+  const sendFlashStyle = useAnimatedStyle(() => ({ opacity: sendFlash.value }));
+  const playSendFeedback = () => {
+    // Medium impact on send — the send action is a deliberate, meaningful gesture
+    // (F50 haptic map). Shared by 1:1 chat and rooms (both use this composer).
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    sendPop.value = withSequence(withTiming(0.85, { duration: 75 }), withSpring(1, { damping: 12, stiffness: 300 }));
+    sendFlash.value = withSequence(withTiming(0.28, { duration: 80 }), withTiming(0, { duration: 140 }));
+  };
 
   // ── Disabled state ─────────────────────────────────────────
   if (isDisabled) {
@@ -448,15 +637,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         <ReplyBar senderName={replyTo.senderName} content={replyTo.content} onCancel={onClearReply} />
       ) : null}
 
-      {/* Input row */}
-      {recording ? (
-        <View style={styles.composerRow}>
-          <VoiceRecorder cancelling={false} />
-        </View>
-      ) : (
-        <View style={styles.composerRow}>
-          {/* THE PILL — emoji + input + templates + attachment + camera.
-              Everything except the mic/send button lives inside this pill. */}
+      {/* Input row — the pill (or the recording overlay) on the left, and a
+          FIXED mic/send circle on the right that stays mounted throughout a
+          recording so the release gesture is never lost to an unmount. */}
+      <View style={styles.composerRow}>
+        {isRecording ? (
+          <VoiceRecorder cancelling={cancelling} locked={recordState === 'locked'} amplitudes={amplitudes} />
+        ) : (
           <View style={[styles.pill, { backgroundColor: theme.inputBackground }]}>
             <Pressable style={styles.pillIcon} onPress={toggleEmoji} hitSlop={4}>
               <Ionicons name={emojiOpen ? 'keypad-outline' : 'happy-outline'} size={22} color={theme.textSecondary} />
@@ -487,41 +674,60 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
               </Pressable>
             </Animated.View>
           </View>
+        )}
 
-          {/* MIC / SEND — a fixed circle OUTSIDE the pill. The circle never moves;
-              the mic and send icons overlap and cross-fade in place. */}
-          <LinearGradient
-            colors={theme.gradientWarm}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.sendCircle}
-          >
-            {/* Mic — active when there is no text */}
-            <Animated.View style={[styles.sendIconLayer, micStyle]} pointerEvents={hasText ? 'none' : 'auto'}>
-              <Pressable
-                style={styles.sendIconTouch}
-                onLongPress={startRecording}
-                onPressOut={stopRecording}
-                delayLongPress={200}
-                hitSlop={8}
-              >
+        {/* Floating lock affordance above the circle while (unlocked) recording */}
+        {recordState === 'recording' ? (
+          <View style={styles.lockHint} pointerEvents="none">
+            <Ionicons name="lock-open-outline" size={16} color={theme.textSecondary} />
+            <Ionicons name="chevron-up" size={12} color={theme.textTertiary} />
+          </View>
+        ) : null}
+
+        {recordState === 'locked' ? (
+          // Locked: finger released, recording continues — tap to stop + send.
+          <Pressable style={styles.sendIconTouch} onPress={stopAndSend} hitSlop={8}>
+            <LinearGradient
+              colors={theme.gradientWarm}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.sendCircle}
+            >
+              <Ionicons name="stop" size={20} color="#fff" />
+            </LinearGradient>
+          </Pressable>
+        ) : (
+          <GestureDetector gesture={micGesture}>
+            <LinearGradient
+              colors={theme.gradientWarm}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.sendCircle}
+            >
+              {/* Brief white flash over the gradient on send (F30) */}
+              <Animated.View pointerEvents="none" style={[styles.sendFlash, sendFlashStyle]} />
+
+              {/* Mic — active when there is no text (gesture-driven hold-to-record) */}
+              <Animated.View style={[styles.sendIconLayer, micStyle]} pointerEvents="none">
                 <Ionicons name="mic" size={22} color="#fff" />
-              </Pressable>
-            </Animated.View>
+              </Animated.View>
 
-            {/* Send — active when there is text */}
-            <Animated.View style={[styles.sendIconLayer, sendStyle]} pointerEvents={hasText ? 'auto' : 'none'}>
-              <Pressable style={styles.sendIconTouch} onPress={handleSend} disabled={sending} hitSlop={8}>
-                {sending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Ionicons name={editingMessage ? 'checkmark' : 'arrow-up'} size={22} color="#fff" />
-                )}
-              </Pressable>
-            </Animated.View>
-          </LinearGradient>
-        </View>
-      )}
+              {/* Send — active when there is text */}
+              <Animated.View style={[styles.sendIconLayer, sendStyle]} pointerEvents={hasText ? 'auto' : 'none'}>
+                <Pressable style={styles.sendIconTouch} onPress={handleSend} disabled={sending} hitSlop={8}>
+                  {sending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Animated.View style={sendPopStyle}>
+                      <Ionicons name={editingMessage ? 'checkmark' : 'arrow-up'} size={22} color="#fff" />
+                    </Animated.View>
+                  )}
+                </Pressable>
+              </Animated.View>
+            </LinearGradient>
+          </GestureDetector>
+        )}
+      </View>
 
       {/* Emoji panel — sized to the keyboard it replaces */}
       {emojiOpen ? <EmojiPicker onSelect={insertEmoji} height={keyboardHeight > 0 ? keyboardHeight : undefined} /> : null}
@@ -585,7 +791,9 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.regular,
     alignSelf: 'flex-end',
   },
-  sendCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  sendCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
+  sendFlash: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#fff', borderRadius: 22 },
+  lockHint: { position: 'absolute', right: 12, bottom: 60, alignItems: 'center', gap: 1 },
   // Mic and send both fill the circle and overlap; only one is interactive at a time.
   sendIconLayer: { position: 'absolute', width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   sendIconTouch: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },

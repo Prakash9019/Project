@@ -762,6 +762,7 @@ async function serializeMessage(msg: any, ctx: SerializeMsgCtx) {
     deliveredCount: ctx.deliveries.get(msg.id) ?? 0,
     createdAt: msg.createdAt,
     editedAt: msg.editedAt ?? null,
+    isEdited: msg.isEdited ?? false,
   };
 }
 
@@ -773,6 +774,7 @@ export async function listMessages(
   const messages = await prisma.roomMessage.findMany({
     where: {
       roomId,
+      NOT: { hiddenForUserIds: { has: userId } },
       ...(opts.before ? { createdAt: { lt: new Date(opts.before) } } : {}),
     },
     include: {
@@ -1322,6 +1324,52 @@ export async function deleteRoom(userId: string, roomId: string): Promise<void> 
     prisma.room.delete({ where: { id: roomId } }),
   ]);
   emitToRoom(roomId, 'room:deleted', { roomId });
+}
+
+const ROOM_EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+/** Edit own room message — 5-minute window, same content-rule + moderation gates as sendMessage. */
+export async function editMessage(userId: string, roomId: string, messageId: string, content: string) {
+  const msg = await prisma.roomMessage.findFirst({ where: { id: messageId, roomId } });
+  if (!msg) throw Errors.notFound('Message not found');
+  if (msg.senderId !== userId) throw Errors.forbidden('You can only edit your own messages');
+  if (msg.isDeleted) throw Errors.forbidden('Cannot edit a deleted message');
+
+  const age = Date.now() - msg.createdAt.getTime();
+  if (age > ROOM_EDIT_WINDOW_MS) {
+    throw new HttpError(403, 'edit_window_expired', 'Messages can only be edited within 5 minutes.');
+  }
+
+  if (violatesRoomContentRules(content)) {
+    throw new HttpError(451, 'message_flagged', 'Your message was flagged for review');
+  }
+  const verdict = await moderation.classifyText(content).catch(() => ({ offensive: false, categories: [], score: 0 }));
+  if (verdict.offensive) {
+    throw new HttpError(451, 'message_flagged', 'Your edited message was flagged for review');
+  }
+
+  const updated = await prisma.roomMessage.update({
+    where: { id: messageId },
+    data: {
+      content,
+      originalContent: msg.originalContent ?? msg.content,
+      isEdited: true,
+      editedAt: new Date(),
+    },
+  });
+  emitToRoom(roomId, 'room:message_edited', { messageId, content: updated.content, isEdited: true, editedAt: updated.editedAt });
+  return { id: updated.id, content: updated.content, isEdited: updated.isEdited, editedAt: updated.editedAt };
+}
+
+/** "Delete for me" — hides a room message from the caller's own view only. */
+export async function deleteMessageForMe(userId: string, roomId: string, messageId: string): Promise<void> {
+  const msg = await prisma.roomMessage.findFirst({ where: { id: messageId, roomId }, select: { id: true, hiddenForUserIds: true } });
+  if (!msg) throw Errors.notFound('Message not found');
+  if (msg.hiddenForUserIds.includes(userId)) return;
+  await prisma.roomMessage.update({
+    where: { id: messageId },
+    data: { hiddenForUserIds: { push: userId } },
+  });
 }
 
 export async function deleteMessage(userId: string, roomId: string, messageId: string): Promise<void> {

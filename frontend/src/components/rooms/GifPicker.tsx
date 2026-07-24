@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   StyleSheet,
   Pressable,
-  TextInput,
   ActivityIndicator,
   useWindowDimensions,
 } from 'react-native';
@@ -13,6 +11,9 @@ import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../../theme';
+import { AppBottomSheet, BottomSheetTextInput } from '../ui/AppBottomSheet';
+
+const SNAP_POINTS = ['75%'];
 
 // Strip any surrounding quotes — a quote-wrapped value in .env would otherwise
 // travel into the request path and KLIPY rejects it as an invalid key.
@@ -183,101 +184,102 @@ export function GifPicker({
   const configured = !!KLIPY_KEY;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={[styles.backdrop, { backgroundColor: theme.overlay }]} onPress={onClose}>
-        <Pressable style={[styles.sheet, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
-          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
+    // Fixed-height sheet; content-panning is disabled so the masonry FlashList
+    // scrolls freely (gorhom has no FlashList scrollable) — the handle still closes it.
+    <AppBottomSheet
+      visible={visible}
+      onClose={onClose}
+      snapPoints={SNAP_POINTS}
+      enableContentPanningGesture={false}
+    >
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={[styles.title, { color: theme.textPrimary }]}>GIFs</Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Ionicons name="close" size={22} color={theme.textSecondary} />
+          </Pressable>
+        </View>
 
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: theme.textPrimary }]}>GIFs</Text>
-            <Pressable onPress={onClose} hitSlop={8}>
-              <Ionicons name="close" size={22} color={theme.textSecondary} />
-            </Pressable>
-          </View>
-
-          {configured ? (
-            <>
-              <View style={[styles.search, { backgroundColor: theme.surfaceElevated }]}>
-                <Ionicons name="search" size={18} color={theme.textTertiary} />
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search GIFs"
-                  placeholderTextColor={theme.textTertiary}
-                  style={[styles.searchInput, { color: theme.textPrimary }]}
-                  autoCorrect={false}
-                />
-                {query.length > 0 ? (
-                  <Pressable onPress={() => setQuery('')} hitSlop={8}>
-                    <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {loading ? (
-                <View style={styles.center}>
-                  <ActivityIndicator color={theme.brand} />
-                </View>
-              ) : (
-                <FlashList
-                  data={gifs}
-                  masonry
-                  numColumns={2}
-                  keyExtractor={(g) => g.id}
-                  contentContainerStyle={{ padding: spacing.md }}
-                  keyboardShouldPersistTaps="handled"
-                  renderItem={({ item }) => (
-                    <Pressable onPress={() => onSelect(item)} style={{ margin: GAP / 2 }}>
-                      <Image
-                        source={{ uri: item.preview }}
-                        style={{
-                          width: colWidth,
-                          height: colWidth / (item.aspect || 1),
-                          borderRadius: radius.md,
-                          backgroundColor: theme.surfaceElevated,
-                        }}
-                        contentFit="cover"
-                        cachePolicy="memory-disk"
-                      />
-                    </Pressable>
-                  )}
-                  ListEmptyComponent={
-                    <View>
-                      <Text style={[styles.empty, { color: theme.textTertiary }]}>
-                        {error ? 'Could not load GIFs' : 'No GIFs found'}
-                      </Text>
-                      {error && __DEV__ ? (
-                        <Text style={[styles.empty, { color: theme.textTertiary, marginTop: spacing.sm, fontSize: 12 }]}>
-                          {error}
-                        </Text>
-                      ) : null}
-                    </View>
-                  }
-                />
-              )}
-
-              <Text style={[styles.attribution, { color: theme.textTertiary }]}>Powered by KLIPY</Text>
-            </>
-          ) : (
-            <View style={styles.center}>
-              <Ionicons name="film-outline" size={48} color={theme.textTertiary} />
-              <Text style={[styles.placeholderTitle, { color: theme.textSecondary }]}>GIF support coming soon</Text>
-              <Text style={[styles.placeholderBody, { color: theme.textTertiary }]}>
-                Set EXPO_PUBLIC_KLIPY_API_KEY in .env to enable GIF search.
-              </Text>
+        {configured ? (
+          <>
+            <View style={[styles.search, { backgroundColor: theme.surfaceElevated }]}>
+              <Ionicons name="search" size={18} color={theme.textTertiary} />
+              <BottomSheetTextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search GIFs"
+                placeholderTextColor={theme.textTertiary}
+                style={[styles.searchInput, { color: theme.textPrimary }]}
+                autoCorrect={false}
+              />
+              {query.length > 0 ? (
+                <Pressable onPress={() => setQuery('')} hitSlop={8}>
+                  <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
+                </Pressable>
+              ) : null}
             </View>
-          )}
-        </Pressable>
-      </Pressable>
-    </Modal>
+
+            {loading ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={theme.brand} />
+              </View>
+            ) : (
+              <FlashList
+                data={gifs}
+                masonry
+                numColumns={2}
+                keyExtractor={(g) => g.id}
+                contentContainerStyle={{ padding: spacing.md }}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <Pressable onPress={() => onSelect(item)} style={{ margin: GAP / 2 }}>
+                    <Image
+                      source={{ uri: item.preview }}
+                      style={{
+                        width: colWidth,
+                        height: colWidth / (item.aspect || 1),
+                        borderRadius: radius.md,
+                        backgroundColor: theme.surfaceElevated,
+                      }}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                    />
+                  </Pressable>
+                )}
+                ListEmptyComponent={
+                  <View>
+                    <Text style={[styles.empty, { color: theme.textTertiary }]}>
+                      {error ? 'Could not load GIFs' : 'No GIFs found'}
+                    </Text>
+                    {error && __DEV__ ? (
+                      <Text style={[styles.empty, { color: theme.textTertiary, marginTop: spacing.sm, fontSize: 12 }]}>
+                        {error}
+                      </Text>
+                    ) : null}
+                  </View>
+                }
+              />
+            )}
+
+            <Text style={[styles.attribution, { color: theme.textTertiary }]}>Powered by KLIPY</Text>
+          </>
+        ) : (
+          <View style={styles.center}>
+            <Ionicons name="film-outline" size={48} color={theme.textTertiary} />
+            <Text style={[styles.placeholderTitle, { color: theme.textSecondary }]}>GIF support coming soon</Text>
+            <Text style={[styles.placeholderBody, { color: theme.textTertiary }]}>
+              Set EXPO_PUBLIC_KLIPY_API_KEY in .env to enable GIF search.
+            </Text>
+          </View>
+        )}
+      </View>
+    </AppBottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '75%', paddingBottom: spacing.md },
-  grabber: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: spacing.md },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.xl, paddingTop: spacing.md },
+  container: { flex: 1, paddingBottom: spacing.md },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.xl, paddingTop: spacing.xs },
   title: { fontSize: 18, fontFamily: DisplayFont.bold },
   search: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, height: 42, borderRadius: radius.lg, paddingHorizontal: spacing.md, marginHorizontal: spacing.md, marginTop: spacing.md },
   searchInput: { flex: 1, fontSize: 15, fontFamily: FontFamily.regular },

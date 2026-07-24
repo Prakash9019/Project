@@ -6,34 +6,38 @@ import Animated, {
   useAnimatedStyle,
   withRepeat,
   withTiming,
-  withDelay,
 } from 'react-native-reanimated';
 import { useTheme, FontFamily } from '../../theme';
 
 const BAR_COUNT = 28;
-
-function WaveBar({ index, cancelling }: { index: number; cancelling: boolean }) {
-  const { theme } = useTheme();
-  const h = useSharedValue(6);
-  useEffect(() => {
-    h.value = withDelay(
-      index * 40,
-      withRepeat(withTiming(Math.random() * 20 + 6, { duration: 400 }), -1, true),
-    );
-    // index changes never; random seeded once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const style = useAnimatedStyle(() => ({ height: h.value }));
-  return <Animated.View style={[styles.bar, style, { backgroundColor: cancelling ? theme.error : theme.brand }]} />;
-}
+const MIN_BAR_HEIGHT = 4;
+const MAX_BAR_HEIGHT = 28;
 
 /**
- * Recording overlay: pulsing mic, animated waveform, mm:ss timer and a
- * "slide to cancel" hint. Actual capture/upload is wired by the parent.
+ * Recording overlay: pulsing mic, a REAL live waveform driven by the mic
+ * amplitude samples the parent feeds in (`amplitudes`, 0..1 — from the
+ * recorder's metering, F60), mm:ss timer and a "slide to cancel" hint. Actual
+ * capture/upload is wired by the parent. When `locked`, the finger has been
+ * released and recording continues, so the slide-to-cancel hint is replaced by
+ * a lock indicator.
  */
-export function VoiceRecorder({ cancelling }: { cancelling: boolean }) {
+export function VoiceRecorder({
+  cancelling,
+  locked = false,
+  amplitudes = [],
+}: {
+  cancelling: boolean;
+  locked?: boolean;
+  amplitudes?: number[];
+}) {
   const { theme } = useTheme();
   const [seconds, setSeconds] = useState(0);
+
+  // Right-align the newest samples: pad the left with silence so bars scroll in
+  // from the right as the clip grows, then map each 0..1 sample to a bar height.
+  const barColor = cancelling ? theme.error : theme.brand;
+  const recent = amplitudes.slice(-BAR_COUNT);
+  const padded = [...Array(Math.max(0, BAR_COUNT - recent.length)).fill(0), ...recent];
 
   useEffect(() => {
     const t = setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -58,15 +62,33 @@ export function VoiceRecorder({ cancelling }: { cancelling: boolean }) {
         {mm}:{ss}
       </Text>
       <View style={styles.wave}>
-        {Array.from({ length: BAR_COUNT }).map((_, i) => (
-          <WaveBar key={i} index={i} cancelling={cancelling} />
+        {padded.map((amp, i) => (
+          <View
+            key={i}
+            style={[
+              styles.bar,
+              {
+                height: MIN_BAR_HEIGHT + amp * (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT),
+                backgroundColor: barColor,
+              },
+            ]}
+          />
         ))}
       </View>
       <View style={styles.cancelHint}>
-        <Ionicons name="chevron-back" size={16} color={cancelling ? theme.error : theme.textTertiary} />
-        <Text style={[styles.cancelText, { color: cancelling ? theme.error : theme.textTertiary }]}>
-          {cancelling ? 'Release to cancel' : 'Slide to cancel'}
-        </Text>
+        {locked ? (
+          <>
+            <Ionicons name="lock-closed" size={15} color={theme.brand} />
+            <Text style={[styles.cancelText, { color: theme.textSecondary }]}>Tap stop to send</Text>
+          </>
+        ) : (
+          <>
+            <Ionicons name="chevron-back" size={16} color={cancelling ? theme.error : theme.textTertiary} />
+            <Text style={[styles.cancelText, { color: cancelling ? theme.error : theme.textTertiary }]}>
+              {cancelling ? 'Release to cancel' : 'Slide to cancel'}
+            </Text>
+          </>
+        )}
       </View>
     </View>
   );

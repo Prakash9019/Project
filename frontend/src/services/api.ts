@@ -48,6 +48,15 @@ export interface ApiError extends Error {
   data?: unknown;
 }
 
+/**
+ * Hard ceiling for a single JSON API round-trip. Render free-tier cold starts can
+ * otherwise leave a request pending forever — the skeleton would hang until the
+ * user force-quits (F40). On timeout we abort and throw a user-friendly ApiError
+ * so each screen's existing catch → error/retry path fires. (Raw R2/GCS media
+ * uploads use their own fetch calls and are intentionally not bound by this.)
+ */
+const REQUEST_TIMEOUT_MS = 15000;
+
 async function request<T>(
   method: string,
   path: string,
@@ -74,11 +83,27 @@ async function request<T>(
     if (str) url += `?${str}`;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw Object.assign(new Error('This is taking longer than usual. Please check your connection and try again.'), {
+        status: 0,
+        code: 'timeout',
+      }) as ApiError;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   // Auto-refresh once on 401 for authed requests.
   if (res.status === 401 && useAuth && !opts?.isRetry) {
@@ -488,6 +513,13 @@ export const editMessage = (conversationId: string, messageId: string, content: 
     'PATCH',
     `/api/v1/conversations/${conversationId}/messages/${messageId}`,
     { content }
+  );
+
+export const forwardMessage = (conversationId: string, messageId: string, targetConversationIds: string[]) =>
+  request<{ forwarded: number }>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/forward`,
+    { targetConversationIds }
   );
 
 export interface ReactToMessageResponse {
@@ -1005,6 +1037,18 @@ export const reportRoomMessage = (roomId: string, messageId: string, reason: str
 
 export const deleteRoomMessage = (roomId: string, messageId: string) =>
   request<void>('DELETE', `/api/rooms/${roomId}/messages/${messageId}`);
+
+/** "Delete for me" — hides a room message from the caller's own view only. */
+export const deleteRoomMessageForMe = (roomId: string, messageId: string) =>
+  request<void>('DELETE', `/api/rooms/${roomId}/messages/${messageId}/hide`);
+
+/** Edit own room message — 5-minute window, same moderation gates as sending. */
+export const editRoomMessage = (roomId: string, messageId: string, content: string) =>
+  request<{ id: string; content: string; isEdited: boolean; editedAt: string | null }>(
+    'PATCH',
+    `/api/rooms/${roomId}/messages/${messageId}`,
+    { content },
+  );
 
 /** Admin/creator: edit room name/description. */
 export const updateRoom = (roomId: string, body: { name?: string; description?: string }) =>

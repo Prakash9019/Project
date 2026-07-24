@@ -21,6 +21,7 @@ import {
   transferOwnershipSchema,
   createRoomSchema,
   bulkAddMembersSchema,
+  editMessageSchema,
 } from './rooms.schema';
 
 const router = Router();
@@ -105,6 +106,13 @@ router.post(
   asyncHandler(c.reportMessage),
 );
 router.delete('/:roomId/messages/:messageId', asyncHandler(c.deleteMessage));
+router.delete('/:roomId/messages/:messageId/hide', requireRoomMember, asyncHandler(c.deleteMessageForMe));
+router.patch(
+  '/:roomId/messages/:messageId',
+  requireRoomMember,
+  validate(editMessageSchema),
+  asyncHandler(c.editMessage),
+);
 
 // Admin / creator: pin a message
 router.post(

@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, View, Text, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
+import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { RemoteImage } from './RemoteImage';
+import { PressableScale } from './ui/PressableScale';
 import { useTheme, FontFamily, DisplayFont } from '../theme';
 import { planBadgeColor, labelize } from '../lib/format';
 import type { UserCard } from '../types/api';
@@ -32,18 +33,18 @@ function UserCardTileBase({
     .slice(0, 2) as string[];
 
   return (
-    <Pressable
+    <PressableScale
       style={[styles.tile, { width: size, height: size, backgroundColor: theme.backgroundTertiary }]}
       onPress={onPress}
       onLongPress={onLongPress}
     >
       {card.profilePhoto ? (
-        <Image
+        <RemoteImage
           source={{ uri: card.profilePhoto }}
+          stableId={card.id}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={120}
-          cachePolicy="memory-disk"
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.noPhoto, { backgroundColor: theme.backgroundTertiary }]}>
@@ -108,7 +109,7 @@ function UserCardTileBase({
           </View>
         )}
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 

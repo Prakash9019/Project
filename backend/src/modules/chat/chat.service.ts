@@ -99,6 +99,7 @@ export function serializeMessage(msg: any, reactions?: { emoji: string; count: n
     isStarred:  msg.isStarred ?? false,
     isEdited:   msg.isEdited ?? false,
     editedAt:   msg.editedAt ?? null,
+    isForwarded: msg.isForwarded ?? false,
     translatedContent: msg.translatedContent ?? null,
     deliveredAt: msg.deliveredAt ?? null,
     readAt:     msg.readAt ?? null,
@@ -565,6 +566,52 @@ export async function editMessage(
     },
   });
   return serializeMessage(updated);
+}
+
+/** Forward a message into one or more of the caller's other conversations. */
+export async function forwardMessage(messageId: string, userId: string, targetConversationIds: string[]) {
+  const original = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!original) throw Errors.notFound('Message not found');
+
+  const targets = await prisma.conversation.findMany({
+    where: {
+      id: { in: targetConversationIds },
+      OR: [{ userAId: userId }, { userBId: userId }],
+    },
+  });
+  const foundIds = new Set(targets.map((t) => t.id));
+  const missing = targetConversationIds.filter((id) => !foundIds.has(id));
+  if (missing.length) throw Errors.notFound('One or more target conversations not found');
+
+  const results = [];
+  for (const convo of targets) {
+    const message = await prisma.$transaction(async (tx) => {
+      const msg = await tx.message.create({
+        data: {
+          conversationId: convo.id,
+          senderId: userId,
+          type: original.type,
+          content: original.isUnsent ? null : original.content,
+          caption: original.caption,
+          mediaUrls: original.mediaUrls,
+          mediaUrl: original.mediaUrl,
+          isForwarded: true,
+          forwardedFromId: original.id,
+        },
+      });
+      await tx.conversation.update({
+        where: { id: convo.id },
+        data: { lastMessageAt: new Date(), state: convo.state === 'pending' ? 'active' : convo.state },
+      });
+      return msg;
+    });
+    results.push({
+      conversationId: convo.id,
+      peerId: otherParty(convo, userId),
+      message: serializeMessage(message),
+    });
+  }
+  return results;
 }
 
 export async function unsendMessage(messageId: string, senderId: string, plan: string, planExpiresAt: Date | null) {

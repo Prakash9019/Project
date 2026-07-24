@@ -12,7 +12,8 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { RemoteImage } from '../../src/components/RemoteImage';
+import { PressableScale } from '../../src/components/ui/PressableScale';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -65,7 +66,11 @@ export default function Inbox() {
   const [seg, setSeg] = useState<'inbox' | 'albums'>('inbox');
   const [filter, setFilter] = useState<InboxFilter>('all');
   const [query, setQuery] = useState('');
-  const { conversations, loading, refreshing, error, fetchConversations } = useChatStore();
+  const conversations = useChatStore((s) => s.conversations);
+  const loading = useChatStore((s) => s.loading);
+  const refreshing = useChatStore((s) => s.refreshing);
+  const error = useChatStore((s) => s.error);
+  const fetchConversations = useChatStore((s) => s.fetchConversations);
 
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(false);
@@ -193,7 +198,7 @@ export default function Inbox() {
     const unread = item.unreadCount ?? 0;
     const selected = selectedIds.has(item.id);
     return (
-      <Pressable
+      <PressableScale
         style={[styles.row, isSelecting && !selected && { opacity: 0.6 }]}
         onPress={() => {
           if (isSelecting) {
@@ -206,7 +211,7 @@ export default function Inbox() {
       >
         <View>
           {item.peer.profilePhoto ? (
-            <Image source={{ uri: item.peer.profilePhoto }} style={[styles.avatar, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+            <RemoteImage source={{ uri: item.peer.profilePhoto }} stableId={item.peer.id} style={[styles.avatar, { backgroundColor: theme.backgroundTertiary }]} contentFit="cover" transition={120} />
           ) : (
             <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: theme.backgroundTertiary }]}>
               <Ionicons name="person" size={26} color={theme.textTertiary} />
@@ -243,7 +248,7 @@ export default function Inbox() {
             )}
           </View>
         </View>
-      </Pressable>
+      </PressableScale>
     );
   };
 
@@ -253,7 +258,7 @@ export default function Inbox() {
       onPress={() => router.push({ pathname: '/albums/[id]', params: { id: item.id, title: item.title } })}
     >
       {item.coverPhoto ? (
-        <Image source={{ uri: item.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+        <RemoteImage source={{ uri: item.coverPhoto.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.center]}>
           <Ionicons name="images" size={32} color={theme.textTertiary} />
