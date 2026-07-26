@@ -625,6 +625,8 @@ export interface RoomMessageCard {
   type: RoomMessageType;
   content: string;
   mediaUrl: string | null;
+  /** Opaque JSON metadata (e.g. voice-note waveform amplitudes) — never message text. */
+  metadata?: string | null;
   isPinned: boolean;
   isStarred?: boolean;
   isDeleted: boolean;

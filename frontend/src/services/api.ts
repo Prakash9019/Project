@@ -625,15 +625,26 @@ export const getChatPhotoUploadUrl = () =>
   });
 
 /** Upload a local image for chat (photo or view-once). Returns the R2 key for mediaUrls. */
-export async function uploadChatPhoto(localUri: string): Promise<string> {
+export async function uploadChatPhoto(
+  localUri: string,
+  onProgress?: (fraction: number) => void
+): Promise<string> {
   const { uploadUrl, key } = await getChatPhotoUploadUrl();
   const blob = await readFileAsBlob(localUri);
-  const put = await fetch(uploadUrl, {
-    method: 'PUT',
-    body: blob,
-    headers: { 'Content-Type': (blob as Blob & { type?: string }).type || 'image/jpeg' },
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', (blob as Blob & { type?: string }).type || 'image/jpeg');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Photo upload failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error('Photo upload network error'));
+    xhr.send(blob);
   });
-  if (!put.ok) throw new Error(`Photo upload failed (${put.status})`);
   return key;
 }
 
@@ -1009,6 +1020,8 @@ export interface SendRoomMessageBody {
   type?: RoomMessageType;
   mediaUrl?: string;
   replyToId?: string;
+  /** Opaque JSON metadata (e.g. voice-note waveform amplitudes) — never rendered as text. */
+  metadata?: string;
 }
 
 export const sendRoomMessage = (roomId: string, body: SendRoomMessageBody) =>

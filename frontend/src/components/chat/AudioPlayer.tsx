@@ -1,22 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { createAudioPlayer, type AudioPlayer as ExpoAudioPlayer, type AudioStatus } from 'expo-audio';
 import { useTheme, FontFamily, FontSize } from '../../theme';
+import { parseVoiceAmplitudes } from '../../lib/audioAmplitude';
 
 const WAVE_BARS = 30;
 const SPEEDS = [1, 1.5, 2];
-
-function seededBars(seed: string): number[] {
-  const bars: number[] = [];
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) & 0xffff;
-  for (let i = 0; i < WAVE_BARS; i++) {
-    h = (h * 1103515245 + 12345) & 0x7fffffff;
-    bars.push(0.25 + ((h % 1000) / 1000) * 0.75);
-  }
-  return bars;
-}
 
 function fmt(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -24,10 +14,10 @@ function fmt(ms: number): string {
 }
 
 /** Inline WhatsApp-style audio bubble player (play/pause, waveform, duration, speed). */
-export function AudioPlayer({ mediaUrl, isOwn }: { mediaUrl: string; isOwn: boolean }) {
+export function AudioPlayer({ mediaUrl, isOwn, caption }: { mediaUrl: string; isOwn: boolean; caption?: string | null }) {
   const { theme } = useTheme();
   const playerRef = useRef<ExpoAudioPlayer | null>(null);
-  const bars = useRef(seededBars(mediaUrl)).current;
+  const bars = useMemo(() => parseVoiceAmplitudes(caption, WAVE_BARS), [caption]);
 
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);

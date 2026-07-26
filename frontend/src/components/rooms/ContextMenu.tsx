@@ -34,6 +34,7 @@ export function ContextMenu({
   onPin,
   onStar,
   onEdit,
+  onSelect,
   onDeleteForMe,
   onDelete,
   onReport,
@@ -53,6 +54,8 @@ export function ContextMenu({
   onPin: () => void;
   onStar?: () => void;
   onEdit?: () => void;
+  /** Enter multi-select mode starting with this message. */
+  onSelect?: () => void;
   /** "Delete for me" — hides the message from the caller's own view only. */
   onDeleteForMe: () => void;
   /** "Delete for everyone" (own messages, or moderator/admin override). */
@@ -82,6 +85,7 @@ export function ContextMenu({
       show: !!isAdmin && !message?.isDeleted,
     },
     { key: 'edit', label: 'Edit', icon: 'create-outline', onPress: () => onEdit?.(), show: !!canEdit },
+    { key: 'select', label: 'Select', icon: 'checkmark-circle-outline', onPress: () => onSelect?.(), show: !!onSelect && !message?.isDeleted },
     { key: 'delete_me', label: 'Delete for Me', icon: 'trash-outline', onPress: onDeleteForMe, show: !message?.isDeleted, destructive: true },
     { key: 'delete', label: 'Delete for Everyone', icon: 'trash-bin-outline', onPress: onDelete, show: (isOwn || !!isAdmin) && !message?.isDeleted, destructive: true },
     { key: 'report', label: 'Report', icon: 'flag-outline', onPress: onReport, show: !isOwn },

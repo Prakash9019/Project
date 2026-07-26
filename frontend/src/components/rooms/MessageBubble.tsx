@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'react-native';
 import { Image, type ImageLoadEventData } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +17,7 @@ import { Avatar } from '../Avatar';
 import { MessageTick } from '../MessageTick';
 import { ReactionPill } from '../chat/ReactionPill';
 import { useTheme, FontFamily, FontSize } from '../../theme';
+import { parseVoiceAmplitudes } from '../../lib/audioAmplitude';
 import type { RoomMessageCard } from '../../types/api';
 
 const SWIPE_TRIGGER = 60;
@@ -45,7 +46,10 @@ function MessageBubbleBase({
   isAdmin,
   deliveryStatus,
   highlight,
+  isSelecting,
+  isSelected,
   onLongPress,
+  onTap,
   onSwipeReply,
   onReactionPress,
   onReactionLongPress,
@@ -59,7 +63,12 @@ function MessageBubbleBase({
   /** Sender-side tick state for own messages (groups never show read/blue). */
   deliveryStatus?: 'sending' | 'sent' | 'delivered';
   highlight?: boolean;
+  /** Multi-select mode is active (shows a leading checkbox, dims unselected bubbles). */
+  isSelecting?: boolean;
+  isSelected?: boolean;
   onLongPress: () => void;
+  /** Tap toggles selection while `isSelecting`; a no-op otherwise. */
+  onTap?: () => void;
   onSwipeReply: () => void;
   onReactionPress: (emoji: string) => void;
   onReactionLongPress?: (emoji: string) => void;
@@ -87,6 +96,12 @@ function MessageBubbleBase({
   // Document / audio-file arrive as text messages carrying a mediaUrl + emoji prefix.
   const isDoc = message.type === 'text' && !!media && message.content.startsWith('📄');
   const isAudioFile = message.type === 'text' && !!media && message.content.startsWith('🎵');
+  // Location card: a text message with structured content '📍 label|lat|lng'.
+  const isLocation = message.type === 'text' && message.content.startsWith('📍 ') && message.content.includes('|');
+  const locationParts = isLocation ? message.content.replace(/^📍\s*/, '').split('|') : null;
+  const locationLabel = locationParts?.[0] || 'My Location';
+  const locationLat = locationParts ? Number(locationParts[1]) : 0;
+  const locationLng = locationParts ? Number(locationParts[2]) : 0;
 
   // Bare media (image/GIF with no caption or reply quote) renders edge-to-edge —
   // no bubble padding, border or background, WhatsApp-style.
@@ -129,6 +144,7 @@ function MessageBubbleBase({
 
   const translateX = useSharedValue(0);
   const pan = Gesture.Pan()
+    .enabled(!isSelecting)
     .activeOffsetX([-15, 15])
     .failOffsetY([-12, 12])
     .onUpdate((e) => {
@@ -216,16 +232,35 @@ function MessageBubbleBase({
         </Pressable>
       ) : null}
       {!deleted && isVideo ? renderMediaCard('videocam', 'Video', 'Tap to play') : null}
-      {!deleted && isVoice ? <VoicePlayer uri={media} seed={message.id} isOwn={isOwn} /> : null}
+      {!deleted && isVoice ? <VoicePlayer uri={media} metadata={message.metadata} isOwn={isOwn} /> : null}
       {!deleted && isDoc ? renderMediaCard('document-text', message.content.replace(/^📄\s*/, '') || 'Document', 'Tap to open') : null}
       {!deleted && isAudioFile ? renderMediaCard('musical-notes', message.content.replace(/^🎵\s*/, '') || 'Audio', 'Tap to play') : null}
+      {!deleted && isLocation ? (
+        <Pressable
+          onPress={() => Linking.openURL(`https://maps.google.com/?q=${locationLat},${locationLng}`).catch(() => {})}
+          onLongPress={onLongPress}
+          delayLongPress={220}
+          style={styles.mediaCard}
+        >
+          <View style={[styles.mediaIcon, { backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : theme.brand + '22' }]}>
+            <Ionicons name="location" size={22} color={isOwn ? '#fff' : theme.brand} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.mediaLabel, { color: isOwn ? '#fff' : theme.textPrimary }]} numberOfLines={1}>
+              {locationLabel}
+            </Text>
+            <Text style={[styles.mediaSub, { color: isOwn ? '#ffffffcc' : theme.textTertiary }]}>Tap to open in Maps</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={isOwn ? '#fff' : theme.textTertiary} />
+        </Pressable>
+      ) : null}
 
       {/* Text */}
       {deleted ? (
         <Text style={[styles.text, styles.deleted, { color: isOwn ? '#ffffffcc' : theme.textTertiary }]}>
           This message was deleted
         </Text>
-      ) : message.content && !isDoc && !isAudioFile ? (
+      ) : message.content && !isDoc && !isAudioFile && !isLocation ? (
         <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>
           {renderWithMentions(message.content, isOwn ? '#fff' : theme.brand)}
         </Text>
@@ -233,7 +268,7 @@ function MessageBubbleBase({
     </>
   );
 
-  return (
+  const bubbleContent = (
     <GestureDetector gesture={pan}>
       <Animated.View style={rowStyle}>
         {/* Swipe reply arrow */}
@@ -262,7 +297,7 @@ function MessageBubbleBase({
               </Pressable>
             ) : null}
 
-            <Pressable onLongPress={onLongPress} delayLongPress={220}>
+            <Pressable onLongPress={onLongPress} delayLongPress={220} onPress={onTap}>
               {bareMedia ? (
                 <View
                   style={[
@@ -333,6 +368,24 @@ function MessageBubbleBase({
       </Animated.View>
     </GestureDetector>
   );
+
+  if (!isSelecting) return bubbleContent;
+  return (
+    <View style={[styles.selectRow, isOwn ? { flexDirection: 'row-reverse' } : null]}>
+      <View
+        style={[
+          styles.selectCheckbox,
+          {
+            borderColor: isSelected ? theme.brand : theme.border,
+            backgroundColor: isSelected ? theme.brand : 'transparent',
+          },
+        ]}
+      >
+        {isSelected ? <Ionicons name="checkmark" size={13} color="#fff" /> : null}
+      </View>
+      <View style={{ flex: 1, opacity: isSelected ? 1 : 0.6 }}>{bubbleContent}</View>
+    </View>
+  );
 }
 
 export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
@@ -345,45 +398,35 @@ export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
     a.isPinned === b.isPinned &&
     a.isStarred === b.isStarred &&
     a.mediaUrl === b.mediaUrl &&
+    a.metadata === b.metadata &&
     a.reactions === b.reactions &&
     a.deliveredCount === b.deliveredCount &&
     a.isEdited === b.isEdited &&
     prev.isOwn === next.isOwn &&
     prev.isAdmin === next.isAdmin &&
     prev.deliveryStatus === next.deliveryStatus &&
-    prev.highlight === next.highlight
+    prev.highlight === next.highlight &&
+    prev.isSelecting === next.isSelecting &&
+    prev.isSelected === next.isSelected
   );
 });
 
 /* ── Voice message player (expo-audio) ── */
 const WAVE_BARS = 26;
 
-function seededBars(seed: string): number[] {
-  // Deterministic static waveform derived from the message id, so it never
-  // reshuffles on re-render. Heights normalized to 0.25..1.
-  const bars: number[] = [];
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) & 0xffff;
-  for (let i = 0; i < WAVE_BARS; i++) {
-    h = (h * 1103515245 + 12345) & 0x7fffffff;
-    bars.push(0.25 + (h % 1000) / 1000 * 0.75);
-  }
-  return bars;
-}
-
 function fmt(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function VoicePlayer({ uri, seed, isOwn }: { uri: string; seed: string; isOwn: boolean }) {
+function VoicePlayer({ uri, metadata, isOwn }: { uri: string; metadata?: string | null; isOwn: boolean }) {
   const { theme } = useTheme();
   const playerRef = useRef<AudioPlayer | null>(null);
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
   const [positionMs, setPositionMs] = useState(0);
-  const bars = useRef(seededBars(seed)).current;
+  const bars = useMemo(() => parseVoiceAmplitudes(metadata, WAVE_BARS), [metadata]);
 
   useEffect(() => {
     return () => {
@@ -455,6 +498,8 @@ function VoicePlayer({ uri, seed, isOwn }: { uri: string; seed: string; isOwn: b
 }
 
 const styles = StyleSheet.create({
+  selectRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 4 },
+  selectCheckbox: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
   swipeArrow: { position: 'absolute', left: 12, top: 0, bottom: 0, justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'flex-end', marginVertical: 4, alignSelf: 'flex-start', maxWidth: '100%' },
   rowOwn: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },

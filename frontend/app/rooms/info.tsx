@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -51,8 +51,11 @@ export default function RoomInfo() {
   const me = useAuthStore((s) => s.user);
   const patchGroupInStore = useGroupsStore((s) => s.patchRoom);
   const { alertConfig, showAlert, hideAlert, confirm } = useAlert();
-  const { roomId } = useLocalSearchParams<{ roomId: string }>();
+  const { roomId, action } = useLocalSearchParams<{ roomId: string; action?: string }>();
   const id = String(roomId);
+  // Deep-linked from the chat screen's "Delete Group" menu entry — opens this
+  // screen's own delete confirmation once, instead of duplicating the flow.
+  const autoDeleteTriggered = useRef(false);
 
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [members, setMembers] = useState<RoomMemberCard[]>([]);
@@ -187,6 +190,13 @@ export default function RoomInfo() {
       { destructive: true, confirmLabel: 'Delete Forever', icon: 'trash-outline', iconColor: theme.error },
     );
   };
+
+  useEffect(() => {
+    if (autoDeleteTriggered.current || loading || action !== 'delete' || !isCreator) return;
+    autoDeleteTriggered.current = true;
+    handleDelete();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, action, isCreator]);
 
   // Inline edit (admin/creator)
   const [editingName, setEditingName] = useState(false);

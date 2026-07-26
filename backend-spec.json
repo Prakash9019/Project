@@ -1915,6 +1915,12 @@
             "name": "replyToId",
             "type": "uuid",
             "nullable": true
+          },
+          {
+            "name": "metadata",
+            "type": "string",
+            "nullable": true,
+            "notes": "added 20260725; opaque JSON blob (max 4000 chars), e.g. voice-note waveform amplitudes {amplitudes:number[]}. Never moderated/content-rule-checked and never rendered as message text (unlike content) — stored/returned verbatim, null when message isDeleted."
           }
         ]
       },
@@ -3811,6 +3817,11 @@
           "type": "string | null"
         },
         {
+          "name": "metadata",
+          "type": "string | null",
+          "notes": "added 20260725 (migration 20260725_room_message_metadata); opaque JSON blob (e.g. voice-note {amplitudes:number[]}). Never AI-moderated/content-rule-checked and never surfaced as message text, unlike `content`."
+        },
+        {
           "name": "hiddenForUserIds",
           "type": "string[]",
           "notes": "delete-for-me: userIds hiding this message from their own view, default []"
@@ -3937,6 +3948,11 @@
           "name": "mediaUrl",
           "type": "string|null",
           "notes": "signed"
+        },
+        {
+          "name": "metadata",
+          "type": "string|null",
+          "notes": "added 20260725; opaque JSON blob (e.g. voice-note {amplitudes:number[]}), null when isDeleted. Never rendered as text — display code must not fall back to this for previews/snippets."
         },
         {
           "name": "isPinned",

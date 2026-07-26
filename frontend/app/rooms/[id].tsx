@@ -26,11 +26,15 @@ import { ContextMenu } from '../../src/components/rooms/ContextMenu';
 import { ChatComposer } from '../../src/components/chat/ChatComposer';
 import { SearchPanel, type SearchMessage } from '../../src/components/chat/SearchPanel';
 import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
+import { MessageInfo } from '../../src/components/chat/MessageInfo';
 import { ScrollToBottomButton } from '../../src/components/chat/ScrollToBottomButton';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
 import { ForwardSheet } from '../../src/components/chat/ForwardSheet';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { ChatSkeleton } from '../../src/components/Skeleton';
+import { CustomAlert } from '../../src/components/CustomAlert';
+import { useAlert } from '../../src/hooks/useAlert';
+import { planAtLeast } from '../../src/lib/format';
 import { useAuthStore } from '../../src/store/authStore';
 import { useGroupsStore } from '../../src/store/groupsStore';
 import {
@@ -92,6 +96,7 @@ export default function RoomChat() {
   const { theme } = useTheme();
   const router = useRouter();
   const me = useAuthStore((s) => s.user);
+  const { alertConfig, hideAlert, showAlert } = useAlert();
   const params = useLocalSearchParams<{ id: string; unread?: string }>();
   const roomId = String(params.id);
   const initialUnread = params.unread ? parseInt(params.unread, 10) || 0 : 0;
@@ -107,13 +112,18 @@ export default function RoomChat() {
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMsg, setContextMsg] = useState<RoomMessageCard | null>(null);
-  const [forwardMessage, setForwardMessage] = useState<RoomMessageCard | null>(null);
+  const [forwardMessages, setForwardMessages] = useState<RoomMessageCard[] | null>(null);
   const [editingMessage, setEditingMessage] = useState<RoomMessageCard | null>(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+  const isSelecting = selectedMessageIds.size > 0;
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
   const [reactTarget, setReactTarget] = useState<RoomMessageCard | null>(null);
+  const [infoMessage, setInfoMessage] = useState<RoomMessageCard | null>(null);
   const [reactionDetailsFor, setReactionDetailsFor] = useState<string | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<{ id: string; firstName: string; avatarUrl?: string | null }[]>([]);
+  // Sender ids that hold admin/creator status — drives the "Admin" chip on their messages.
+  const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -170,6 +180,7 @@ export default function RoomChat() {
             .filter((m) => m.user.id !== me?.id)
             .map((m) => ({ id: m.user.id, firstName: m.user.firstName ?? 'Someone', avatarUrl: m.user.profilePhotoUrl })),
         );
+        setAdminIds(new Set(res.members.filter((m) => m.isCreator || m.role === 'admin').map((m) => m.user.id)));
       })
       .catch(() => {});
     return () => {
@@ -386,10 +397,14 @@ export default function RoomChat() {
     });
   };
 
-  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string) => {
+  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string, amplitudes?: number[]) => {
     await runUpload(async () => {
       const url = await uploadToR2(uri, 'voice_clip', 'audio/mp4', { onProgress: setUploadProgress });
-      const msg = await sendRoomMessage(roomId, { content: '', type: 'voice', mediaUrl: url, replyToId });
+      // The real waveform rides in `metadata` (added 20260725), never `content` —
+      // content IS rendered as plain text elsewhere (pinned banner, reply quotes,
+      // search) and would leak raw JSON there.
+      const metadata = amplitudes?.length ? JSON.stringify({ amplitudes }) : undefined;
+      const msg = await sendRoomMessage(roomId, { content: '', type: 'voice', mediaUrl: url, replyToId, metadata });
       appendMessage(msg);
     });
   };
@@ -397,7 +412,7 @@ export default function RoomChat() {
   const handleSendLocation = async (lat: number, lng: number, label: string) => {
     try {
       const msg = await sendRoomMessage(roomId, {
-        content: `📍 ${label}\nhttps://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`,
+        content: `📍 ${label}|${lat}|${lng}`,
         type: 'text',
       });
       appendMessage(msg);
@@ -552,6 +567,80 @@ export default function RoomChat() {
     }
   };
 
+  // ── Multi-select (mirrors 1:1 chat/[id].tsx) ──
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const enterSelectMode = useCallback((msg: RoomMessageCard) => {
+    setContextMsg(null);
+    setSelectedMessageIds(new Set([msg.id]));
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedMessageIds(new Set()), []);
+
+  const onTapSelectable = useCallback(
+    (msg: RoomMessageCard) => {
+      if (!isSelecting) return;
+      toggleSelect(msg.id);
+    },
+    [isSelecting, toggleSelect],
+  );
+
+  const openForward = (items: RoomMessageCard[]) => {
+    setContextMsg(null);
+    setForwardMessages(items);
+  };
+
+  const batchStar = async () => {
+    const ids = [...selectedMessageIds];
+    clearSelection();
+    setMessages((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, isStarred: true } : m)));
+    await Promise.all(ids.map((id) => starMessage(id, 'room').catch(() => {})));
+  };
+
+  const batchDeleteForMe = async () => {
+    const ids = [...selectedMessageIds];
+    clearSelection();
+    setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+    await Promise.all(ids.map((id) => deleteRoomMessageForMe(roomId, id).catch(() => {})));
+  };
+
+  const batchDeleteForEveryone = async () => {
+    const ids = [...selectedMessageIds];
+    clearSelection();
+    // No optimistic update — the room:message_deleted socket echo (onDeleted
+    // above) marks each as deleted, same as the single-message doDelete flow.
+    await Promise.all(ids.map((id) => deleteRoomMessage(roomId, id).catch(() => {})));
+  };
+
+  const confirmBatchDelete = () => {
+    const ids = [...selectedMessageIds];
+    const selected = messages.filter((m) => ids.includes(m.id));
+    // Same permission rule as the single-message "Delete for Everyone" action
+    // (ContextMenu): sender or admin, and not already deleted.
+    const canDeleteForEveryone = selected.length > 0 && selected.every((m) => (m.senderId === me?.id || isAdmin) && !m.isDeleted);
+    const count = ids.length;
+    showAlert({
+      title: 'Delete messages?',
+      message: `${count} message${count > 1 ? 's' : ''} selected.`,
+      icon: 'trash',
+      iconColor: theme.error,
+      buttons: [
+        { label: 'Cancel', style: 'cancel', onPress: hideAlert },
+        { label: 'Delete for Me', style: 'default', onPress: () => { hideAlert(); batchDeleteForMe(); } },
+        ...(canDeleteForEveryone
+          ? [{ label: 'Delete for Everyone', style: 'destructive' as const, onPress: () => { hideAlert(); batchDeleteForEveryone(); } }]
+          : []),
+      ],
+    });
+  };
+
   // ── Room menu actions ──
   const handleMute = async () => {
     setMenuOpen(false);
@@ -692,13 +781,21 @@ export default function RoomChat() {
           <MessageBubble
             message={item}
             isOwn={isOwn}
+            isAdmin={adminIds.has(item.senderId)}
             deliveryStatus={deliveryStatus}
             highlight={highlightId === item.id || searchHighlightId === item.id}
+            isSelecting={isSelecting}
+            isSelected={selectedMessageIds.has(item.id)}
             onAvatarPress={() => setMiniUser(item.sender)}
             onLongPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              if (isSelecting) {
+                toggleSelect(item.id);
+                return;
+              }
               setContextMsg(item);
             }}
+            onTap={() => onTapSelectable(item)}
             onSwipeReply={() => onSwipeReply(item)}
             onReactionPress={(emoji) => toggleReaction(item, emoji)}
             onReactionLongPress={() => setReactionDetailsFor(item.id)}
@@ -709,14 +806,36 @@ export default function RoomChat() {
       );
     },
     // toggleReaction stable enough; deps kept minimal to avoid re-renders
-    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage, openImageViewer],
+    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage, openImageViewer, adminIds, isSelecting, selectedMessageIds, toggleSelect, onTapSelectable],
   );
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
       <View>
-      {/* Header or search bar */}
-      {searchMode ? (
+      {/* Header, selection bar, or search bar */}
+      {isSelecting ? (
+        <View style={[styles.searchHeader, { borderBottomColor: theme.border }]}>
+          <Pressable onPress={clearSelection} hitSlop={12}>
+            <Ionicons name="close" size={24} color={theme.textPrimary} />
+          </Pressable>
+          <Text style={[styles.selectionCount, { color: theme.textPrimary }]}>
+            {selectedMessageIds.size} selected
+          </Text>
+          <Pressable
+            onPress={() => openForward(messages.filter((m) => selectedMessageIds.has(m.id)))}
+            hitSlop={10}
+            style={styles.selectionAction}
+          >
+            <Ionicons name="arrow-redo-outline" size={22} color={theme.textPrimary} />
+          </Pressable>
+          <Pressable onPress={batchStar} hitSlop={10} style={styles.selectionAction}>
+            <Ionicons name="star-outline" size={22} color={theme.textPrimary} />
+          </Pressable>
+          <Pressable onPress={confirmBatchDelete} hitSlop={10} style={styles.selectionAction}>
+            <Ionicons name="trash-outline" size={22} color={theme.error} />
+          </Pressable>
+        </View>
+      ) : searchMode ? (
         <View style={[styles.searchHeader, { borderBottomColor: theme.border }]}>
           <Pressable onPress={() => { setSearchMode(false); setSearchQuery(''); }} hitSlop={10}>
             <Ionicons name="chevron-back" size={26} color={theme.textPrimary} />
@@ -749,7 +868,7 @@ export default function RoomChat() {
       )}
 
       {/* Pinned banner */}
-      {pinned && !searchMode ? (
+      {pinned && !searchMode && !isSelecting ? (
         <Pressable
           onPress={() => scrollToMessage(pinned.id)}
           style={[styles.pinnedBanner, { backgroundColor: theme.surfaceElevated, borderLeftColor: theme.brand }]}
@@ -869,6 +988,17 @@ export default function RoomChat() {
             <MenuItem icon="notifications-off-outline" label="Mute Notifications" onPress={handleMute} />
             <MenuItem icon="flag-outline" label="Report Group" onPress={handleReportRoom} />
             <MenuItem icon="exit-outline" label="Leave Group" destructive onPress={handleLeave} />
+            {room?.isCreator === true ? (
+              <MenuItem
+                icon="trash-outline"
+                label="Delete Group"
+                destructive
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(`/rooms/info?roomId=${roomId}&action=delete` as Href);
+                }}
+              />
+            ) : null}
           </View>
         </Pressable>
       </Modal>
@@ -883,7 +1013,8 @@ export default function RoomChat() {
           contextMsg.senderId === me?.id &&
           contextMsg.type === 'text' &&
           !contextMsg.isDeleted &&
-          Date.now() - new Date(contextMsg.createdAt).getTime() < EDIT_WINDOW_MS
+          Date.now() - new Date(contextMsg.createdAt).getTime() < EDIT_WINDOW_MS &&
+          planAtLeast(me?.plan, 'gold')
         }
         onClose={() => setContextMsg(null)}
         onReact={(e) => contextMsg && toggleReaction(contextMsg, e)}
@@ -893,7 +1024,7 @@ export default function RoomChat() {
         }}
         onReply={() => { setReplyTo(contextMsg); setContextMsg(null); }}
         onCopy={() => contextMsg && doCopy(contextMsg)}
-        onForward={() => { setForwardMessage(contextMsg); setContextMsg(null); }}
+        onForward={() => contextMsg && openForward([contextMsg])}
         onStar={() => contextMsg && doStar(contextMsg)}
         onPin={() => contextMsg && doPin(contextMsg)}
         onEdit={() => {
@@ -902,27 +1033,40 @@ export default function RoomChat() {
           setEditingMessage(contextMsg);
           setContextMsg(null);
         }}
+        onSelect={() => contextMsg && enterSelectMode(contextMsg)}
         onDeleteForMe={() => contextMsg && doDeleteForMe(contextMsg)}
         onDelete={() => contextMsg && doDelete(contextMsg)}
         onReport={() => contextMsg && doReport(contextMsg)}
-        onInfo={() => { setContextMsg(null); showSuccess('Delivered'); }}
+        onInfo={() => { setInfoMessage(contextMsg); setContextMsg(null); }}
+      />
+
+      <MessageInfo
+        message={infoMessage}
+        isOwn={infoMessage?.senderId === me?.id}
+        deliveredCount={infoMessage?.deliveredCount ?? 0}
+        onClose={() => setInfoMessage(null)}
       />
 
       <ForwardSheet
-        visible={!!forwardMessage}
-        onClose={() => setForwardMessage(null)}
+        visible={!!forwardMessages}
+        onClose={() => setForwardMessages(null)}
         onForward={async (targetConversationIds) => {
-          if (!forwardMessage) return;
+          const items = forwardMessages ?? [];
           try {
-            await forwardRoomMessage(roomId, forwardMessage.id, targetConversationIds);
-            showSuccess('Message forwarded');
+            for (const item of items) {
+              await forwardRoomMessage(roomId, item.id, targetConversationIds);
+            }
+            showSuccess(`Message${items.length > 1 ? 's' : ''} forwarded`);
+            clearSelection();
           } catch (e) {
             toastApiError(e, 'Could not forward message');
           } finally {
-            setForwardMessage(null);
+            setForwardMessages(null);
           }
         }}
       />
+
+      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
 
       {/* Full emoji picker for a reaction */}
       <AppBottomSheet
@@ -1026,6 +1170,11 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular },
   searchNav: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   matchCount: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
+  selectionCount: { flex: 1, fontSize: FontSize.lg, fontFamily: FontFamily.semibold },
+  selectionAction: { marginLeft: spacing.md },
+
+  selectRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm },
+  selectCheckbox: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
 
   pinnedBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderLeftWidth: 3 },
   pinnedLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },

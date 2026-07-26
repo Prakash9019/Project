@@ -746,6 +746,7 @@ async function serializeMessage(msg: any, ctx: SerializeMsgCtx) {
     type: msg.type,
     content: msg.isDeleted ? 'Message removed' : msg.content,
     mediaUrl: msg.isDeleted ? null : await signUrl(msg.mediaUrl),
+    metadata: msg.isDeleted ? null : msg.metadata ?? null,
     isPinned: msg.isPinned,
     isStarred: ctx.starred?.has(msg.id) ?? false,
     isDeleted: msg.isDeleted,
@@ -931,6 +932,7 @@ export async function sendMessage(userId: string, roomId: string, body: SendMess
       type: body.type,
       mediaUrl: body.mediaUrl ?? null,
       replyToId: body.replyToId ?? null,
+      metadata: body.metadata ?? null,
     },
     include: {
       sender: { include: PHOTO_INCLUDE },

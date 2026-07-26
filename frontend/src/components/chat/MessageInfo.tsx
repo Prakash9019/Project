@@ -4,6 +4,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import type { Message } from '../../types/api';
 
+/** Minimal shape MessageInfo needs — satisfied by both 1:1 `Message` and room `RoomMessageCard`. */
+type InfoMessage = {
+  createdAt: string;
+  content: string | null;
+  type: string;
+  isUnsent?: boolean;
+  isDeleted?: boolean;
+};
+
 function fullTimestamp(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -17,9 +26,9 @@ function fullTimestamp(iso: string): string {
   return `${d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}, ${time}`;
 }
 
-function previewFor(message: Message): string {
-  if (message.isUnsent) return 'message removed';
-  if (message.type === 'photo' || message.type === 'expiring_photo') return '📷 Photo';
+function previewFor(message: InfoMessage): string {
+  if (message.isUnsent || message.isDeleted) return 'This message was deleted';
+  if (message.type === 'photo' || message.type === 'expiring_photo' || message.type === 'image') return '📷 Photo';
   if (message.type === 'video') return '🎥 Video';
   if (message.type === 'voice' || message.type === 'voice_note') return '🎤 Voice message';
   return message.content ?? 'Media';
@@ -37,21 +46,41 @@ type Step = {
 export function MessageInfo({
   message,
   isOwn,
+  deliveredCount,
   onClose,
 }: {
-  message: Message | null;
+  message: (Message | InfoMessage) | null;
   isOwn: boolean;
+  /** Room messages only: how many OTHER members received it. Groups never show read receipts,
+   *  so when this is provided the timeline shows Sent → Delivered (no Read step). */
+  deliveredCount?: number;
   onClose: () => void;
 }) {
   const { theme } = useTheme();
 
   if (!message) return null;
 
-  const steps: Step[] = [
-    { key: 'sent', label: 'Sent', icon: 'time-outline', color: 'tertiary', timestamp: message.createdAt, fallback: '' },
-    { key: 'delivered', label: 'Delivered', icon: 'checkmark-done', color: 'grey', timestamp: message.deliveredAt, fallback: 'Waiting for delivery' },
-    { key: 'read', label: 'Read', icon: 'checkmark-done', color: 'blue', timestamp: message.readAt, fallback: 'Not yet read' },
-  ];
+  const isRoomMessage = deliveredCount != null;
+  const m = message as Partial<Message>;
+
+  const steps: Step[] = isRoomMessage
+    ? [
+        { key: 'sent', label: 'Sent', icon: 'time-outline', color: 'tertiary', timestamp: message.createdAt, fallback: '' },
+        {
+          key: 'delivered',
+          label:
+            !deliveredCount ? 'Delivered' : deliveredCount === 1 ? 'Delivered to 1 member' : `Delivered to ${deliveredCount} members`,
+          icon: 'checkmark-done',
+          color: 'grey',
+          timestamp: deliveredCount ? message.createdAt : null,
+          fallback: 'Waiting for delivery',
+        },
+      ]
+    : [
+        { key: 'sent', label: 'Sent', icon: 'time-outline', color: 'tertiary', timestamp: message.createdAt, fallback: '' },
+        { key: 'delivered', label: 'Delivered', icon: 'checkmark-done', color: 'grey', timestamp: m.deliveredAt ?? null, fallback: 'Waiting for delivery' },
+        { key: 'read', label: 'Read', icon: 'checkmark-done', color: 'blue', timestamp: m.readAt ?? null, fallback: 'Not yet read' },
+      ];
 
   const iconColor = (c: Step['color']) =>
     c === 'blue' ? theme.info : c === 'grey' ? theme.textTertiary : theme.textTertiary;

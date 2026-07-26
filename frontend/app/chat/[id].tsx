@@ -10,6 +10,7 @@ import {
   Keyboard,
   ActivityIndicator,
   Modal,
+  Share,
 } from 'react-native';
 import { RemoteImage } from '../../src/components/RemoteImage';
 import * as ImagePicker from 'expo-image-picker';
@@ -104,14 +105,19 @@ const VIDEO_UNAVAILABLE_TOOLTIP = 'This person is not accepting video calls righ
 
 type ChatRow =
   | { kind: 'date'; id: string; label: string }
+  | { kind: 'unread_divider'; id: string }
   | { kind: 'message'; message: Message };
 
-function buildRows(messages: Message[]): ChatRow[] {
+function buildRows(messages: Message[], meId: string | undefined): ChatRow[] {
   const rows: ChatRow[] = [];
+  const firstUnreadIndex = messages.findIndex((m) => m.senderId !== meId && !m.readAt && !m.isUnsent);
   messages.forEach((m, i) => {
     const prev = messages[i - 1];
     if (!prev || !sameCalendarDay(prev.createdAt, m.createdAt)) {
       rows.push({ kind: 'date', id: `d-${m.createdAt}`, label: chatDateHeader(m.createdAt) });
+    }
+    if (i === firstUnreadIndex) {
+      rows.push({ kind: 'unread_divider', id: `unread-${m.id}` });
     }
     rows.push({ kind: 'message', message: m });
   });
@@ -173,6 +179,7 @@ type ChatMessageRowProps = {
   onViewOncePress: (item: Message) => void;
   onRetry: (item: Message) => void;
   onTap: (item: Message) => void;
+  onReplyPress: (messageId: string) => void;
   isSelecting: boolean;
   isSelected: boolean;
 };
@@ -202,6 +209,7 @@ function ChatMessageRowBase({
   onViewOncePress,
   onRetry,
   onTap,
+  onReplyPress,
   isSelecting,
   isSelected,
 }: ChatMessageRowProps) {
@@ -209,7 +217,7 @@ function ChatMessageRowBase({
 
   const renderBody = () => {
     if (item.isUnsent) {
-      return <Text style={[styles.removed, { color: mine ? theme.textInverse : theme.textTertiary }]}>message removed</Text>;
+      return <Text style={[styles.removed, { color: mine ? theme.textInverse : theme.textTertiary }]}>This message was deleted</Text>;
     }
 
     if (isViewOnce(item)) {
@@ -283,7 +291,7 @@ function ChatMessageRowBase({
     if (item.type === 'voice' || item.type === 'voice_note') {
       const voiceUrl = item.mediaUrls[0] ?? item.mediaUrl;
       if (voiceUrl) {
-        return <AudioPlayer mediaUrl={voiceUrl} isOwn={mine} />;
+        return <AudioPlayer mediaUrl={voiceUrl} isOwn={mine} caption={item.caption} />;
       }
       return (
         <View style={styles.mediaChip}>
@@ -364,22 +372,24 @@ function ChatMessageRowBase({
     !item.content?.startsWith('📁 ');
 
   const quote = item.replyTo ? (
-    <View
-      style={[
-        styles.quote,
-        {
-          backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
-          borderLeftColor: mine ? '#fff' : theme.brand,
-        },
-      ]}
-    >
-      <Text style={[styles.quoteName, { color: mine ? '#fff' : theme.brand }]} numberOfLines={1}>
-        {item.replyTo.senderId === meId ? 'You' : peerName || 'Someone'}
-      </Text>
-      <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
-        {item.replyTo.content}
-      </Text>
-    </View>
+    <Pressable onPress={() => item.replyTo && onReplyPress(item.replyTo.id)}>
+      <View
+        style={[
+          styles.quote,
+          {
+            backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
+            borderLeftColor: mine ? '#fff' : theme.brand,
+          },
+        ]}
+      >
+        <Text style={[styles.quoteName, { color: mine ? '#fff' : theme.brand }]} numberOfLines={1}>
+          {item.replyTo.senderId === meId ? 'You' : peerName || 'Someone'}
+        </Text>
+        <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
+          {item.replyTo.content}
+        </Text>
+      </View>
+    </Pressable>
   ) : null;
 
   const highlightStyle = highlight ? { borderWidth: 1.5, borderColor: theme.brandSecondary } : null;
@@ -581,6 +591,7 @@ export default function Chat() {
   // latest value without re-subscribing.
   const oldestCursor = useRef<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const composerRef = useRef<ChatComposerHandle>(null);
   const [banner, setBanner] = useState<string | null>(null);
   // Floating scroll-to-bottom pill (F26): visible when the user has scrolled up
@@ -625,7 +636,7 @@ export default function Chat() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const isSelecting = selectedMessageIds.size > 0;
 
-  const rows = useMemo(() => buildRows(messages), [messages]);
+  const rows = useMemo(() => buildRows(messages, me?.id), [messages, me?.id]);
 
   // Event-driven auto-scroll. Runs on every messages change but only scrolls on a
   // real append: initial load anchors at the bottom; a new appended message
@@ -826,6 +837,22 @@ export default function Chat() {
     markConversationRead(conversationId).catch(() => {});
     return () => { active = false; };
   }, [conversationId, markRead]);
+
+  // Client-side disappearing-messages enforcement: the backend already excludes
+  // expired messages from listMessages, but a message that ages past the window
+  // while THIS screen is open (loaded before it expired) stays in local state
+  // until something clears it. Sweep every 60s and drop any that have expired.
+  useEffect(() => {
+    if (!disappearing) return;
+    const windowMs = { '24h': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000, '90d': 90 * 24 * 60 * 60 * 1000 }[disappearing];
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setMessages((prev) =>
+        prev.filter((m) => m.senderId === me?.id || now - new Date(m.createdAt).getTime() < windowMs),
+      );
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [disappearing, me?.id]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -1104,16 +1131,21 @@ export default function Chat() {
   const handleSendVideo = (uri: string, replyToId?: string) =>
     uploadAndSendFile(uri, 'video', 'video/mp4', { type: 'video', content: '', replyToId });
 
-  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string) => {
+  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string, amplitudes?: number[]) => {
     setSending(true);
     setBanner(null);
     try {
-      const url = await uploadToR2(uri, 'voice_clip', 'audio/mp4');
-      await postMessage({ type: 'voice', mediaUrls: [url], replyToId });
+      setUploadProgress(0);
+      const url = await uploadToR2(uri, 'voice_clip', 'audio/mp4', { onProgress: setUploadProgress });
+      // `caption` is unused for type='voice' — repurposed to carry the real waveform
+      // so playback doesn't have to fake it (see src/lib/audioAmplitude.ts).
+      const caption = amplitudes?.length ? JSON.stringify({ amplitudes }) : undefined;
+      await postMessage({ type: 'voice', mediaUrls: [url], caption, replyToId });
     } catch (e) {
       setBanner((e as ApiError).message ?? 'Could not send voice message');
     } finally {
       setSending(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1465,7 +1497,8 @@ export default function Chat() {
     ]);
 
     try {
-      const key = await uploadChatPhoto(localUri);
+      setUploadProgress(0);
+      const key = await uploadChatPhoto(localUri, setUploadProgress);
       const apiRes = await sendMessage(conversationId, {
         type: viewOnce ? 'expiring_photo' : 'photo',
         mediaUrls: [key],
@@ -1482,6 +1515,8 @@ export default function Chat() {
     } catch (e) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       throw e;
+    } finally {
+      setUploadProgress(null);
     }
   };
 
@@ -1528,12 +1563,14 @@ export default function Chat() {
     setSending(true);
     setBanner(null);
     try {
-      const url = await uploadToR2(localUri, uploadType, contentType);
+      setUploadProgress(0);
+      const url = await uploadToR2(localUri, uploadType, contentType, { onProgress: setUploadProgress });
       await postMessage({ ...body, mediaUrls: [url] });
     } catch (e) {
       setBanner((e as ApiError).message ?? 'Could not send attachment');
     } finally {
       setSending(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1545,12 +1582,14 @@ export default function Chat() {
     setSending(true);
     setBanner(null);
     try {
-      const url = await uploadToR2(file.uri, 'document', file.mimeType || 'application/octet-stream', { ext });
+      setUploadProgress(0);
+      const url = await uploadToR2(file.uri, 'document', file.mimeType || 'application/octet-stream', { ext, onProgress: setUploadProgress });
       await postMessage({ type: 'text', content: `📄 ${file.name ?? 'Document'}`, mediaUrls: [url] });
     } catch (e) {
       setBanner((e as ApiError).message ?? 'Could not send document');
     } finally {
       setSending(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1561,12 +1600,14 @@ export default function Chat() {
     setSending(true);
     setBanner(null);
     try {
-      const url = await uploadToR2(file.uri, 'audio', file.mimeType || 'audio/mpeg');
+      setUploadProgress(0);
+      const url = await uploadToR2(file.uri, 'audio', file.mimeType || 'audio/mpeg', { onProgress: setUploadProgress });
       await postMessage({ type: 'text', content: `🎵 ${file.name ?? 'Audio'}`, mediaUrls: [url] });
     } catch (e) {
       setBanner((e as ApiError).message ?? 'Could not send audio');
     } finally {
       setSending(false);
+      setUploadProgress(null);
     }
   };
 
@@ -1695,6 +1736,15 @@ export default function Chat() {
         </View>
       );
     }
+    if (row.kind === 'unread_divider') {
+      return (
+        <View style={styles.unreadDivider}>
+          <View style={[styles.unreadLine, { backgroundColor: theme.brand }]} />
+          <Text style={[styles.unreadText, { color: theme.brand }]}>Unread messages</Text>
+          <View style={[styles.unreadLine, { backgroundColor: theme.brand }]} />
+        </View>
+      );
+    }
     const item = row.message;
     return (
       <ChatMessageRow
@@ -1714,11 +1764,12 @@ export default function Chat() {
         onViewOncePress={openViewOnce}
         onRetry={retryFailedMessage}
         onTap={onTapMessage}
+        onReplyPress={jumpToMessage}
         isSelecting={isSelecting}
         isSelected={selectedMessageIds.has(item.id)}
       />
     );
-  }, [theme, me?.id, peerName, highlightId, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openImageViewer, openViewOnce, retryFailedMessage, onTapMessage, isSelecting, selectedMessageIds]);
+  }, [theme, me?.id, peerName, highlightId, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openImageViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds]);
 
   const CallButton = ({ type }: { type: 'audio' | 'video' }) => {
     const { enabled, tip } = callState(type);
@@ -1920,9 +1971,22 @@ export default function Chat() {
           <FlatList
             ref={listRef}
             data={rows}
-            keyExtractor={(r) => (r.kind === 'date' ? r.id : r.message.id)}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, gap: 10 }}
+            keyExtractor={(r) => (r.kind === 'message' ? r.message.id : r.id)}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, gap: 10, flexGrow: 1 }}
             renderItem={renderRow}
+            ListEmptyComponent={
+              <View style={styles.emptyConversation}>
+                <RemoteImage
+                  source={{ uri: peerPhoto }}
+                  style={styles.emptyAvatar}
+                  stableId={`avatar-${peerId ?? peerName}`}
+                />
+                <Text style={[styles.emptyName, { color: theme.textPrimary }]}>{peerName || 'them'}</Text>
+                <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
+                  This is the beginning of your conversation.{'\n'}Say hello! 👋
+                </Text>
+              </View>
+            }
             keyboardShouldPersistTaps="handled"
             // Keep older messages visually anchored when a previous page is
             // prepended so the list doesn't jump to the top.
@@ -1984,7 +2048,7 @@ export default function Chat() {
               ? {
                   id: replyTo.id,
                   senderName: replyTo.senderId === me?.id ? 'yourself' : peerName || 'them',
-                  content: replyTo.isUnsent ? 'message removed' : replyTo.content || 'Media',
+                  content: replyTo.isUnsent ? 'This message was deleted' : replyTo.content || 'Media',
                 }
               : null
           }
@@ -2006,6 +2070,7 @@ export default function Chat() {
           onTypingStop={handleTypingStop}
           canUseTemplates={canUseTemplates}
           onOpenTemplates={openTemplatePicker}
+          uploadProgress={uploadProgress != null ? Math.round(uploadProgress * 100) : null}
           placeholder="Say something…"
         />
         ) : null}
@@ -2118,6 +2183,10 @@ export default function Chat() {
         }
         if (isImage) {
           actions.push({ key: 'save', label: 'Save to Gallery', icon: 'download-outline', onPress: () => saveMediaToGallery(item) });
+          const shareUrl = item.mediaUrls[0] ?? item.mediaUrl;
+          if (shareUrl) {
+            actions.push({ key: 'share', label: 'Share', icon: 'share-outline', onPress: () => { setMenuMessage(null); Share.share({ url: shareUrl, message: '' }).catch(() => {}); } });
+          }
         }
         if (!item.isUnsent && !item.id.startsWith('tmp-')) {
           actions.push({ key: 'select', label: 'Select', icon: 'checkmark-circle-outline', onPress: () => enterSelectMode(item) });
@@ -2287,6 +2356,13 @@ export default function Chat() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  emptyConversation: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+  emptyAvatar: { width: 80, height: 80, borderRadius: 40 },
+  emptyName: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, marginTop: 16 },
+  emptySubtitle: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
+  unreadDivider: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 },
+  unreadLine: { flex: 1, height: StyleSheet.hairlineWidth },
+  unreadText: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, marginHorizontal: 8 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
   headTap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 },
   headAvatar: { width: 36, height: 36, borderRadius: 18 },

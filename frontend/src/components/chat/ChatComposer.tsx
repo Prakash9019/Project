@@ -32,12 +32,16 @@ import { ImagePreview } from './ImagePreview';
 import { ReplyBar } from './ReplyBar';
 import { EditBar } from './EditBar';
 import { UploadProgressBar } from './UploadProgressBar';
+import { resampleAmplitudes } from '../../lib/audioAmplitude';
 
 const DRAFT_DEBOUNCE_MS = 500;
 const TYPING_STOP_MS = 2000;
 const MIN_RECORD_MS = 1000;
 // Number of live waveform samples retained while recording (one bar each).
 const WAVE_SAMPLES = 28;
+// Number of amplitude samples persisted with the sent clip (resampled from the
+// full recording) for accurate playback waveforms — independent of playback bar count.
+const STORED_AMPLITUDE_COUNT = 40;
 // Dev-only voice-recording trace. Reproduce the "recording only starts after
 // multiple attempts / lock / cancel don't work" reports on a physical device and
 // read these lines to see the exact point the lifecycle diverges (gesture fired?
@@ -67,7 +71,7 @@ export interface ChatComposerProps {
   onSendText: (content: string, replyToId?: string) => Promise<void>;
   onSendImages: (uris: string[], caption: string, replyToId?: string) => Promise<void>;
   onSendVideo: (uri: string, replyToId?: string) => Promise<void>;
-  onSendAudio: (uri: string, durationMs: number, replyToId?: string) => Promise<void>;
+  onSendAudio: (uri: string, durationMs: number, replyToId?: string, amplitudes?: number[]) => Promise<void>;
   onSendDocument: () => void | Promise<void>;
   onSendAudioFile?: () => void | Promise<void>;
   onSendGif: (gif: GifResult) => void | Promise<void>;
@@ -145,6 +149,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   // Live mic amplitudes (0..1) sampled from the recorder's metering while
   // recording — drives the real waveform in the overlay (F58/F60). Last N samples.
   const [amplitudes, setAmplitudes] = useState<number[]>([]);
+  // Every metering sample for the CURRENT clip (unbounded, unlike `amplitudes`
+  // above which keeps only the last WAVE_SAMPLES for the live overlay) — resampled
+  // and persisted with the sent message so playback shows the real waveform.
+  const fullAmplitudesRef = useRef<number[]>([]);
 
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,6 +186,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
           // -60dB (near silence) → 0, 0dB (loud) → 1.
           const normalized = Math.max(0, Math.min(1, (metering + 60) / 60));
           setAmplitudes((prev) => [...prev.slice(-(WAVE_SAMPLES - 1)), normalized]);
+          fullAmplitudesRef.current.push(normalized);
         }
       } catch {
         /* recorder not ready yet */
@@ -464,6 +473,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       recordStartRef.current = Date.now();
       isRecordingSV.value = true;
       setAmplitudes([]); // fresh waveform for this clip
+      fullAmplitudesRef.current = [];
       vlog('record() called | isRecording:', audioRecorder.isRecording);
       setRecordState('recording');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -525,7 +535,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       vlog('NOT sending (cancelled / no uri / under', MIN_RECORD_MS, 'ms)');
       return;
     }
-    await onSendAudio(uri, durationMs, replyTo?.id);
+    const storedAmplitudes = resampleAmplitudes(fullAmplitudesRef.current, STORED_AMPLITUDE_COUNT);
+    await onSendAudio(uri, durationMs, replyTo?.id, storedAmplitudes);
   };
 
   // Discard the recording without sending.

@@ -63,6 +63,9 @@ export const sendMessageSchema = z
     // .url() check here rejected keys and silently broke image/voice sends.
     mediaUrl: z.string().min(1).max(2048).optional(),
     replyToId: z.string().uuid().optional(),
+    // Opaque JSON metadata (e.g. voice-note waveform amplitudes) — never shown
+    // as message text, unlike `content`. Not moderated/content-rule-checked.
+    metadata: z.string().max(4000).optional(),
   })
   .refine((b) => (b.type === 'image' || b.type === 'voice' ? !!b.mediaUrl : b.content.length > 0), {
     message: 'Message cannot be empty',

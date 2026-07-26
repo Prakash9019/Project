@@ -1132,6 +1132,11 @@ model RoomMessage {
   editedAt          DateTime?
   isEdited          Boolean               @default(false)
   originalContent   String?               @db.Text
+  // Opaque JSON metadata that travels with a message but is never rendered as
+  // its content (e.g. voice-note waveform amplitudes) — added 20260725 so this
+  // no longer has to be smuggled through `content` (which IS shown as text in
+  // pinned banners, reply quotes, and search).
+  metadata          String?               @db.Text
   // "Delete for me" — per-member hide list (rooms have N members, not two
   // sides, so this is an array of userIds rather than the 1:1 deletedByA/B pair).
   hiddenForUserIds  String[]              @default([])
