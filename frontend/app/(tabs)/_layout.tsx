@@ -75,6 +75,7 @@ function CustomTabBar({ state, navigation }: any) {
               key={route.key}
               style={s.tab}
               ripple={false}
+              scale={1}
               onPress={() => {
                 const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!active && !event.defaultPrevented) navigation.navigate(route.name);

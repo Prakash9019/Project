@@ -10,7 +10,7 @@ import {
   Modal,
 } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -28,6 +28,7 @@ import { SearchPanel, type SearchMessage } from '../../src/components/chat/Searc
 import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
 import { ScrollToBottomButton } from '../../src/components/chat/ScrollToBottomButton';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { ForwardSheet } from '../../src/components/chat/ForwardSheet';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { ChatSkeleton } from '../../src/components/Skeleton';
 import { useAuthStore } from '../../src/store/authStore';
@@ -48,6 +49,7 @@ import {
   pinRoomMessage,
   starMessage,
   unstarMessage,
+  forwardRoomMessage,
 } from '../../src/services/api';
 import {
   connectSocket,
@@ -88,10 +90,6 @@ function isRoomGifUrl(url: string): boolean {
 
 export default function RoomChat() {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  // Measured height of the header + pinned banner above the list, so the
-  // KeyboardAvoidingView offset is exact instead of a hardcoded 90 (F27).
-  const [topOffset, setTopOffset] = useState(0);
   const router = useRouter();
   const me = useAuthStore((s) => s.user);
   const params = useLocalSearchParams<{ id: string; unread?: string }>();
@@ -109,6 +107,7 @@ export default function RoomChat() {
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMsg, setContextMsg] = useState<RoomMessageCard | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<RoomMessageCard | null>(null);
   const [editingMessage, setEditingMessage] = useState<RoomMessageCard | null>(null);
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
@@ -715,8 +714,7 @@ export default function RoomChat() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
-      {/* Header + pinned banner measured for the KeyboardAvoidingView offset (F27). */}
-      <View onLayout={(e) => setTopOffset(e.nativeEvent.layout.height)}>
+      <View>
       {/* Header or search bar */}
       {searchMode ? (
         <View style={[styles.searchHeader, { borderBottomColor: theme.border }]}>
@@ -770,11 +768,15 @@ export default function RoomChat() {
       ) : null}
       </View>
 
-      {/* F27: `padding` on both platforms + measured offset; the list below drops
+      {/* F27: `padding` on both platforms. keyboardVerticalOffset is 0 on purpose
+          — KeyboardAvoidingView auto-measures its own screen position, which
+          already accounts for the header/banners above it; adding insets.top +
+          topOffset on top double-counted that distance and left a gap between
+          the composer and the keyboard. The list below drops
           `automaticallyAdjustKeyboardInsets` (it double-applied with this KAV). */}
       <KeyboardAvoidingView
         behavior="padding"
-        keyboardVerticalOffset={insets.top + topOffset}
+        keyboardVerticalOffset={0}
         style={{ flex: 1 }}
       >
         {searchMode ? (
@@ -891,7 +893,7 @@ export default function RoomChat() {
         }}
         onReply={() => { setReplyTo(contextMsg); setContextMsg(null); }}
         onCopy={() => contextMsg && doCopy(contextMsg)}
-        onForward={() => {}}
+        onForward={() => { setForwardMessage(contextMsg); setContextMsg(null); }}
         onStar={() => contextMsg && doStar(contextMsg)}
         onPin={() => contextMsg && doPin(contextMsg)}
         onEdit={() => {
@@ -904,6 +906,22 @@ export default function RoomChat() {
         onDelete={() => contextMsg && doDelete(contextMsg)}
         onReport={() => contextMsg && doReport(contextMsg)}
         onInfo={() => { setContextMsg(null); showSuccess('Delivered'); }}
+      />
+
+      <ForwardSheet
+        visible={!!forwardMessage}
+        onClose={() => setForwardMessage(null)}
+        onForward={async (targetConversationIds) => {
+          if (!forwardMessage) return;
+          try {
+            await forwardRoomMessage(roomId, forwardMessage.id, targetConversationIds);
+            showSuccess('Message forwarded');
+          } catch (e) {
+            toastApiError(e, 'Could not forward message');
+          } finally {
+            setForwardMessage(null);
+          }
+        }}
       />
 
       {/* Full emoji picker for a reaction */}

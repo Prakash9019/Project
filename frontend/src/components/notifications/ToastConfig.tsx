@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import Toast, { type ToastConfig as ToastConfigType, type ToastConfigParams } from 'react-native-toast-message';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+const ringtoneAsset = require('../../../assets/sounds/ringtone.wav');
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -205,17 +207,19 @@ function CallToast({ props }: ToastConfigParams<CallToastProps>) {
   const { theme } = useTheme();
   const router = useRouter();
 
-  // Incoming-call feedback: loop device vibration so the call is unmissable, and
-  // auto-dismiss as MISSED after 30s (autoHide is disabled on this toast). The
-  // cleanup — cancel vibration + clear the timer — runs on unmount, which covers
-  // every exit path: accept, decline, AND timeout all unmount the toast.
-  //
-  // TODO(F65): no ringtone asset ships with the app yet. When one is added under
-  // assets/, load and loop it here via expo-audio and unload it in the cleanup;
-  // vibration alone is the interim feedback.
+  // Incoming-call feedback: loop the ringtone + device vibration so the call is
+  // unmissable, and auto-dismiss as MISSED after 30s (autoHide is disabled on
+  // this toast). The cleanup — stop the ringtone, cancel vibration, clear the
+  // timer — runs on unmount, which covers every exit path: accept, decline,
+  // AND timeout all unmount the toast.
   useEffect(() => {
     // Repeating pattern [wait, vibrate, pause, …] with repeat = true.
     Vibration.vibrate([0, 700, 1000], true);
+    const player = createAudioPlayer(ringtoneAsset);
+    player.loop = true;
+    setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'duckOthers' })
+      .catch(() => {})
+      .finally(() => player.play());
     const t = setTimeout(() => {
       updateCall(props.callId, 'missed').catch(() => {});
       Toast.hide();
@@ -223,6 +227,7 @@ function CallToast({ props }: ToastConfigParams<CallToastProps>) {
     return () => {
       clearTimeout(t);
       Vibration.cancel();
+      player.remove();
     };
   }, [props.callId]);
 

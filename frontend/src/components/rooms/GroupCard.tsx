@@ -83,6 +83,7 @@ function GroupCardBase({
     <Animated.View style={pulseStyle}>
       <PressableScale
         onPress={onPress}
+        scale={1}
         style={
           isJoined
             ? styles.row

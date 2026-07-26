@@ -7,6 +7,7 @@ import {
   FlatList,
   TextInput,
   KeyboardAvoidingView,
+  Keyboard,
   ActivityIndicator,
   Modal,
 } from 'react-native';
@@ -15,7 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
@@ -215,7 +216,12 @@ function ChatMessageRowBase({
       const opened = !!item.viewedAt && !mine;
       const thumb = item.mediaUrls[0] ?? item.mediaUrl;
       return (
-        <Pressable onPress={() => onViewOncePress(item)} disabled={opened && !mine}>
+        <Pressable
+          onPress={() => onViewOncePress(item)}
+          onLongPress={() => onLongPress(item)}
+          delayLongPress={220}
+          disabled={opened && !mine}
+        >
           <View style={[styles.snapTile, opened && !mine && styles.snapOpened]}>
             {thumb && mine ? (
               <RemoteImage source={{ uri: thumb }} style={styles.snapImage} contentFit="cover" transition={120} />
@@ -238,7 +244,11 @@ function ChatMessageRowBase({
     if (item.type === 'photo' && item.mediaUrls.length > 0) {
       const isAlbum = item.content?.startsWith('📁 ');
       return (
-        <Pressable onPress={() => onImagePress(item.mediaUrls[0] ?? item.mediaUrl ?? '')}>
+        <Pressable
+          onPress={() => onImagePress(item.mediaUrls[0] ?? item.mediaUrl ?? '')}
+          onLongPress={() => onLongPress(item)}
+          delayLongPress={220}
+        >
           <View style={styles.photoStack}>
             <RemoteImage source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} />
             {item.mediaUrls.length > 1 && (
@@ -294,6 +304,8 @@ function ChatMessageRowBase({
         <Pressable
           style={styles.locationCard}
           onPress={() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {})}
+          onLongPress={() => onLongPress(item)}
+          delayLongPress={220}
         >
           <View style={[styles.locationPin, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
             <Ionicons name="location" size={32} color={mine ? '#fff' : theme.brand} />
@@ -319,7 +331,12 @@ function ChatMessageRowBase({
       const fg = mine ? theme.textInverse : theme.textPrimary;
       const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
       return (
-        <Pressable style={styles.fileCard} onPress={() => fileUrl && Linking.openURL(fileUrl).catch(() => {})}>
+        <Pressable
+          style={styles.fileCard}
+          onPress={() => fileUrl && Linking.openURL(fileUrl).catch(() => {})}
+          onLongPress={() => onLongPress(item)}
+          delayLongPress={220}
+        >
           <Ionicons name="document-text" size={22} color={mine ? theme.textInverse : theme.brand} />
           <View style={{ flex: 1 }}>
             <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{label}</Text>
@@ -525,13 +542,6 @@ export default function Chat() {
   const peerPhoto = Array.isArray(params.peerPhoto) ? params.peerPhoto[0] : params.peerPhoto;
   const router = useRouter();
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
-  // Measured height of everything ABOVE the keyboard-avoiding region (header,
-  // search bar, pinned/disappearing/tooltip/error banners). Combined with the
-  // safe-area top inset this gives KeyboardAvoidingView the exact vertical
-  // offset — replacing the old hardcoded `90` that didn't account for banners
-  // (F27). Re-measures automatically via onLayout when banners toggle.
-  const [topOffset, setTopOffset] = useState(0);
   const { alertConfig, hideAlert, alertError, confirm, showAlert } = useAlert();
   const me = useAuthStore((s) => s.user);
   const markRead = useChatStore((s) => s.markRead);
@@ -1735,7 +1745,7 @@ export default function Chat() {
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
         <View style={[styles.header, { borderBottomColor: theme.border }]}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Pressable onPress={() => { Keyboard.dismiss(); router.back(); }} hitSlop={12}>
             <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
           </Pressable>
           <Text style={[styles.headName, { color: theme.textPrimary, flex: 1 }]} numberOfLines={1}>
@@ -1749,9 +1759,7 @@ export default function Chat() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
-      {/* Everything above the composer/list is measured so the KeyboardAvoidingView
-          offset stays exact as banners appear/disappear (F27). */}
-      <View onLayout={(e) => setTopOffset(e.nativeEvent.layout.height)}>
+      <View>
       {isSelecting ? (
         <View style={[styles.header, { borderBottomColor: theme.border }]}>
           <Pressable onPress={clearSelection} hitSlop={12}>
@@ -1776,7 +1784,7 @@ export default function Chat() {
         </View>
       ) : (
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
+        <Pressable onPress={() => { Keyboard.dismiss(); router.back(); }} hitSlop={12}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </Pressable>
         <Pressable
@@ -1885,14 +1893,18 @@ export default function Chat() {
       )}
       </View>
 
-      {/* F27: `padding` on both platforms (Android `height` was jank-prone); the
-          offset is the measured header/banner block height + top safe-area inset
-          (no more hardcoded 90). The list below deliberately does NOT set
+      {/* F27: `padding` on both platforms (Android `height` was jank-prone).
+          keyboardVerticalOffset is 0 here on purpose: RN's KeyboardAvoidingView
+          measures its own on-screen Y position via onLayout, which already
+          accounts for the header/banner block above it (a normal-flow sibling,
+          not an overlay) — adding insets.top + topOffset on top of that
+          double-counted the same distance and produced a gap between the
+          composer and the keyboard. The list below deliberately does NOT set
           `automaticallyAdjustKeyboardInsets` — that stacked with this KAV and
           double-applied the keyboard inset (the dead-zone/gap bug). */}
       <KeyboardAvoidingView
         behavior="padding"
-        keyboardVerticalOffset={insets.top + topOffset}
+        keyboardVerticalOffset={0}
         style={{ flex: 1 }}
       >
         {searchOpen ? (
@@ -2338,14 +2350,14 @@ const styles = StyleSheet.create({
   reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },
   reactionEmoji: { fontSize: FontSize.sm },
   reactionCount: { fontSize: FontSize.xs, fontFamily: FontFamily.medium },
-  menuCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 12 },
-  emojiRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999 },
-  emojiBtn: { paddingHorizontal: 4 },
-  emojiBtnText: { fontSize: 28 },
-  plusBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
-  menuList: { width: 240, borderRadius: 14, paddingVertical: 6 },
-  menuItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 13 },
-  menuItemText: { fontSize: 15, fontFamily: FontFamily.medium },
+  menuCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 8 },
+  emojiRow: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999 },
+  emojiBtn: { paddingHorizontal: 3 },
+  emojiBtnText: { fontSize: 22 },
+  plusBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
+  menuList: { width: 220, borderRadius: 12, paddingVertical: 4 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 9 },
+  menuItemText: { fontSize: 14, fontFamily: FontFamily.medium },
   sheetOverlay: { flex: 1, justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 20, paddingBottom: 32 },
   sheetTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: 12 },

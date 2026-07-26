@@ -22,6 +22,7 @@ import {
   createRoomSchema,
   bulkAddMembersSchema,
   editMessageSchema,
+  forwardMessageSchema,
 } from './rooms.schema';
 
 const router = Router();
@@ -107,6 +108,12 @@ router.post(
 );
 router.delete('/:roomId/messages/:messageId', asyncHandler(c.deleteMessage));
 router.delete('/:roomId/messages/:messageId/hide', requireRoomMember, asyncHandler(c.deleteMessageForMe));
+router.post(
+  '/:roomId/messages/:messageId/forward',
+  requireRoomMember,
+  validate(forwardMessageSchema),
+  asyncHandler(c.forwardMessage),
+);
 router.patch(
   '/:roomId/messages/:messageId',
   requireRoomMember,

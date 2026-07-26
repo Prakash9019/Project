@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView } from 'react-native';
+import { View, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,6 +39,7 @@ export default function PhoneCode() {
       const res = await firebaseLogin(idToken);
       clearPhoneAuth();
       await login(res.accessToken, res.refreshToken, res.user);
+      Keyboard.dismiss();
       router.replace(res.isNewUser || !res.profileComplete ? '/onboarding/setup' : '/(tabs)');
     } catch (e: unknown) {
       const err = e as { code?: string; message?: string } & ApiError;

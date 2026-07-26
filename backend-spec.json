@@ -2113,6 +2113,33 @@
       }
     },
     {
+      "id": "rooms-message-forward",
+      "method": "POST",
+      "path": "/api/rooms/:roomId/messages/:messageId/forward",
+      "auth": "bearer+verified",
+      "summary": "Forward a room message into one or more of the caller's own 1:1 conversations. Room 'system' messages cannot be forwarded (400). Emits message.created to each target conversation's other participant.",
+      "body": {
+        "targetConversationIds": "string[] (1-20 uuids)"
+      },
+      "responses": {
+        "201": {
+          "schema": {
+            "forwarded": "number"
+          }
+        },
+        "400": {
+          "schema": {
+            "error": "bad_request"
+          }
+        },
+        "404": {
+          "schema": {
+            "error": "not_found"
+          }
+        }
+      }
+    },
+    {
       "id": "rooms-update",
       "method": "PATCH",
       "path": "/api/rooms/:roomId",

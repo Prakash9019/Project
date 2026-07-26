@@ -246,6 +246,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     return () => sub.remove();
   }, []);
 
+  // Dismiss the keyboard when the composer unmounts (e.g. user navigates back
+  // to Inbox while the input is still focused) — otherwise the OS keyboard
+  // stays up and the resize/collapse animation plays over whatever screen is
+  // now on top, showing as a stray gap that never settles.
+  useEffect(() => {
+    return () => Keyboard.dismiss();
+  }, []);
+
   // Tapping the emoji button swaps the keyboard for the emoji panel (and back),
   // rather than stacking the panel below an open keyboard.
   const toggleEmoji = () => {

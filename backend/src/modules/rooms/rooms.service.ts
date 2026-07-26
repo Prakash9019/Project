@@ -1361,6 +1361,61 @@ export async function editMessage(userId: string, roomId: string, messageId: str
   return { id: updated.id, content: updated.content, isEdited: updated.isEdited, editedAt: updated.editedAt };
 }
 
+/** Room message type → 1:1 Message type (system messages can't be forwarded). */
+const ROOM_TO_DM_TYPE: Record<string, 'text' | 'photo' | 'voice'> = {
+  text: 'text',
+  image: 'photo',
+  voice: 'voice',
+};
+
+/** Forward a room message into one or more of the caller's 1:1 conversations. */
+export async function forwardMessage(
+  userId: string,
+  roomId: string,
+  messageId: string,
+  targetConversationIds: string[],
+): Promise<Array<{ conversationId: string; peerId: string; message: Prisma.MessageGetPayload<object> }>> {
+  const original = await prisma.roomMessage.findFirst({ where: { id: messageId, roomId } });
+  if (!original) throw Errors.notFound('Message not found');
+  const dmType = ROOM_TO_DM_TYPE[original.type];
+  if (!dmType) throw Errors.badRequest('This message cannot be forwarded');
+
+  const targets = await prisma.conversation.findMany({
+    where: { id: { in: targetConversationIds }, OR: [{ userAId: userId }, { userBId: userId }] },
+  });
+  const foundIds = new Set(targets.map((t) => t.id));
+  const missing = targetConversationIds.filter((id) => !foundIds.has(id));
+  if (missing.length) throw Errors.notFound('One or more target conversations not found');
+
+  const results = [];
+  for (const convo of targets) {
+    const message = await prisma.$transaction(async (tx) => {
+      const msg = await tx.message.create({
+        data: {
+          conversationId: convo.id,
+          senderId: userId,
+          type: dmType,
+          content: original.isDeleted ? null : original.content,
+          mediaUrls: original.mediaUrl ? [original.mediaUrl] : [],
+          mediaUrl: original.mediaUrl,
+          isForwarded: true,
+        },
+      });
+      await tx.conversation.update({
+        where: { id: convo.id },
+        data: { lastMessageAt: new Date(), state: convo.state === 'pending' ? 'active' : convo.state },
+      });
+      return msg;
+    });
+    results.push({
+      conversationId: convo.id,
+      peerId: convo.userAId === userId ? convo.userBId : convo.userAId,
+      message,
+    });
+  }
+  return results;
+}
+
 /** "Delete for me" — hides a room message from the caller's own view only. */
 export async function deleteMessageForMe(userId: string, roomId: string, messageId: string): Promise<void> {
   const msg = await prisma.roomMessage.findFirst({ where: { id: messageId, roomId }, select: { id: true, hiddenForUserIds: true } });

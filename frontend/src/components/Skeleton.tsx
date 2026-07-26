@@ -116,7 +116,7 @@ export function MemberListSkeleton({ rows = 6 }: { rows?: number }) {
 }
 
 const styles = StyleSheet.create({
-  chat: { padding: 16, gap: 12 },
+  chat: { flex: 1, padding: 16, gap: 12, justifyContent: 'flex-end' },
   chatRow: { flexDirection: 'row', alignItems: 'center' },
   chatAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 8 },
   listRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Modal } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, spacing } from '../../theme';
-import { AppBottomSheet } from '../ui/AppBottomSheet';
 import { GifPicker, type GifResult } from '../rooms/GifPicker';
 
 export type AttachmentKind =
@@ -47,7 +47,15 @@ const OPTIONS: Option[] = [
   { kind: 'templates', label: 'Saved Replies', icon: 'chatbox-ellipses', color: 'info', optional: true },
 ];
 
-/** WhatsApp-style attachment grid. Only fully working attachments are shown. */
+/**
+ * WhatsApp-style attachment grid. Only fully working attachments are shown.
+ *
+ * Built on a plain RN `Modal` rather than `@gorhom/bottom-sheet` — the gorhom
+ * BottomSheetModal reliably called `.present()` here (no throw, ref valid) but
+ * never actually rendered on Android, with both dynamic sizing and fixed
+ * snapPoints. A plain Modal is the proven-working pattern already used by the
+ * album/templates/header-menu sheets in `app/chat/[id].tsx`.
+ */
 export function AttachmentSheet({
   visible,
   onClose,
@@ -66,6 +74,7 @@ export function AttachmentSheet({
   canUseTemplates?: boolean;
 }) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [gifOpen, setGifOpen] = useState(false);
   const options = OPTIONS.filter((o) => {
     // 'templates' rides on the plan perk, not the per-thread `extras` list.
@@ -75,35 +84,41 @@ export function AttachmentSheet({
 
   return (
     <>
-      <AppBottomSheet visible={visible} onClose={onClose}>
-        <View style={styles.content}>
-          <Text style={[styles.title, { color: theme.textPrimary }]}>Share</Text>
-          <View style={styles.grid}>
-            {options.map((o) => {
-              const color = theme[o.color] as string;
-              return (
-                <Pressable
-                  key={o.kind}
-                  onPress={() => {
-                    if (o.kind === 'gif') {
-                      setGifOpen(true);
-                      return;
-                    }
-                    onClose();
-                    onPick(o.kind);
-                  }}
-                  style={styles.option}
-                >
-                  <View style={[styles.iconCircle, { backgroundColor: color + '22' }]}>
-                    <Ionicons name={o.icon} size={26} color={color} />
-                  </View>
-                  <Text style={[styles.optionLabel, { color: theme.textSecondary }]}>{o.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </AppBottomSheet>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <Pressable style={[styles.overlay, { backgroundColor: theme.overlay }]} onPress={onClose}>
+          <Pressable
+            style={[styles.sheet, { backgroundColor: theme.surface, paddingBottom: insets.bottom + spacing.lg }]}
+            onPress={() => {}}
+          >
+            <View style={styles.handle} />
+            <Text style={[styles.title, { color: theme.textPrimary }]}>Share</Text>
+            <View style={styles.grid}>
+              {options.map((o) => {
+                const color = theme[o.color] as string;
+                return (
+                  <Pressable
+                    key={o.kind}
+                    onPress={() => {
+                      if (o.kind === 'gif') {
+                        setGifOpen(true);
+                        return;
+                      }
+                      onClose();
+                      onPick(o.kind);
+                    }}
+                    style={styles.option}
+                  >
+                    <View style={[styles.iconCircle, { backgroundColor: color + '22' }]}>
+                      <Ionicons name={o.icon} size={26} color={color} />
+                    </View>
+                    <Text style={[styles.optionLabel, { color: theme.textSecondary }]}>{o.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* KLIPY GIF picker (stacked above the attachment sheet) */}
       <GifPicker
@@ -120,7 +135,9 @@ export function AttachmentSheet({
 }
 
 const styles = StyleSheet.create({
-  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.4)', alignSelf: 'center', marginBottom: spacing.md },
   title: { fontSize: 18, fontFamily: DisplayFont.bold, marginBottom: spacing.lg },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   option: { width: '25%', alignItems: 'center', marginBottom: spacing.xl, gap: 6 },

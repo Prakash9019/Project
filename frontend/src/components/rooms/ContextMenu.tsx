@@ -66,7 +66,7 @@ export function ContextMenu({
   const allActions: Action[] = [
     { key: 'reply', label: 'Reply', icon: 'arrow-undo-outline', onPress: onReply, show: true },
     { key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: onCopy, show: !!isText },
-    { key: 'forward', label: 'Forward', icon: 'arrow-redo-outline', onPress: onForward, show: true, disabled: true },
+    { key: 'forward', label: 'Forward', icon: 'arrow-redo-outline', onPress: onForward, show: true },
     {
       key: 'star',
       label: message?.isStarred ? 'Unstar' : 'Star',
@@ -140,12 +140,12 @@ export function ContextMenu({
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 12 },
-  emojiRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999 },
-  emojiBtn: { paddingHorizontal: 4 },
-  emoji: { fontSize: 28 },
-  plusBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
-  menu: { width: 240, borderRadius: 14, paddingVertical: 6 },
-  item: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 13 },
-  itemText: { fontSize: 15, fontFamily: FontFamily.medium },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 8 },
+  emojiRow: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999 },
+  emojiBtn: { paddingHorizontal: 3 },
+  emoji: { fontSize: 22 },
+  plusBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
+  menu: { width: 220, borderRadius: 12, paddingVertical: 4 },
+  item: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 9 },
+  itemText: { fontSize: 14, fontFamily: FontFamily.medium },
 });

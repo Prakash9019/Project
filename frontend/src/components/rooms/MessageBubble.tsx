@@ -112,7 +112,7 @@ function MessageBubbleBase({
     const iconBg = isOwn ? 'rgba(255,255,255,0.2)' : theme.brand + '22';
     const iconColor = isOwn ? '#fff' : theme.brand;
     return (
-      <Pressable onPress={openMedia} style={styles.mediaCard}>
+      <Pressable onPress={openMedia} onLongPress={onLongPress} delayLongPress={220} style={styles.mediaCard}>
         <View style={[styles.mediaIcon, { backgroundColor: iconBg }]}>
           <Ionicons name={icon} size={22} color={iconColor} />
         </View>
@@ -186,7 +186,12 @@ function MessageBubbleBase({
         />
       ) : null}
       {!deleted && isImage ? (
-        <Pressable style={styles.imageWrap} onPress={() => onImagePress?.(media)}>
+        <Pressable
+          style={styles.imageWrap}
+          onPress={() => onImagePress?.(media)}
+          onLongPress={onLongPress}
+          delayLongPress={220}
+        >
           <Image
             key={reloadKey}
             source={{ uri: media }}

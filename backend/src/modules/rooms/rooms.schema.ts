@@ -105,6 +105,10 @@ export const editMessageSchema = z.object({
   content: z.string().trim().min(1).max(2000),
 });
 
+export const forwardMessageSchema = z.object({
+  targetConversationIds: z.array(z.string().uuid()).min(1).max(20),
+});
+
 export const updateMemberRoleSchema = z.object({
   role: z.enum(['admin', 'member']),
 });
@@ -130,6 +134,7 @@ export type ListMembersQuery = z.infer<typeof listMembersQuerySchema>;
 export type UpdateRoomBody = z.infer<typeof updateRoomSchema>;
 export type PinMessageBody = z.infer<typeof pinMessageSchema>;
 export type EditMessageBody = z.infer<typeof editMessageSchema>;
+export type ForwardMessageBody = z.infer<typeof forwardMessageSchema>;
 export type UpdateMemberRoleBody = z.infer<typeof updateMemberRoleSchema>;
 export type UpdateRoomPhotoBody = z.infer<typeof updateRoomPhotoSchema>;
 export type TransferOwnershipBody = z.infer<typeof transferOwnershipSchema>;

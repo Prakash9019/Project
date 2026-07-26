@@ -6,14 +6,15 @@ import {
   StyleSheet,
   Pressable,
   ActivityIndicator,
+  ScrollView,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { type Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../theme';
-import { AppBottomSheet, BottomSheetScrollView, BottomSheetTextInput } from '../ui/AppBottomSheet';
 import { showInfo, showError } from '../../lib/toast';
 
 type SearchResult = { label: string; lat: number; lng: number };
@@ -57,6 +58,7 @@ export function LocationPicker({
   onSendLocation: (lat: number, lng: number, label: string) => void;
 }) {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
 
@@ -151,8 +153,14 @@ export function LocationPicker({
   };
 
   return (
-    <AppBottomSheet visible={visible} onClose={close}>
-      <View style={styles.content}>
+    <>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <Pressable style={[styles.overlay, { backgroundColor: theme.overlay }]} onPress={close}>
+        <Pressable
+          style={[styles.content, { backgroundColor: theme.surface, paddingBottom: insets.bottom + spacing.lg }]}
+          onPress={() => {}}
+        >
+        <View style={styles.handle} />
         <Text style={[styles.title, { color: theme.textPrimary }]}>Share Location</Text>
 
         {/* Search field (expands inline) */}
@@ -160,7 +168,7 @@ export function LocationPicker({
           <View style={{ marginBottom: spacing.sm }}>
             <View style={[styles.searchWrap, { backgroundColor: theme.inputBackground }]}>
               <Ionicons name="search" size={18} color={theme.textTertiary} />
-              <BottomSheetTextInput
+              <TextInput
                 value={query}
                 onChangeText={setQuery}
                 onSubmitEditing={runSearch}
@@ -172,7 +180,7 @@ export function LocationPicker({
               />
               {searching ? <ActivityIndicator size="small" color={theme.brand} /> : null}
             </View>
-            <BottomSheetScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
+            <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled">
               {results.map((r, i) => (
                 <Pressable key={`${r.lat}-${i}`} style={styles.resultRow} onPress={() => send(r.lat, r.lng, r.label)}>
                   <Ionicons name="location-outline" size={20} color={theme.brand} />
@@ -182,7 +190,7 @@ export function LocationPicker({
               {!searching && query.trim() && results.length === 0 ? (
                 <Text style={[styles.emptyText, { color: theme.textTertiary }]}>No matching places</Text>
               ) : null}
-            </BottomSheetScrollView>
+            </ScrollView>
           </View>
         ) : null}
 
@@ -224,7 +232,9 @@ export function LocationPicker({
             ))}
           </View>
         ) : null}
-      </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
 
       {/* Pin-on-map picker */}
       <Modal visible={mapOpen} animationType="slide" onRequestClose={() => setMapOpen(false)}>
@@ -255,7 +265,7 @@ export function LocationPicker({
           </View>
         </SafeAreaView>
       </Modal>
-    </AppBottomSheet>
+    </>
   );
 }
 
@@ -287,7 +297,9 @@ function Row({
 }
 
 const styles = StyleSheet.create({
-  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.xs },
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, borderTopLeftRadius: 18, borderTopRightRadius: 18 },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.4)', alignSelf: 'center', marginBottom: spacing.md },
   title: { fontSize: 18, fontFamily: FontFamily.bold, marginBottom: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
   iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },

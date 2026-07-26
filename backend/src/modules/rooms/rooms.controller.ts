@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import * as svc from './rooms.service';
+import { serializeMessage } from '../chat/chat.service';
+import { emitToUser } from '../../realtime/emitter';
 import type {
   ListRoomsQuery,
   ListJoinedQuery,
@@ -16,6 +18,7 @@ import type {
   CreateRoomBody,
   BulkAddMembersBody,
   EditMessageBody,
+  ForwardMessageBody,
 } from './rooms.schema';
 
 export async function listRooms(req: Request, res: Response): Promise<void> {
@@ -166,6 +169,21 @@ export async function deleteMessage(req: Request, res: Response): Promise<void> 
 export async function deleteMessageForMe(req: Request, res: Response): Promise<void> {
   await svc.deleteMessageForMe(req.user!.sub, req.params.roomId, req.params.messageId);
   res.status(204).send();
+}
+
+export async function forwardMessage(req: Request, res: Response): Promise<void> {
+  const userId = req.user!.sub;
+  const { targetConversationIds } = req.body as ForwardMessageBody;
+  const results = await svc.forwardMessage(userId, req.params.roomId, req.params.messageId, targetConversationIds);
+
+  for (const r of results) {
+    emitToUser(r.peerId, 'message.created', {
+      ...serializeMessage(r.message),
+      senderId: userId,
+    });
+  }
+
+  res.status(201).json({ forwarded: results.length });
 }
 
 export async function editMessage(req: Request, res: Response): Promise<void> {

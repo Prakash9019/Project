@@ -1050,6 +1050,14 @@ export const editRoomMessage = (roomId: string, messageId: string, content: stri
     { content },
   );
 
+/** Forward a room message into one or more of the caller's 1:1 conversations. */
+export const forwardRoomMessage = (roomId: string, messageId: string, targetConversationIds: string[]) =>
+  request<{ forwarded: number }>(
+    'POST',
+    `/api/rooms/${roomId}/messages/${messageId}/forward`,
+    { targetConversationIds },
+  );
+
 /** Admin/creator: edit room name/description. */
 export const updateRoom = (roomId: string, body: { name?: string; description?: string }) =>
   request<{ room: RoomDetail }>('PATCH', `/api/rooms/${roomId}`, body);
