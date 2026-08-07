@@ -23,18 +23,21 @@ export function Skeleton({ width, height, radius = 8, style }: { width: number |
   );
 }
 
-/** Shimmering grid of tiles for the Browse loading state. */
+/** Shimmering grid of tiles for the Browse loading state.
+ *  Geometry mirrors the real grid (app/(tabs)/index.tsx: PAD 12, GAP 6, radius 16)
+ *  so the skeleton→content swap doesn't jump. */
 export function GridSkeleton({ cols = 3 }: { cols?: number }) {
   const { width } = useWindowDimensions();
-  const gap = 2;
-  const tile = (width - gap * (cols - 1)) / cols;
+  const pad = 12;
+  const gap = 6;
+  const tile = (width - pad * 2 - gap * (cols - 1)) / cols;
   const rows = 6;
   return (
-    <View>
+    <View style={{ paddingHorizontal: pad }}>
       {Array.from({ length: rows }).map((_, r) => (
         <View key={r} style={{ flexDirection: 'row', gap, marginBottom: gap }}>
           {Array.from({ length: cols }).map((__, c) => (
-            <Skeleton key={c} width={tile} height={tile} radius={0} />
+            <Skeleton key={c} width={tile} height={tile} radius={16} />
           ))}
         </View>
       ))}

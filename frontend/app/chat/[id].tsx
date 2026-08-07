@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Modal,
   Share,
+  Dimensions,
 } from 'react-native';
 import { RemoteImage } from '../../src/components/RemoteImage';
 import * as ImagePicker from 'expo-image-picker';
@@ -44,6 +45,7 @@ import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
 import { AppBottomSheet } from '../../src/components/ui/AppBottomSheet';
+import { TypingDots } from '../../src/components/ui/TypingDots';
 import { ScrollToBottomButton } from '../../src/components/chat/ScrollToBottomButton';
 import { ChatComposer, type ChatComposerHandle } from '../../src/components/chat/ChatComposer';
 import { SearchPanel, type SearchMessage } from '../../src/components/chat/SearchPanel';
@@ -92,7 +94,8 @@ import { connectSocket, emitTyping } from '../../src/services/socket';
 import { isAgoraAvailable } from '../../src/services/agora';
 import { useAuthStore } from '../../src/store/authStore';
 import { useChatStore } from '../../src/store/chatStore';
-import { clockTime, planAtLeast, chatDateHeader, sameCalendarDay } from '../../src/lib/format';
+import { clockTime, planAtLeast, chatDateHeader, sameCalendarDay, formatLastSeen } from '../../src/lib/format';
+import { hasUrl, linkifyText } from '../../src/lib/linkify';
 import { isNearBottom, classifyMessagesChange, shouldAutoScrollOnAppend } from '../../src/lib/chatScroll';
 import { ChatSkeleton } from '../../src/components/Skeleton';
 import { MessageTick } from '../../src/components/MessageTick';
@@ -130,18 +133,33 @@ function isViewOnce(msg: Message) {
 
 const SWIPE_TRIGGER = 60;
 
+/** Haptic fired the instant the swipe-to-reply threshold is crossed (WhatsApp "click"). */
+function swipeThresholdHaptic() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+}
+
 /** Swipe-right-to-reply wrapper (mirrors the group-chat MessageBubble gesture). */
 function SwipeToReply({ onSwipeReply, children }: { onSwipeReply: () => void; children: React.ReactNode }) {
   const { theme } = useTheme();
   const translateX = useSharedValue(0);
+  // Tracks whether the 60px threshold is currently crossed so the haptic fires
+  // exactly once at the crossing (and re-arms if the finger pulls back).
+  const armed = useSharedValue(false);
   const pan = Gesture.Pan()
     .activeOffsetX([-15, 15])
     .failOffsetY([-12, 12])
     .onUpdate((e) => {
       translateX.value = Math.max(0, Math.min(e.translationX, 90));
+      if (translateX.value >= SWIPE_TRIGGER && !armed.value) {
+        armed.value = true;
+        runOnJS(swipeThresholdHaptic)();
+      } else if (translateX.value < SWIPE_TRIGGER && armed.value) {
+        armed.value = false;
+      }
     })
     .onEnd(() => {
       if (translateX.value >= SWIPE_TRIGGER) runOnJS(onSwipeReply)();
+      armed.value = false;
       translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
     });
   const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
@@ -168,10 +186,12 @@ type ChatMessageRowProps = {
   meId: string | undefined;
   peerName: string | undefined;
   highlight: boolean;
+  /** Active search query while navigating matches — highlights it in the text. */
+  searchTerm: string | undefined;
   translation: string | undefined;
   showDisappearing: boolean;
   canReadReceipts: boolean;
-  onLongPress: (item: Message) => void;
+  onLongPress: (item: Message, pageY?: number) => void;
   onSwipeReply: (item: Message) => void;
   onReact: (item: Message, emoji: string) => void;
   onReactionLongPress: (messageId: string) => void;
@@ -198,6 +218,7 @@ function ChatMessageRowBase({
   meId,
   peerName,
   highlight,
+  searchTerm,
   translation,
   showDisappearing,
   canReadReceipts,
@@ -217,7 +238,13 @@ function ChatMessageRowBase({
 
   const renderBody = () => {
     if (item.isUnsent) {
-      return <Text style={[styles.removed, { color: mine ? theme.textInverse : theme.textTertiary }]}>This message was deleted</Text>;
+      const removedColor = mine ? theme.textInverse : theme.textTertiary;
+      return (
+        <View style={styles.removedRow}>
+          <Ionicons name="ban-outline" size={14} color={removedColor} />
+          <Text style={[styles.removed, { color: removedColor }]}>This message was deleted</Text>
+        </View>
+      );
     }
 
     if (isViewOnce(item)) {
@@ -226,7 +253,7 @@ function ChatMessageRowBase({
       return (
         <Pressable
           onPress={() => onViewOncePress(item)}
-          onLongPress={() => onLongPress(item)}
+          onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
           delayLongPress={220}
           disabled={opened && !mine}
         >
@@ -254,7 +281,7 @@ function ChatMessageRowBase({
       return (
         <Pressable
           onPress={() => onImagePress(item.mediaUrls[0] ?? item.mediaUrl ?? '')}
-          onLongPress={() => onLongPress(item)}
+          onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
           delayLongPress={220}
         >
           <View style={styles.photoStack}>
@@ -312,7 +339,7 @@ function ChatMessageRowBase({
         <Pressable
           style={styles.locationCard}
           onPress={() => Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`).catch(() => {})}
-          onLongPress={() => onLongPress(item)}
+          onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
           delayLongPress={220}
         >
           <View style={[styles.locationPin, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
@@ -342,7 +369,7 @@ function ChatMessageRowBase({
         <Pressable
           style={styles.fileCard}
           onPress={() => fileUrl && Linking.openURL(fileUrl).catch(() => {})}
-          onLongPress={() => onLongPress(item)}
+          onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
           delayLongPress={220}
         >
           <Ionicons name="document-text" size={22} color={mine ? theme.textInverse : theme.brand} />
@@ -355,11 +382,56 @@ function ChatMessageRowBase({
       );
     }
 
-    return (
-      <Text style={mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.md, fontFamily: FontFamily.regular }}>
-        {item.content}
-      </Text>
-    );
+    const baseTextStyle = mine ? styles.textMe : { color: theme.textPrimary, fontSize: FontSize.md, fontFamily: FontFamily.regular };
+
+    // In-bubble search highlight: wrap every occurrence of the active query in
+    // a brand-tinted segment (white-tinted on the gradient bubble).
+    const q = searchTerm?.trim().toLowerCase();
+    if (q && item.content && item.content.toLowerCase().includes(q)) {
+      const content = item.content;
+      const lower = content.toLowerCase();
+      const segs: React.ReactNode[] = [];
+      let i = 0;
+      let k = 0;
+      while (i <= content.length) {
+        const idx = lower.indexOf(q, i);
+        if (idx < 0) {
+          segs.push(content.slice(i));
+          break;
+        }
+        if (idx > i) segs.push(content.slice(i, idx));
+        segs.push(
+          <Text
+            key={`h${k++}`}
+            style={{
+              backgroundColor: mine ? 'rgba(255,255,255,0.35)' : theme.brand + '30',
+              color: mine ? '#fff' : theme.brand,
+            }}
+          >
+            {content.slice(idx, idx + q.length)}
+          </Text>,
+        );
+        i = idx + q.length;
+      }
+      return <Text style={baseTextStyle}>{segs}</Text>;
+    }
+
+    // Tappable links (skipped for location/file cards — those returned above).
+    if (item.content && hasUrl(item.content)) {
+      return (
+        <Text style={baseTextStyle}>
+          {linkifyText(
+            item.content,
+            baseTextStyle,
+            mine
+              ? { color: '#fff', textDecorationLine: 'underline' }
+              : { color: theme.info, textDecorationLine: 'underline' },
+          )}
+        </Text>
+      );
+    }
+
+    return <Text style={baseTextStyle}>{item.content}</Text>;
   };
 
   const body = renderBody();
@@ -406,11 +478,52 @@ function ChatMessageRowBase({
       </Text>
     ) : null;
 
+  // WhatsApp-style meta: rendered INSIDE the bubble (bottom-right) for text
+  // bubbles, below it for media-only bubbles. Colors adapt to the gradient.
+  const metaOnGradient = mine && !mediaOnly;
+  const metaMuted = metaOnGradient ? 'rgba(255,255,255,0.7)' : theme.textTertiary;
+  const metaNode = (
+    <View style={[styles.metaRow, mediaOnly ? null : styles.metaInBubble]}>
+      {item.isStarred && !item.isUnsent && (
+        <Ionicons name="star" size={11} color={metaOnGradient ? '#fff' : theme.brand} style={{ marginRight: 4 }} />
+      )}
+      <Text style={[styles.time, { color: metaMuted }]}>{clockTime(item.createdAt)}</Text>
+      {showDisappearing && !item.isUnsent && (
+        <Ionicons name="time-outline" size={12} color={metaMuted} style={{ marginLeft: 3 }} />
+      )}
+      {item.isEdited && !item.isUnsent && (
+        <Text style={[styles.time, { color: metaMuted }]}> · edited</Text>
+      )}
+      {mine && !item.isUnsent && (
+        item.isFailed ? (
+          <Pressable onPress={() => onRetry(item)} hitSlop={6} style={styles.retryRow}>
+            <Ionicons name="alert-circle" size={13} color={metaOnGradient ? '#fff' : theme.error} style={{ marginLeft: 3 }} />
+            <Text style={[styles.retryText, { color: metaOnGradient ? '#fff' : theme.error }]}>Tap to retry</Text>
+          </Pressable>
+        ) : (
+          <MessageTick
+            status={
+              item.id.startsWith('tmp-')
+                ? 'sending'
+                : !item.deliveredAt
+                  ? 'sent'
+                  : !item.readAt
+                    ? 'delivered'
+                    : 'read'
+            }
+            isPremium={canReadReceipts}
+            mutedColor={metaOnGradient ? 'rgba(255,255,255,0.8)' : undefined}
+          />
+        )
+      )}
+    </View>
+  );
+
   const rowContent = (
     <SwipeToReply onSwipeReply={() => onSwipeReply(item)}>
       <Pressable
         style={[styles.bubbleRow, mine ? styles.right : styles.left, isSelecting && !isSelected ? { opacity: 0.6 } : null]}
-        onLongPress={() => onLongPress(item)}
+        onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
         onPress={() => onTap(item)}
       >
         {item.isForwarded && !item.isUnsent && (
@@ -426,47 +539,17 @@ function ChatMessageRowBase({
             {quote}
             {body}
             {translationNode}
+            {metaNode}
           </LinearGradient>
         ) : (
-          <View style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { backgroundColor: theme.surfaceElevated, borderBottomLeftRadius: 4 }, highlightStyle]}>
+          <View style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { backgroundColor: theme.receivedBubble, borderWidth: 0.5, borderColor: theme.receivedBubbleBorder, borderBottomLeftRadius: 4 }, highlightStyle]}>
             {quote}
             {body}
             {translationNode}
+            {metaNode}
           </View>
         )}
-        <View style={styles.metaRow}>
-          {item.isStarred && !item.isUnsent && (
-            <Ionicons name="star" size={11} color={theme.brand} style={{ marginRight: 4 }} />
-          )}
-          <Text style={[styles.time, { color: theme.textTertiary }]}>{clockTime(item.createdAt)}</Text>
-          {showDisappearing && !item.isUnsent && (
-            <Ionicons name="time-outline" size={12} color={theme.textTertiary} style={{ marginLeft: 3 }} />
-          )}
-          {item.isEdited && !item.isUnsent && (
-            <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
-          )}
-          {mine && !item.isUnsent && (
-            item.isFailed ? (
-              <Pressable onPress={() => onRetry(item)} hitSlop={6} style={styles.retryRow}>
-                <Ionicons name="alert-circle" size={13} color={theme.error} style={{ marginLeft: 3 }} />
-                <Text style={[styles.retryText, { color: theme.error }]}>Tap to retry</Text>
-              </Pressable>
-            ) : (
-              <MessageTick
-                status={
-                  item.id.startsWith('tmp-')
-                    ? 'sending'
-                    : !item.deliveredAt
-                      ? 'sent'
-                      : !item.readAt
-                        ? 'delivered'
-                        : 'read'
-                }
-                isPremium={canReadReceipts}
-              />
-            )
-          )}
-        </View>
+        {mediaOnly ? metaNode : null}
         {item.reactions.length > 0 && (
           <View style={[styles.reactionsRow, mine ? { justifyContent: 'flex-end' } : null]}>
             {item.reactions.map((r) => (
@@ -537,6 +620,7 @@ const ChatMessageRow = memo(ChatMessageRowBase, (prev, next) => {
     prev.meId === next.meId &&
     prev.peerName === next.peerName &&
     prev.highlight === next.highlight &&
+    prev.searchTerm === next.searchTerm &&
     prev.translation === next.translation &&
     prev.showDisappearing === next.showDisappearing &&
     prev.canReadReceipts === next.canReadReceipts &&
@@ -583,6 +667,10 @@ export default function Chat() {
   // Peer's own availability toggles (default true until loaded — never over-disable).
   const [peerAudioAvailable, setPeerAudioAvailable] = useState(true);
   const [peerVideoAvailable, setPeerVideoAvailable] = useState(true);
+  // Presence for the header subtitle ("Online" / "last seen …"), from the same
+  // getPublicProfile call that loads call availability.
+  const [peerOnline, setPeerOnline] = useState(false);
+  const [peerLastSeen, setPeerLastSeen] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
@@ -615,10 +703,18 @@ export default function Chat() {
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
+  // Y position (pageY) of the long-pressed bubble — anchors the context menu
+  // near the message instead of centering it on screen.
+  const [menuY, setMenuY] = useState(0);
+  const menuScale = useSharedValue(1);
+  const menuAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: menuScale.value }] }));
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Index into `matchIds` of the match currently navigated to (WhatsApp-style
+  // "3 of 12" up/down navigation). null = still browsing the results panel.
+  const [searchNav, setSearchNav] = useState<number | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
@@ -700,10 +796,15 @@ export default function Chat() {
     [messages, me?.id, peerName],
   );
 
-  const jumpToMessage = useCallback(
+  // IDs of messages matching the search query, in chronological order.
+  const matchIds = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [] as string[];
+    return messages.filter((m) => !m.isUnsent && m.content?.toLowerCase().includes(q)).map((m) => m.id);
+  }, [messages, searchQuery]);
+
+  const scrollAndHighlight = useCallback(
     (id: string) => {
-      setSearchOpen(false);
-      setSearchQuery('');
       const rowIndex = rows.findIndex((r) => r.kind === 'message' && r.message.id === id);
       if (rowIndex >= 0) {
         suppressAutoScroll.current = true;
@@ -720,6 +821,39 @@ export default function Chat() {
       highlightTimer.current = setTimeout(() => setHighlightId(null), 1500);
     },
     [rows],
+  );
+
+  // Navigate to a specific match while KEEPING the search bar open (up/down
+  // arrows + tapping a result). The chat list may be freshly re-mounted (the
+  // results panel was covering it), so give it a beat to lay out first.
+  const scrollToMatch = useCallback(
+    (idx: number) => {
+      const id = matchIds[idx];
+      if (!id) return;
+      const wasBrowsing = searchNav == null;
+      setSearchNav(idx);
+      setTimeout(() => scrollAndHighlight(id), wasBrowsing ? 350 : 50);
+    },
+    [matchIds, searchNav, scrollAndHighlight],
+  );
+
+  const jumpToMessage = useCallback(
+    (id: string) => {
+      if (searchOpen) {
+        const matchIdx = matchIds.indexOf(id);
+        if (matchIdx >= 0) {
+          scrollToMatch(matchIdx);
+          return;
+        }
+      }
+      const wasSearching = searchOpen;
+      setSearchOpen(false);
+      setSearchQuery('');
+      setSearchNav(null);
+      if (wasSearching) setTimeout(() => scrollAndHighlight(id), 350);
+      else scrollAndHighlight(id);
+    },
+    [searchOpen, matchIds, scrollToMatch, scrollAndHighlight],
   );
 
   // Flat list of every shareable photo in the conversation (album/multi-photo
@@ -824,6 +958,8 @@ export default function Chat() {
               if (!active) return;
               setPeerAudioAvailable(p.audioCallAvailable !== false);
               setPeerVideoAvailable(p.videoCallAvailable !== false);
+              setPeerOnline(p.isOnline ?? p.activity?.online ?? false);
+              setPeerLastSeen(p.lastActiveAt ?? null);
             })
             .catch(() => {});
         }
@@ -1245,15 +1381,19 @@ export default function Chat() {
 
   const clearSelection = useCallback(() => setSelectedMessageIds(new Set()), []);
 
-  const onLongPressMessage = useCallback((item: Message) => {
+  const onLongPressMessage = useCallback((item: Message, pageY?: number) => {
     if (item.id.startsWith('tmp-')) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     if (isSelecting) {
       toggleSelect(item.id);
       return;
     }
+    setMenuY(pageY ?? 0);
+    // Scale in from near the message (0.85 → 1, spring).
+    menuScale.value = 0.85;
+    menuScale.value = withSpring(1, { damping: 20, stiffness: 320 });
     setMenuMessage(item);
-  }, [isSelecting, toggleSelect]);
+  }, [isSelecting, toggleSelect, menuScale]);
 
   const onTapMessage = useCallback((item: Message) => {
     if (!isSelecting || item.id.startsWith('tmp-')) return;
@@ -1262,7 +1402,7 @@ export default function Chat() {
 
   const onSwipeReply = useCallback((item: Message) => {
     if (item.isUnsent || item.id.startsWith('tmp-')) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    // Haptic already fired at the 60px threshold crossing (SwipeToReply).
     setEditingMessage(null);
     setReplyTo(item);
   }, []);
@@ -1726,7 +1866,7 @@ export default function Chat() {
     }
   };
 
-  const renderRow = useCallback(({ item: row }: { item: ChatRow }) => {
+  const renderRow = useCallback(({ item: row, index }: { item: ChatRow; index: number }) => {
     if (row.kind === 'date') {
       return (
         <View style={styles.dateRow}>
@@ -1746,34 +1886,41 @@ export default function Chat() {
       );
     }
     const item = row.message;
+    // WhatsApp grouping: consecutive messages from the same sender sit 2px
+    // apart; a sender change (or a divider row above) gets the full 8px gap.
+    const prevRow = rows[index - 1];
+    const sameSenderAsPrev = prevRow?.kind === 'message' && prevRow.message.senderId === item.senderId;
     return (
-      <ChatMessageRow
-        item={item}
-        mine={item.senderId === me?.id}
-        meId={me?.id}
-        peerName={peerName}
-        highlight={highlightId === item.id}
-        translation={translations[item.id]}
-        showDisappearing={!!disappearing}
-        canReadReceipts={canReadReceipts}
-        onLongPress={onLongPressMessage}
-        onSwipeReply={onSwipeReply}
-        onReact={onReact}
-        onReactionLongPress={setReactionDetailsFor}
-        onImagePress={openImageViewer}
-        onViewOncePress={openViewOnce}
-        onRetry={retryFailedMessage}
-        onTap={onTapMessage}
-        onReplyPress={jumpToMessage}
-        isSelecting={isSelecting}
-        isSelected={selectedMessageIds.has(item.id)}
-      />
+      <View style={{ marginTop: sameSenderAsPrev ? 2 : 8 }}>
+        <ChatMessageRow
+          item={item}
+          mine={item.senderId === me?.id}
+          meId={me?.id}
+          peerName={peerName}
+          highlight={highlightId === item.id}
+          searchTerm={searchOpen && searchNav != null ? searchQuery.trim() : undefined}
+          translation={translations[item.id]}
+          showDisappearing={!!disappearing}
+          canReadReceipts={canReadReceipts}
+          onLongPress={onLongPressMessage}
+          onSwipeReply={onSwipeReply}
+          onReact={onReact}
+          onReactionLongPress={setReactionDetailsFor}
+          onImagePress={openImageViewer}
+          onViewOncePress={openViewOnce}
+          onRetry={retryFailedMessage}
+          onTap={onTapMessage}
+          onReplyPress={jumpToMessage}
+          isSelecting={isSelecting}
+          isSelected={selectedMessageIds.has(item.id)}
+        />
+      </View>
     );
-  }, [theme, me?.id, peerName, highlightId, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openImageViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds]);
+  }, [theme, rows, me?.id, peerName, highlightId, searchOpen, searchNav, searchQuery, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openImageViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds]);
 
   const CallButton = ({ type }: { type: 'audio' | 'video' }) => {
     const { enabled, tip } = callState(type);
-    const color = enabled ? (type === 'audio' ? theme.callAudio : theme.callVideo) : theme.callDisabled;
+    const color = enabled ? theme.textPrimary : theme.callDisabled;
     return (
       <Pressable
         onPress={() => startCall(type)}
@@ -1783,10 +1930,9 @@ export default function Chat() {
             setTimeout(() => setTooltip(null), 3000);
           }
         }}
-        hitSlop={8}
-        style={styles.callBtn}
+        hitSlop={10}
       >
-        <Ionicons name={type === 'audio' ? 'call' : 'videocam'} size={22} color={color} />
+        <Ionicons name={type === 'audio' ? 'call-outline' : 'videocam-outline'} size={22} color={color} />
       </Pressable>
     );
   };
@@ -1833,9 +1979,73 @@ export default function Chat() {
             <Ionicons name="trash-outline" size={22} color={theme.error} />
           </Pressable>
         </View>
+      ) : searchOpen ? (
+      /* WhatsApp-style in-place search: the header itself becomes the search bar. */
+      <View style={[styles.header, { borderBottomColor: theme.border }]}>
+        <Pressable
+          onPress={() => {
+            setSearchOpen(false);
+            setSearchQuery('');
+            setSearchNav(null);
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
+        </Pressable>
+        <TextInput
+          value={searchQuery}
+          onChangeText={(t) => {
+            setSearchQuery(t);
+            setSearchNav(null);
+          }}
+          placeholder="Search…"
+          placeholderTextColor={theme.textTertiary}
+          autoFocus
+          returnKeyType="search"
+          onSubmitEditing={() => {
+            if (matchIds.length) scrollToMatch(matchIds.length - 1);
+          }}
+          style={[styles.searchInput, { color: theme.textPrimary }]}
+        />
+        {searchQuery.trim().length > 0 ? (
+          <Text style={[styles.searchCount, { color: theme.textTertiary }]}>
+            {searchNav == null
+              ? `${matchIds.length} found`
+              : `${matchIds.length - searchNav} of ${matchIds.length}`}
+          </Text>
+        ) : null}
+        <Pressable
+          disabled={matchIds.length === 0 || (searchNav != null && searchNav <= 0)}
+          onPress={() => scrollToMatch(searchNav == null ? matchIds.length - 1 : searchNav - 1)}
+          hitSlop={8}
+          style={{ opacity: matchIds.length === 0 || (searchNav != null && searchNav <= 0) ? 0.3 : 1 }}
+        >
+          <Ionicons name="chevron-up" size={22} color={theme.textPrimary} />
+        </Pressable>
+        <Pressable
+          disabled={searchNav == null || searchNav >= matchIds.length - 1}
+          onPress={() => searchNav != null && scrollToMatch(searchNav + 1)}
+          hitSlop={8}
+          style={{ opacity: searchNav == null || searchNav >= matchIds.length - 1 ? 0.3 : 1 }}
+        >
+          <Ionicons name="chevron-down" size={22} color={theme.textPrimary} />
+        </Pressable>
+        {searchQuery.length > 0 ? (
+          <Pressable
+            onPress={() => {
+              setSearchQuery('');
+              setSearchNav(null);
+            }}
+            hitSlop={8}
+            style={{ marginRight: 4 }}
+          >
+            <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
+          </Pressable>
+        ) : null}
+      </View>
       ) : (
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <Pressable onPress={() => { Keyboard.dismiss(); router.back(); }} hitSlop={12}>
+        <Pressable onPress={() => { Keyboard.dismiss(); router.back(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="arrow-back" size={24} color={theme.textPrimary} />
         </Pressable>
         <Pressable
@@ -1849,60 +2059,59 @@ export default function Chat() {
             })
           }
         >
-          {peerPhoto ? (
-            <RemoteImage source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} />
-          ) : (
-            <View style={[styles.headAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="person" size={20} color={theme.textTertiary} />
-            </View>
-          )}
+          <View>
+            {peerPhoto ? (
+              <RemoteImage source={{ uri: peerPhoto }} style={styles.headAvatar} contentFit="cover" transition={120} />
+            ) : (
+              <View style={[styles.headAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
+                <Ionicons name="person" size={18} color={theme.textTertiary} />
+              </View>
+            )}
+            {peerOnline && (
+              <View style={[styles.onlineDot, { backgroundColor: theme.online, borderColor: theme.background }]} />
+            )}
+          </View>
           <View style={styles.headProfile}>
             <View style={styles.headNameRow}>
               <Text style={[styles.headName, { color: theme.textPrimary }]} numberOfLines={1}>
                 {peerName || 'Chat'}
               </Text>
               <Pressable onPress={() => setE2eInfoOpen(true)} hitSlop={6}>
-                <Ionicons name="lock-closed" size={12} color={theme.success} />
+                <Ionicons name="lock-closed" size={11} color={theme.success} />
               </Pressable>
             </View>
-            {peerTyping && <Text style={[styles.headStatus, { color: theme.online }]}>typing…</Text>}
+            {peerTyping ? (
+              <View style={styles.typingRow}>
+                <Text style={[styles.headStatus, { color: theme.online }]}>typing</Text>
+                <TypingDots color={theme.online} size={4} />
+              </View>
+            ) : peerOnline ? (
+              <Text style={[styles.headStatus, { color: theme.textTertiary }]}>Online</Text>
+            ) : peerLastSeen ? (
+              <Text style={[styles.headStatus, { color: theme.textTertiary }]} numberOfLines={1}>
+                {formatLastSeen(peerLastSeen)}
+              </Text>
+            ) : null}
           </View>
         </Pressable>
-        <Pressable
-          onPress={() => {
-            setSearchOpen((v) => !v);
-            setSearchQuery('');
-          }}
-          hitSlop={10}
-          style={styles.callBtn}
-        >
-          <Ionicons name={searchOpen ? 'close' : 'search'} size={22} color={theme.textPrimary} />
-        </Pressable>
-        <CallButton type="audio" />
-        <CallButton type="video" />
-        <Pressable onPress={() => setHeaderMenuOpen(true)} hitSlop={10} style={styles.callBtn}>
-          <Ionicons name="ellipsis-vertical" size={20} color={theme.textPrimary} />
-        </Pressable>
-      </View>
-      )}
-
-      {searchOpen && (
-        <View style={[styles.searchBar, { backgroundColor: theme.surfaceElevated, borderBottomColor: theme.border }]}>
-          <Ionicons name="search" size={16} color={theme.textTertiary} />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search in chat"
-            placeholderTextColor={theme.textTertiary}
-            autoFocus
-            style={[styles.searchInput, { color: theme.textPrimary }]}
-          />
-          {searchQuery.length > 0 ? (
-            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
-            </Pressable>
-          ) : null}
+        <View style={styles.headActions}>
+          <Pressable
+            onPress={() => {
+              setSearchOpen(true);
+              setSearchQuery('');
+              setSearchNav(null);
+            }}
+            hitSlop={10}
+          >
+            <Ionicons name="search" size={22} color={theme.textPrimary} />
+          </Pressable>
+          <CallButton type="audio" />
+          <CallButton type="video" />
+          <Pressable onPress={() => setHeaderMenuOpen(true)} hitSlop={10}>
+            <Ionicons name="ellipsis-vertical" size={20} color={theme.textPrimary} />
+          </Pressable>
         </View>
+      </View>
       )}
 
       {pinnedMessage && !searchOpen && (
@@ -1958,7 +2167,7 @@ export default function Chat() {
         keyboardVerticalOffset={0}
         style={{ flex: 1 }}
       >
-        {searchOpen ? (
+        {searchOpen && searchNav == null ? (
           <SearchPanel
             query={searchQuery}
             messages={searchItems}
@@ -1972,7 +2181,7 @@ export default function Chat() {
             ref={listRef}
             data={rows}
             keyExtractor={(r) => (r.kind === 'message' ? r.message.id : r.id)}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, gap: 10, flexGrow: 1 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, flexGrow: 1 }}
             renderItem={renderRow}
             ListEmptyComponent={
               <View style={styles.emptyConversation}>
@@ -2204,14 +2413,36 @@ export default function Chat() {
           actions.push({ key: 'info', label: 'Message Info', icon: 'information-circle-outline', onPress: () => { setMenuMessage(null); setInfoMessage(item); } });
         }
 
+        // Anchor the menu near the pressed bubble: above it when the press was
+        // in the lower half of the screen, below it otherwise. Clamped on-screen.
+        const screenH = Dimensions.get('window').height;
+        const menuH = 54 + actions.length * 41;
+        const showAbove = menuY > screenH / 2;
+        const rawTop = showAbove ? menuY - menuH - 60 : menuY + 60;
+        const top = Math.max(70, Math.min(rawTop, screenH - menuH - 40));
+
         return (
           <Modal visible transparent animationType="fade" onRequestClose={() => setMenuMessage(null)}>
             <Pressable style={{ flex: 1 }} onPress={() => setMenuMessage(null)}>
               <BlurView intensity={28} tint="dark" style={{ flex: 1 }}>
-                <View style={styles.menuCenter}>
+                <Animated.View
+                  style={[
+                    styles.menuWrap,
+                    { top },
+                    mine ? { right: 16, alignItems: 'flex-end' } : { left: 16, alignItems: 'flex-start' },
+                    menuAnimStyle,
+                  ]}
+                >
                   <View style={[styles.emojiRow, { backgroundColor: theme.surface }]}>
                     {QUICK_EMOJIS.map((e) => (
-                      <Pressable key={e} onPress={() => onReact(item, e)} hitSlop={4} style={styles.emojiBtn}>
+                      <Pressable
+                        key={e}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          onReact(item, e);
+                        }}
+                        style={styles.emojiBtn}
+                      >
                         <Text style={styles.emojiBtnText}>{e}</Text>
                       </Pressable>
                     ))}
@@ -2219,7 +2450,7 @@ export default function Chat() {
                       onPress={() => { setEmojiPickerOpen(true); }}
                       style={[styles.plusBtn, { backgroundColor: theme.surfaceElevated }]}
                     >
-                      <Ionicons name="add" size={22} color={theme.textSecondary} />
+                      <Ionicons name="add" size={20} color={theme.textSecondary} />
                     </Pressable>
                   </View>
                   <View style={[styles.menuList, { backgroundColor: theme.surface }]}>
@@ -2233,7 +2464,7 @@ export default function Chat() {
                       );
                     })}
                   </View>
-                </View>
+                </Animated.View>
               </BlurView>
             </Pressable>
           </Modal>
@@ -2363,18 +2594,20 @@ const styles = StyleSheet.create({
   unreadDivider: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 },
   unreadLine: { flex: 1, height: StyleSheet.hairlineWidth },
   unreadText: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, marginHorizontal: 8 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
-  headTap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 56, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth },
+  headTap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   headAvatar: { width: 36, height: 36, borderRadius: 18 },
-  headProfile: { flex: 1 },
+  onlineDot: { position: 'absolute', bottom: -1, right: -1, width: 10, height: 10, borderRadius: 5, borderWidth: 1.5 },
+  headProfile: { flex: 1, gap: 1 },
   headNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headName: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700' },
+  headName: { fontSize: 15, fontFamily: FontFamily.semibold, flexShrink: 1 },
+  headActions: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingLeft: 4, paddingRight: 4 },
   disappearBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center', paddingVertical: 5 },
   disappearText: { fontSize: FontSize.xs, fontFamily: FontFamily.medium },
-  headStatus: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
+  headStatus: { fontSize: 12, fontFamily: FontFamily.regular },
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   callBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   tooltip: { marginHorizontal: 16, marginTop: 8, padding: 10, borderRadius: 10 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1 },
   searchInput: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular },
   searchCount: { fontSize: FontSize.xs, fontFamily: FontFamily.medium },
   banner: { marginHorizontal: 16, marginTop: 8, padding: 10, borderRadius: 10 },
@@ -2384,18 +2617,19 @@ const styles = StyleSheet.create({
   translated: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, fontStyle: 'italic', marginTop: 4, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth },
   tooltipText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, lineHeight: 17 },
   dateRow: { alignItems: 'center', marginVertical: 8 },
-  dateLabel: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' },
-  bubbleRow: { maxWidth: '82%' },
+  dateLabel: { fontSize: 12, fontFamily: FontFamily.medium, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' },
+  bubbleRow: { maxWidth: '75%' },
   selectRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   selectCheckbox: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   forwardedRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 2, marginHorizontal: 4 },
   forwardedText: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, fontStyle: 'italic' },
   left: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   right: { alignSelf: 'flex-end', alignItems: 'flex-end' },
-  bubble: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18 },
+  bubble: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 14 },
   mediaBubble: { borderRadius: 12, overflow: 'hidden' },
   snapBubble: { padding: 6 },
   textMe: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.regular },
+  removedRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   removed: { fontSize: FontSize.md, fontFamily: FontFamily.regular, fontStyle: 'italic' },
   mediaChip: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   fileCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200 },
@@ -2416,6 +2650,7 @@ const styles = StyleSheet.create({
   albumCaption: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   photoCaption: { fontSize: FontSize.md, fontFamily: FontFamily.regular, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 2, maxWidth: 260 },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, marginHorizontal: 4 },
+  metaInBubble: { alignSelf: 'flex-end', marginTop: 1, marginHorizontal: 0, marginLeft: 10 },
   retryRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   retryText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold, marginLeft: 1 },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
@@ -2426,14 +2661,14 @@ const styles = StyleSheet.create({
   reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },
   reactionEmoji: { fontSize: FontSize.sm },
   reactionCount: { fontSize: FontSize.xs, fontFamily: FontFamily.medium },
-  menuCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 8 },
-  emojiRow: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999 },
-  emojiBtn: { paddingHorizontal: 3 },
+  menuWrap: { position: 'absolute', gap: 6 },
+  emojiRow: { flexDirection: 'row', alignItems: 'center', height: 48, paddingHorizontal: 6, borderRadius: 24 },
+  emojiBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   emojiBtnText: { fontSize: 22 },
   plusBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
-  menuList: { width: 220, borderRadius: 12, paddingVertical: 4 },
-  menuItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 9 },
-  menuItemText: { fontSize: 14, fontFamily: FontFamily.medium },
+  menuList: { width: 220, borderRadius: 12, paddingVertical: 4, overflow: 'hidden' },
+  menuItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
+  menuItemText: { fontSize: 15, fontFamily: FontFamily.medium },
   sheetOverlay: { flex: 1, justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 20, paddingBottom: 32 },
   sheetTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: 12 },

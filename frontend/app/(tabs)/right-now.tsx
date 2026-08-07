@@ -91,6 +91,15 @@ export default function RightNow() {
   });
   const [distanceDesc, setDistanceDesc] = useState(false);
   const [myJoinedAt, setMyJoinedAt] = useState<string | null>(null);
+  // Ticks once a minute so the "Live · Xm left" countdown and "X min ago" labels
+  // (computed against Date.now() at render) actually count down while the screen
+  // is open instead of freezing until the next refresh.
+  const [nowTick, setNowTick] = useState(Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const myStatus = user?.rightNowStatus ?? null;
   const myActive = !!(user?.rightNowExpiresAt && new Date(user.rightNowExpiresAt) > new Date());
@@ -346,6 +355,7 @@ export default function RightNow() {
         data={displayed}
         keyExtractor={(it) => it.id}
         renderItem={renderRow}
+        extraData={nowTick}
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingTop: 4, paddingBottom: 130, flexGrow: displayed.length === 0 ? 1 : 0 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={theme.rightNow} />}
@@ -360,7 +370,9 @@ export default function RightNow() {
                   Introducing the Right Now feed. Skip the small talk and get to it. Turn on Right Now to add your own post.
                 </Text>
                 <View style={styles.introActions}>
-                  <Pressable hitSlop={8}><Text style={styles.introLearn}>Learn More</Text></Pressable>
+                  <Pressable hitSlop={8} onPress={() => setSheetOpen(true)}>
+                    <Text style={styles.introLearn}>Learn More</Text>
+                  </Pressable>
                   <Pressable hitSlop={8} onPress={() => setIntroDismissed(true)}>
                     <Text style={styles.introDismiss}>Dismiss</Text>
                   </Pressable>

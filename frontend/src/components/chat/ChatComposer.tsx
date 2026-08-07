@@ -19,9 +19,10 @@ import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, withSpring, Easing, runOnJS } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, withSpring, Easing, runOnJS, FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import { Avatar } from '../Avatar';
+import { PressableScale } from '../ui/PressableScale';
 import { showError } from '../../lib/toast';
 import { EmojiPicker } from '../rooms/EmojiPicker';
 import { VoiceRecorder } from '../rooms/VoiceRecorder';
@@ -649,11 +650,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         </View>
       ) : null}
 
-      {/* State bars */}
+      {/* State bars — slide/fade in and out (WhatsApp-style, no hard cut) */}
       {uploadProgress != null ? <UploadProgressBar progress={uploadProgress} /> : null}
-      {editingMessage ? <EditBar content={editingMessage.content} onCancel={onClearEdit} /> : null}
+      {editingMessage ? (
+        <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOutDown.duration(120)}>
+          <EditBar content={editingMessage.content} onCancel={onClearEdit} />
+        </Animated.View>
+      ) : null}
       {replyTo && !editingMessage ? (
-        <ReplyBar senderName={replyTo.senderName} content={replyTo.content} onCancel={onClearReply} />
+        <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOutDown.duration(120)}>
+          <ReplyBar senderName={replyTo.senderName} content={replyTo.content} onCancel={onClearReply} />
+        </Animated.View>
       ) : null}
 
       {/* Input row — the pill (or the recording overlay) on the left, and a
@@ -664,9 +671,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
           <VoiceRecorder cancelling={cancelling} locked={recordState === 'locked'} amplitudes={amplitudes} />
         ) : (
           <View style={[styles.pill, { backgroundColor: theme.inputBackground }]}>
-            <Pressable style={styles.pillIcon} onPress={toggleEmoji} hitSlop={4}>
+            <PressableScale style={styles.pillIcon} onPress={toggleEmoji} hitSlop={4} scale={0.88} haptic={false} ripple={false}>
               <Ionicons name={emojiOpen ? 'keypad-outline' : 'happy-outline'} size={22} color={theme.textSecondary} />
-            </Pressable>
+            </PressableScale>
 
             <TextInput
               ref={inputRef}
@@ -682,15 +689,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
             />
 
             {/* Attachment — always visible */}
-            <Pressable style={styles.pillIcon} onPress={() => setAttachOpen(true)} hitSlop={4}>
+            <PressableScale style={styles.pillIcon} onPress={() => setAttachOpen(true)} hitSlop={4} scale={0.88} haptic={false} ripple={false}>
               <Ionicons name="attach" size={22} color={theme.textSecondary} />
-            </Pressable>
+            </PressableScale>
 
             {/* Camera — collapses to width 0 when typing so the input reflows */}
             <Animated.View style={[styles.cameraWrap, cameraStyle]}>
-              <Pressable style={styles.pillIcon} onPress={handleCamera} hitSlop={4}>
+              <PressableScale style={styles.pillIcon} onPress={handleCamera} hitSlop={4} scale={0.88} haptic={false} ripple={false}>
                 <Ionicons name="camera-outline" size={22} color={theme.textSecondary} />
-              </Pressable>
+              </PressableScale>
             </Animated.View>
           </View>
         )}

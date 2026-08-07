@@ -1,10 +1,12 @@
 import { Pressable, Text, StyleSheet } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming, Easing } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 
 /**
- * A reaction chip that briefly pulses (1.0 → 1.4 → 1.0, 200ms) when tapped, and
- * opens the reaction-details sheet on long-press.
+ * A reaction chip that briefly pulses (1.0 → 1.4 → 1.0, 200ms) with a selection
+ * haptic when ADDING a reaction; removing one is silent (WhatsApp behavior).
+ * Opens the reaction-details sheet on long-press.
  */
 export function ReactionPill({
   emoji,
@@ -24,10 +26,14 @@ export function ReactionPill({
   const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
   const handlePress = () => {
-    scale.value = withSequence(
-      withTiming(1.4, { duration: 100, easing: Easing.out(Easing.quad) }),
-      withTiming(1, { duration: 100, easing: Easing.out(Easing.quad) }),
-    );
+    // Adding (not yet reacted) → haptic + pulse. Removing → quiet, no pulse.
+    if (!userReacted) {
+      Haptics.selectionAsync().catch(() => {});
+      scale.value = withSequence(
+        withTiming(1.4, { duration: 100, easing: Easing.out(Easing.quad) }),
+        withTiming(1, { duration: 100, easing: Easing.out(Easing.quad) }),
+      );
+    }
     onPress();
   };
 

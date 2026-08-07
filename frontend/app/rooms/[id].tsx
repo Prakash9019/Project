@@ -18,6 +18,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { RoomHeader } from '../../src/components/rooms/RoomHeader';
+import { TypingDots } from '../../src/components/ui/TypingDots';
 import { MessageBubble } from '../../src/components/rooms/MessageBubble';
 import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
 import { AppBottomSheet } from '../../src/components/ui/AppBottomSheet';
@@ -139,6 +140,9 @@ export default function RoomChat() {
   // Search-in-chat
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Index into `searchMatches` of the match being navigated ("3 of 12" up/down
+  // arrows). null = still browsing the results panel.
+  const [searchNav, setSearchNav] = useState<number | null>(null);
 
   const listRef = useRef<FlashListRef<RoomMessageCard>>(null);
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -674,8 +678,8 @@ export default function RoomChat() {
 
   // ── Reply / swipe ──
   const onSwipeReply = useCallback((msg: RoomMessageCard) => {
+    // Haptic already fired at the 60px threshold crossing (MessageBubble pan).
     setReplyTo(msg);
-    Haptics.selectionAsync().catch(() => {});
   }, []);
 
   const scrollToMessage = useCallback(
@@ -701,9 +705,9 @@ export default function RoomChat() {
   const typingText = (() => {
     const names = Object.values(typingUsers);
     if (names.length === 0) return null;
-    if (names.length === 1) return `${names[0]} is typing…`;
-    if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
-    return 'Several people are typing…';
+    if (names.length === 1) return `${names[0]} is typing`;
+    if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
+    return 'Several people are typing';
   })();
 
   const pinned = useMemo(
@@ -752,13 +756,44 @@ export default function RoomChat() {
     [messages, me?.id],
   );
 
+  // IDs of messages matching the query. `messages` is newest-first, so index 0
+  // is the most recent match.
+  const searchMatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [] as string[];
+    return messages.filter((m) => !m.isDeleted && m.content?.toLowerCase().includes(q)).map((m) => m.id);
+  }, [messages, searchQuery]);
+
+  // Navigate to a match while KEEPING the search bar open. The chat list may be
+  // freshly re-mounted (the results panel was covering it) — let it lay out first.
+  const scrollToMatch = useCallback(
+    (idx: number) => {
+      const id = searchMatches[idx];
+      if (!id) return;
+      const wasBrowsing = searchNav == null;
+      setSearchNav(idx);
+      setTimeout(() => scrollToMessage(id), wasBrowsing ? 350 : 50);
+    },
+    [searchMatches, searchNav, scrollToMessage],
+  );
+
   const jumpToMessage = useCallback(
     (id: string) => {
+      if (searchMode) {
+        const matchIdx = searchMatches.indexOf(id);
+        if (matchIdx >= 0) {
+          scrollToMatch(matchIdx);
+          return;
+        }
+      }
+      const wasSearching = searchMode;
       setSearchMode(false);
       setSearchQuery('');
-      scrollToMessage(id);
+      setSearchNav(null);
+      if (wasSearching) setTimeout(() => scrollToMessage(id), 350);
+      else scrollToMessage(id);
     },
-    [scrollToMessage],
+    [searchMode, searchMatches, scrollToMatch, scrollToMessage],
   );
 
   const searchHighlightId = null;
@@ -837,24 +872,51 @@ export default function RoomChat() {
         </View>
       ) : searchMode ? (
         <View style={[styles.searchHeader, { borderBottomColor: theme.border }]}>
-          <Pressable onPress={() => { setSearchMode(false); setSearchQuery(''); }} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.textPrimary} />
+          <Pressable onPress={() => { setSearchMode(false); setSearchQuery(''); setSearchNav(null); }} hitSlop={10}>
+            <Ionicons name="chevron-back" size={24} color={theme.textPrimary} />
           </Pressable>
           <View style={[styles.searchInputWrap, { backgroundColor: theme.surfaceElevated }]}>
             <Ionicons name="search" size={18} color={theme.textTertiary} />
             <TextInput
               autoFocus
               value={searchQuery}
-              onChangeText={setSearchQuery}
+              onChangeText={(t) => { setSearchQuery(t); setSearchNav(null); }}
               placeholder="Search in chat"
               placeholderTextColor={theme.textTertiary}
+              returnKeyType="search"
+              onSubmitEditing={() => { if (searchMatches.length) scrollToMatch(0); }}
               style={[styles.searchInput, { color: theme.textPrimary }]}
             />
+            {searchQuery.length > 0 ? (
+              <Pressable onPress={() => { setSearchQuery(''); setSearchNav(null); }} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
+              </Pressable>
+            ) : null}
           </View>
-          {searchQuery.length > 0 ? (
-            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
-            </Pressable>
+          {searchQuery.trim().length > 0 ? (
+            <View style={styles.searchNav}>
+              <Text style={[styles.matchCount, { color: theme.textTertiary }]}>
+                {searchNav == null
+                  ? `${searchMatches.length} found`
+                  : `${searchNav + 1} of ${searchMatches.length}`}
+              </Text>
+              <Pressable
+                disabled={searchMatches.length === 0 || (searchNav != null && searchNav >= searchMatches.length - 1)}
+                onPress={() => scrollToMatch(searchNav == null ? 0 : searchNav + 1)}
+                hitSlop={8}
+                style={{ opacity: searchMatches.length === 0 || (searchNav != null && searchNav >= searchMatches.length - 1) ? 0.3 : 1 }}
+              >
+                <Ionicons name="chevron-up" size={22} color={theme.textPrimary} />
+              </Pressable>
+              <Pressable
+                disabled={searchNav == null || searchNav <= 0}
+                onPress={() => searchNav != null && scrollToMatch(searchNav - 1)}
+                hitSlop={8}
+                style={{ opacity: searchNav == null || searchNav <= 0 ? 0.3 : 1 }}
+              >
+                <Ionicons name="chevron-down" size={22} color={theme.textPrimary} />
+              </Pressable>
+            </View>
           ) : null}
         </View>
       ) : (
@@ -898,7 +960,7 @@ export default function RoomChat() {
         keyboardVerticalOffset={0}
         style={{ flex: 1 }}
       >
-        {searchMode ? (
+        {searchMode && searchNav == null ? (
           <SearchPanel
             query={searchQuery}
             messages={searchItems}
@@ -940,7 +1002,12 @@ export default function RoomChat() {
           <ScrollToBottomButton visible={showScrollDown} count={unseenCount} onPress={scrollToBottom} />
         ) : null}
 
-        {typingText ? <Text style={[styles.typing, { color: theme.textTertiary }]}>{typingText}</Text> : null}
+        {typingText ? (
+          <View style={styles.typingRow}>
+            <Text style={[styles.typing, { color: theme.textTertiary }]}>{typingText}</Text>
+            <TypingDots />
+          </View>
+        ) : null}
 
         {/* Composer (shared with inbox) */}
         {!searchMode ? (
@@ -1188,7 +1255,8 @@ const styles = StyleSheet.create({
   unreadLine: { flex: 1, height: StyleSheet.hairlineWidth },
   unreadText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
 
-  typing: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, paddingHorizontal: spacing.lg, paddingBottom: 4 },
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: spacing.lg, paddingBottom: 4 },
+  typing: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
 
   menuBackdrop: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   menu: { minWidth: 250, borderRadius: radius.lg, paddingVertical: spacing.sm, gap: 2 },

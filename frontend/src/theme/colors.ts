@@ -22,6 +22,11 @@ export const LightTheme = {
   surface: '#FFFFFF',
   surfaceElevated: '#FFF9F3',
 
+  // Chat bubbles — received bubbles need real contrast against `background`
+  // (surfaceElevated is only ~1% off the cream background and reads invisible).
+  receivedBubble: '#FFFFFF',
+  receivedBubbleBorder: '#E8D5C4',
+
   // Text — warm espresso
   textPrimary: '#2A1C14',
   textSecondary: '#6B574A',
@@ -77,6 +82,10 @@ export const DarkTheme: typeof LightTheme = {
   backgroundTertiary: '#2E231D',
   surface: '#221915',
   surfaceElevated: '#2E231D',
+
+  // Chat bubbles — dark mode already has enough contrast; no border needed.
+  receivedBubble: '#2E231D',
+  receivedBubbleBorder: 'transparent',
 
   // Text — warm off-white
   textPrimary: '#F7EFE9',

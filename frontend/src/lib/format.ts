@@ -74,6 +74,35 @@ export function relativeTime(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString();
 }
 
+/**
+ * WhatsApp-style chat-header presence line, e.g. "last seen just now",
+ * "last seen 12m ago", "last seen today at 14:32", "last seen yesterday at
+ * 14:32", "last seen 12 Jul at 14:32".
+ */
+export function formatLastSeen(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const diffMins = Math.floor((now.getTime() - date.getTime()) / 60_000);
+
+  if (diffMins < 1) return 'last seen just now';
+  if (diffMins < 60) return `last seen ${diffMins}m ago`;
+
+  const timeStr = date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (date.toDateString() === now.toDateString()) {
+    return `last seen today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `last seen yesterday at ${timeStr}`;
+  }
+
+  return `last seen ${date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} at ${timeStr}`;
+}
+
 /** Snapchat-style inbox timestamp: time today, "Yesterday", weekday, or date. */
 export function inboxDateLabel(iso: string | null | undefined): string {
   if (!iso) return '';

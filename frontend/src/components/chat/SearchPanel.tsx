@@ -57,6 +57,31 @@ function domainOf(url: string): string {
   }
 }
 
+/** Wraps every occurrence of `q` (lowercase) in a brand-tinted segment. */
+function highlightQuery(text: string, q: string, brand: string): React.ReactNode {
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  if (!lower.includes(q)) return text;
+  const segs: React.ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  while (i <= text.length) {
+    const idx = lower.indexOf(q, i);
+    if (idx < 0) {
+      segs.push(text.slice(i));
+      break;
+    }
+    if (idx > i) segs.push(text.slice(i, idx));
+    segs.push(
+      <Text key={`h${k++}`} style={{ backgroundColor: brand + '30', color: brand }}>
+        {text.slice(idx, idx + q.length)}
+      </Text>,
+    );
+    i = idx + q.length;
+  }
+  return segs;
+}
+
 /**
  * Full search results panel (tabs + date filter). The parent shows this while
  * the search bar is open; it owns tab/date state internally and calls back for
@@ -248,7 +273,9 @@ export function SearchPanel({
               <Pressable style={styles.row} onPress={() => onJumpToMessage(item.id)}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.rowTitle, { color: theme.textPrimary }]} numberOfLines={1}>{item.senderName}</Text>
-                  <Text style={[styles.rowSub, { color: theme.textSecondary }]} numberOfLines={2}>{item.content}</Text>
+                  <Text style={[styles.rowSub, { color: theme.textSecondary }]} numberOfLines={2}>
+                    {highlightQuery(item.content ?? '', q, theme.brand)}
+                  </Text>
                 </View>
                 <Text style={[styles.rowTime, { color: theme.textTertiary }]}>
                   {new Date(item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}

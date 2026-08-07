@@ -25,6 +25,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   runOnJS,
+  type EntryExitAnimationFunction,
 } from 'react-native-reanimated';
 import { showSuccess, showError } from '../lib/toast';
 import { FontFamily, FontSize } from '../theme';
@@ -41,6 +42,20 @@ export type MediaViewerImage = {
 const MAX_SCALE = 5;
 const DOUBLE_TAP_SCALE = 3;
 const MAX_DOTS = 10;
+// Drag distance past which a downward swipe dismisses the viewer.
+const DISMISS_DY = 100;
+
+// Stage-1 open transition: quick fade + subtle scale-up (150ms).
+const viewerEntering: EntryExitAnimationFunction = () => {
+  'worklet';
+  return {
+    initialValues: { opacity: 0, transform: [{ scale: 0.96 }] },
+    animations: {
+      opacity: withTiming(1, { duration: 150 }),
+      transform: [{ scale: withTiming(1, { duration: 150 }) }],
+    },
+  };
+};
 
 function headerTime(iso: string): string {
   const d = new Date(iso);
@@ -223,6 +238,28 @@ export function MediaViewer({
   const controlsOpacity = useSharedValue(1);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Swipe-down-to-dismiss: content follows the finger, backdrop fades with drag.
+  const dismissY = useSharedValue(0);
+  const dismissPan = Gesture.Pan()
+    .enabled(!zoomed)
+    .activeOffsetY(30)
+    .failOffsetX([-15, 15])
+    .onUpdate((e) => {
+      dismissY.value = Math.max(0, e.translationY);
+    })
+    .onEnd(() => {
+      if (dismissY.value > DISMISS_DY) {
+        runOnJS(onClose)();
+        dismissY.value = 0;
+      } else {
+        dismissY.value = withTiming(0, { duration: 150 });
+      }
+    });
+  const dismissStyle = useAnimatedStyle(() => ({ transform: [{ translateY: dismissY.value }] }));
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: 1 - Math.min(1, Math.max(0, dismissY.value / 300)),
+  }));
+
   const clearHideTimer = useCallback(() => {
     if (hideTimer.current) {
       clearTimeout(hideTimer.current);
@@ -256,10 +293,11 @@ export function MediaViewer({
     if (visible) {
       setCurrentIndex(initialIndex);
       setZoomed(false);
+      dismissY.value = 0;
       showControls();
     }
     return clearHideTimer;
-  }, [visible, initialIndex, showControls, clearHideTimer]);
+  }, [visible, initialIndex, showControls, clearHideTimer, dismissY]);
 
   const toolbarStyle = useAnimatedStyle(() => ({ opacity: controlsOpacity.value }));
 
@@ -310,8 +348,11 @@ export function MediaViewer({
   const canDelete = !!onDelete && !!currentUserId && current.senderId === currentUserId;
 
   return (
-    <View style={styles.root}>
+    <Animated.View entering={viewerEntering} style={styles.root}>
+      <Animated.View style={[styles.backdrop, backdropStyle]} pointerEvents="none" />
       <StatusBar hidden />
+      <GestureDetector gesture={dismissPan}>
+      <Animated.View style={[styles.content, dismissStyle]}>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <FlatList
           ref={listRef}
@@ -411,7 +452,9 @@ export function MediaViewer({
           ) : null}
         </Animated.View>
       </SafeAreaView>
-    </View>
+      </Animated.View>
+      </GestureDetector>
+    </Animated.View>
   );
 }
 
@@ -422,10 +465,20 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#000000',
     zIndex: 1000,
     elevation: 1000,
   },
+  // Separate layer so the drag-to-dismiss can fade the black backdrop while the
+  // content translates with the finger.
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#000000',
+  },
+  content: { flex: 1 },
   safe: { flex: 1 },
   loader: {
     position: 'absolute',

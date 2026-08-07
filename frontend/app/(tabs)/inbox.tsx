@@ -200,7 +200,6 @@ export default function Inbox() {
     return (
       <PressableScale
         style={[styles.row, isSelecting && !selected && { opacity: 0.6 }]}
-        scale={1}
         onPress={() => {
           if (isSelecting) {
             toggleSelection(item.id);

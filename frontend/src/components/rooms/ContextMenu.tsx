@@ -1,6 +1,7 @@
 import { Modal, View, Text, StyleSheet, Pressable } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useTheme, FontFamily } from '../../theme';
 import type { RoomMessageCard } from '../../types/api';
 
@@ -101,7 +102,14 @@ export function ContextMenu({
             {/* Emoji reaction row */}
             <View style={[styles.emojiRow, { backgroundColor: theme.surface }]}>
               {QUICK_EMOJIS.map((e) => (
-                <Pressable key={e} onPress={() => onReact(e)} hitSlop={4} style={styles.emojiBtn}>
+                <Pressable
+                  key={e}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    onReact(e);
+                  }}
+                  style={styles.emojiBtn}
+                >
                   <Text style={styles.emoji}>{e}</Text>
                 </Pressable>
               ))}
@@ -109,7 +117,7 @@ export function ContextMenu({
                 onPress={onOpenEmojiPicker}
                 style={[styles.plusBtn, { backgroundColor: theme.surfaceElevated }]}
               >
-                <Ionicons name="add" size={22} color={theme.textSecondary} />
+                <Ionicons name="add" size={20} color={theme.textSecondary} />
               </Pressable>
             </View>
 
@@ -144,12 +152,12 @@ export function ContextMenu({
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 8 },
-  emojiRow: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999 },
-  emojiBtn: { paddingHorizontal: 3 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, gap: 6 },
+  emojiRow: { flexDirection: 'row', alignItems: 'center', height: 48, paddingHorizontal: 6, borderRadius: 24 },
+  emojiBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   emoji: { fontSize: 22 },
   plusBtn: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
-  menu: { width: 220, borderRadius: 12, paddingVertical: 4 },
-  item: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 9 },
-  itemText: { fontSize: 14, fontFamily: FontFamily.medium },
+  menu: { width: 220, borderRadius: 12, paddingVertical: 4, overflow: 'hidden' },
+  item: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10 },
+  itemText: { fontSize: 15, fontFamily: FontFamily.medium },
 });

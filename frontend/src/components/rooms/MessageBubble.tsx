@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'react-native';
 import { Image, type ImageLoadEventData } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { createAudioPlayer, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -18,9 +19,15 @@ import { MessageTick } from '../MessageTick';
 import { ReactionPill } from '../chat/ReactionPill';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import { parseVoiceAmplitudes } from '../../lib/audioAmplitude';
+import { hasUrl, linkifyText } from '../../lib/linkify';
 import type { RoomMessageCard } from '../../types/api';
 
 const SWIPE_TRIGGER = 60;
+
+/** Haptic fired the instant the swipe-to-reply threshold is crossed (WhatsApp "click"). */
+function swipeThresholdHaptic() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+}
 
 /** Render message text with @mentions highlighted (brand color, semibold). */
 function renderWithMentions(content: string, mentionColor: string): React.ReactNode {
@@ -143,6 +150,8 @@ function MessageBubbleBase({
   };
 
   const translateX = useSharedValue(0);
+  // Fires the haptic exactly once when the 60px threshold is crossed (re-arms on pull-back).
+  const armed = useSharedValue(false);
   const pan = Gesture.Pan()
     .enabled(!isSelecting)
     .activeOffsetX([-15, 15])
@@ -150,9 +159,16 @@ function MessageBubbleBase({
     .onUpdate((e) => {
       // Swipe right only, damped.
       translateX.value = Math.max(0, Math.min(e.translationX, 90));
+      if (translateX.value >= SWIPE_TRIGGER && !armed.value) {
+        armed.value = true;
+        runOnJS(swipeThresholdHaptic)();
+      } else if (translateX.value < SWIPE_TRIGGER && armed.value) {
+        armed.value = false;
+      }
     })
     .onEnd(() => {
       if (translateX.value >= SWIPE_TRIGGER) runOnJS(onSwipeReply)();
+      armed.value = false;
       translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
     });
 
@@ -163,6 +179,29 @@ function MessageBubbleBase({
       { scale: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0.5, 1], Extrapolation.CLAMP) },
     ],
   }));
+
+  // WhatsApp-style meta: timestamp + ticks INSIDE the bubble bottom-right for
+  // padded bubbles, below the media for bare image/GIF bubbles (mirrors 1:1 chat).
+  const metaOnGradient = isOwn && !bareMedia;
+  const metaMuted = metaOnGradient ? 'rgba(255,255,255,0.7)' : theme.textTertiary;
+  const metaNode = (
+    <View style={[styles.metaRow, bareMedia ? (isOwn ? { justifyContent: 'flex-end' } : null) : styles.metaInBubble]}>
+      {message.isStarred && !deleted ? (
+        <Ionicons name="star" size={11} color={metaOnGradient ? '#fff' : theme.brand} style={{ marginRight: 2 }} />
+      ) : null}
+      <Text style={[styles.time, { color: metaMuted }]}>{timeLabel(message.createdAt)}</Text>
+      {message.isEdited && !deleted ? (
+        <Text style={[styles.time, { color: metaMuted }]}> · edited</Text>
+      ) : null}
+      {isOwn && !deleted ? (
+        <MessageTick
+          status={deliveryStatus ?? 'sent'}
+          isPremium={false}
+          mutedColor={metaOnGradient ? 'rgba(255,255,255,0.8)' : undefined}
+        />
+      ) : null}
+    </View>
+  );
 
   const bubbleInner = (
     <>
@@ -257,14 +296,28 @@ function MessageBubbleBase({
 
       {/* Text */}
       {deleted ? (
-        <Text style={[styles.text, styles.deleted, { color: isOwn ? '#ffffffcc' : theme.textTertiary }]}>
-          This message was deleted
-        </Text>
+        <View style={styles.deletedRow}>
+          <Ionicons name="ban-outline" size={14} color={isOwn ? '#ffffffcc' : theme.textTertiary} />
+          <Text style={[styles.text, styles.deleted, { color: isOwn ? '#ffffffcc' : theme.textTertiary }]}>
+            This message was deleted
+          </Text>
+        </View>
       ) : message.content && !isDoc && !isAudioFile && !isLocation ? (
         <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>
-          {renderWithMentions(message.content, isOwn ? '#fff' : theme.brand)}
+          {hasUrl(message.content)
+            ? linkifyText(
+                message.content,
+                undefined,
+                isOwn
+                  ? { color: '#fff', textDecorationLine: 'underline' }
+                  : { color: theme.info, textDecorationLine: 'underline' },
+              )
+            : renderWithMentions(message.content, isOwn ? '#fff' : theme.brand)}
         </Text>
       ) : null}
+
+      {/* Meta rides inside padded bubbles; bare media renders it below instead. */}
+      {!bareMedia ? metaNode : null}
     </>
   );
 
@@ -283,7 +336,7 @@ function MessageBubbleBase({
             </Pressable>
           ) : null}
 
-          <View style={{ maxWidth: '78%' }}>
+          <View style={{ maxWidth: '75%' }}>
             {!isOwn ? (
               <Pressable onPress={onAvatarPress} style={styles.senderRow}>
                 <Text style={[styles.senderName, { color: theme.brand }]}>{s.firstName ?? 'Someone'}</Text>
@@ -325,7 +378,7 @@ function MessageBubbleBase({
                   style={[
                     styles.bubble,
                     styles.bubbleOther,
-                    { backgroundColor: theme.surfaceElevated },
+                    { backgroundColor: theme.receivedBubble, borderWidth: 0.5, borderColor: theme.receivedBubbleBorder },
                     highlight && { borderWidth: 1.5, borderColor: theme.brandSecondary },
                   ]}
                 >
@@ -334,19 +387,8 @@ function MessageBubbleBase({
               )}
             </Pressable>
 
-            {/* Timestamp + delivery */}
-            <View style={[styles.metaRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
-              {message.isStarred && !deleted ? (
-                <Ionicons name="star" size={11} color={theme.brand} style={{ marginRight: 2 }} />
-              ) : null}
-              <Text style={[styles.time, { color: theme.textTertiary }]}>{timeLabel(message.createdAt)}</Text>
-              {message.isEdited && !deleted ? (
-                <Text style={[styles.time, { color: theme.textTertiary }]}> · edited</Text>
-              ) : null}
-              {isOwn && !deleted ? (
-                <MessageTick status={deliveryStatus ?? 'sent'} isPremium={false} />
-              ) : null}
-            </View>
+            {/* Bare media keeps its timestamp + delivery below the image */}
+            {bareMedia ? metaNode : null}
 
             {/* Reactions */}
             {message.reactions.length > 0 ? (
@@ -509,13 +551,14 @@ const styles = StyleSheet.create({
   adminChip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999 },
   adminChipText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
 
-  bubble: { paddingVertical: 10, paddingHorizontal: 12 },
+  bubble: { paddingVertical: 6, paddingHorizontal: 9 },
   bubbleOther: { borderTopLeftRadius: 0, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   bubbleOwn: { borderTopLeftRadius: 16, borderTopRightRadius: 0, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   // Bare image/GIF bubble — no padding, border or background (WhatsApp-style).
   mediaBubble: { borderRadius: 12, overflow: 'hidden' },
   text: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
   deleted: { fontStyle: 'italic' },
+  deletedRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   imageWrap: { borderRadius: 12, overflow: 'hidden' },
   image: { width: 220, height: 220, borderRadius: 12 },
   imageRetry: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)' },
@@ -535,6 +578,7 @@ const styles = StyleSheet.create({
   quoteText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  metaInBubble: { alignSelf: 'flex-end', marginTop: 1, marginLeft: 10 },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3 },
   reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },

@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme, FontFamily, DisplayFont } from '../../theme';
+import { useTheme, FontFamily } from '../../theme';
 import { categoryMeta, formatCount } from '../../lib/rooms';
 import type { RoomDetail } from '../../types/api';
 
@@ -27,8 +27,8 @@ export function RoomHeader({
 
   return (
     <View style={[styles.header, { borderBottomColor: theme.border }]}>
-      <Pressable onPress={onBack} hitSlop={10}>
-        <Ionicons name="chevron-back" size={26} color={theme.textPrimary} />
+      <Pressable onPress={onBack} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <Ionicons name="chevron-back" size={24} color={theme.textPrimary} />
       </Pressable>
 
       <Pressable style={styles.center} onPress={onOpenInfo}>
@@ -60,7 +60,7 @@ export function RoomHeader({
             ) : null}
           </View>
           {room ? (
-            <Text style={[styles.sub, { color: theme.textSecondary }]} numberOfLines={1}>
+            <Text style={[styles.sub, { color: theme.textTertiary }]} numberOfLines={1}>
               {formatCount(room.memberCount)} members
               {room.onlineCount > 0 ? ` · ${formatCount(room.onlineCount)} online` : ''}
             </Text>
@@ -68,24 +68,26 @@ export function RoomHeader({
         </View>
       </Pressable>
 
-      <Pressable onPress={onSearch} hitSlop={8} style={styles.action}>
-        <Ionicons name="search" size={22} color={theme.textPrimary} />
-      </Pressable>
-      <Pressable onPress={onMenu} hitSlop={8} style={styles.action}>
-        <Ionicons name="ellipsis-vertical" size={22} color={theme.textPrimary} />
-      </Pressable>
+      <View style={styles.actions}>
+        <Pressable onPress={onSearch} hitSlop={10}>
+          <Ionicons name="search" size={22} color={theme.textPrimary} />
+        </Pressable>
+        <Pressable onPress={onMenu} hitSlop={10}>
+          <Ionicons name="ellipsis-vertical" size={20} color={theme.textPrimary} />
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 56, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth },
   center: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.05)' },
+  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.05)' },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   roleBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 99 },
   roleBadgeText: { fontSize: 10, fontFamily: FontFamily.semibold },
-  title: { fontSize: 17, fontFamily: DisplayFont.bold, flexShrink: 1 },
+  title: { fontSize: 15, fontFamily: FontFamily.semibold, flexShrink: 1 },
   sub: { fontSize: 12, fontFamily: FontFamily.regular, marginTop: 1 },
-  action: { padding: 4 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingLeft: 4, paddingRight: 4 },
 });

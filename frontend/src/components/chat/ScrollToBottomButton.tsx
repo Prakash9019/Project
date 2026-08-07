@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { StyleSheet, View, Text, Platform } from 'react-native';
+import { StyleSheet, Text, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, ZoomIn } from 'react-native-reanimated';
 import { PressableScale } from '../ui/PressableScale';
 import { useTheme, FontFamily } from '../../theme';
 
@@ -24,7 +24,8 @@ export function ScrollToBottomButton({
   const p = useSharedValue(0);
 
   useEffect(() => {
-    p.value = withTiming(visible ? 1 : 0, { duration: 200 });
+    // Springy pop-in, quick fade-out (WhatsApp feel).
+    p.value = visible ? withSpring(1, { damping: 15, stiffness: 220 }) : withTiming(0, { duration: 150 });
   }, [visible, p]);
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -39,16 +40,19 @@ export function ScrollToBottomButton({
     >
       <PressableScale
         onPress={onPress}
-        haptic={false}
         ripple={false}
         style={[styles.btn, { backgroundColor: theme.brand }]}
       >
         <Ionicons name="chevron-down" size={22} color="#fff" />
       </PressableScale>
       {count > 0 ? (
-        <View style={[styles.badge, { backgroundColor: theme.error, borderColor: theme.background }]} pointerEvents="none">
+        <Animated.View
+          entering={ZoomIn.springify().damping(14)}
+          style={[styles.badge, { backgroundColor: theme.error, borderColor: theme.background }]}
+          pointerEvents="none"
+        >
           <Text style={styles.badgeText}>{count > 99 ? '99+' : count}</Text>
-        </View>
+        </Animated.View>
       ) : null}
     </Animated.View>
   );
