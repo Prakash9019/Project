@@ -99,4 +99,17 @@ describe('geminiClient — callGeminiJson', () => {
     const { callGeminiJson } = await loadClient();
     await expect(callGeminiJson('sys', 'user', SCHEMA, isSuggestions)).rejects.toThrow(/malformed JSON/);
   });
+
+  it('throws GeminiRequestError when response.json() fails (malformed 2xx body)', async () => {
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw new Error('invalid body'); },
+    } as Response)) as unknown as typeof fetch;
+
+    const { callGeminiJson, GeminiRequestError } = await loadClient();
+    await expect(callGeminiJson('sys', 'user', SCHEMA, isSuggestions)).rejects.toThrow(GeminiRequestError);
+    await expect(callGeminiJson('sys', 'user', SCHEMA, isSuggestions)).rejects.toThrow(/malformed JSON/);
+  });
 });

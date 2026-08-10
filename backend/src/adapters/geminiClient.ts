@@ -78,7 +78,13 @@ export async function callGeminiJson<T>(
     throw new GeminiRequestError(`Gemini API returned ${resp.status}${detail ? ` — ${detail}` : ''}`);
   }
 
-  const data = (await resp.json()) as GeminiResponse;
+  let data: GeminiResponse;
+  try {
+    data = (await resp.json()) as GeminiResponse;
+  } catch {
+    throw new GeminiRequestError('Gemini returned malformed JSON');
+  }
+
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
     throw new GeminiRequestError('Gemini returned an empty response');
