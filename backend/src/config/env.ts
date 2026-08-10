@@ -121,6 +121,10 @@ export const env = {
     apiKey: process.env.ANTHROPIC_API_KEY ?? '',
   },
 
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY ?? '',
+  },
+
   digilocker: {
     clientId:     process.env.DIGILOCKER_CLIENT_ID ?? '',
     clientSecret: process.env.DIGILOCKER_CLIENT_SECRET ?? '',
@@ -175,7 +179,7 @@ const REQUIRED = [
 // Firebase vars validated lazily by the adapter on first call
 const OPTIONAL_WARN_FIREBASE = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
 const OPTIONAL_WARN = [
-  'ANTHROPIC_API_KEY', 'AWS_REKOGNITION_ACCESS_KEY', 'STRIPE_SECRET_KEY',
+  'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'AWS_REKOGNITION_ACCESS_KEY', 'STRIPE_SECRET_KEY',
   'DIGILOCKER_CLIENT_ID', 'ENCRYPTION_KEY',
   // Email-OTP login (Resend). Validated as optional-warn (like Firebase) rather
   // than hard-required so the server still boots while these are being set up;
