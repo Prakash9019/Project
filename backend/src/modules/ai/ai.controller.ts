@@ -4,6 +4,7 @@ import { redis, RedisKeys } from '../../config/redis';
 import { env } from '../../config/env';
 import { Errors } from '../../utils/httpError';
 import { withTimeout } from '../../utils/withTimeout';
+import { callGeminiJson } from '../../adapters/geminiClient';
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -104,6 +105,16 @@ function compatibilityScore(a: UserProfile, b: UserProfile): number {
 
 // ── AI Icebreakers ────────────────────────────────────────
 
+interface IcebreakersResult { suggestions: string[] }
+const ICEBREAKERS_SCHEMA = {
+  type: 'OBJECT',
+  properties: { suggestions: { type: 'ARRAY', items: { type: 'STRING' } } },
+  required: ['suggestions'],
+};
+const isIcebreakersResult = (v: unknown): v is IcebreakersResult =>
+  !!v && typeof v === 'object' && Array.isArray((v as IcebreakersResult).suggestions) &&
+  (v as IcebreakersResult).suggestions.every((s) => typeof s === 'string');
+
 export async function getIcebreakers(req: Request, res: Response): Promise<void> {
   const userId = req.user!.sub;
   await requireAiFeature(userId, 'icebreakers');
@@ -136,12 +147,10 @@ Never be explicit or suggestive. Respond ONLY with a JSON array of 3 strings.`;
 
   let suggestions: string[];
   try {
-    const raw = await callClaude(system, user);
-    const parsed = safeParseJson<string[]>(raw, []);
-    suggestions = Array.isArray(parsed) && parsed.length >= 3
-      ? parsed.slice(0, 3)
-      : FALLBACK_ICEBREAKERS;
-  } catch {
+    const parsed = await callGeminiJson(system, user, ICEBREAKERS_SCHEMA, isIcebreakersResult);
+    suggestions = parsed.suggestions.length >= 3 ? parsed.suggestions.slice(0, 3) : FALLBACK_ICEBREAKERS;
+  } catch (err) {
+    console.error('[ai] icebreakers Gemini call failed', err);
     suggestions = FALLBACK_ICEBREAKERS;
   }
 
