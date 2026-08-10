@@ -213,3 +213,40 @@ describe('GET /api/v1/ai/compatibility/:userId', () => {
     expect(res.body.breakdown).toEqual([]);
   });
 });
+
+describe('GET /api/v1/ai/top-10', () => {
+  it('attaches a Gemini-generated whyLabel to the top-3 profiles', async () => {
+    const { token } = await createPlatinumUser('dailyTop10');
+    for (let i = 0; i < 4; i++) {
+      await createTestUser({ firstName: `Candidate${i}`, phoneVerified: true });
+    }
+
+    mockGeminiSuccess(JSON.stringify({ whyLabel: 'You both love hiking and coffee' }));
+
+    const res = await request(app)
+      .get('/api/v1/ai/top-10')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.profiles)).toBe(true);
+    expect(res.body.profiles.length).toBeGreaterThan(0);
+    const top = res.body.profiles[0];
+    expect(top.whyLabel).toBe('You both love hiking and coffee');
+  });
+
+  it('omits whyLabel (null) for candidates when Gemini fails, without failing the request', async () => {
+    const { token } = await createPlatinumUser('dailyTop10');
+    for (let i = 0; i < 4; i++) {
+      await createTestUser({ firstName: `Candidate${i}`, phoneVerified: true });
+    }
+
+    mockGeminiFailure(500);
+
+    const res = await request(app)
+      .get('/api/v1/ai/top-10')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.profiles[0].whyLabel).toBeNull();
+  });
+});

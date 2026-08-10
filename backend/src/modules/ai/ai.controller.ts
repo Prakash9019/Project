@@ -276,6 +276,15 @@ Respond ONLY with a JSON array of 2-3 strings (the bullet points).`;
 
 const TOP10_TTL = 60 * 60 * 24; // 24h
 
+interface WhyLabelResult { whyLabel: string }
+const WHY_LABEL_SCHEMA = {
+  type: 'OBJECT',
+  properties: { whyLabel: { type: 'STRING' } },
+  required: ['whyLabel'],
+};
+const isWhyLabelResult = (v: unknown): v is WhyLabelResult =>
+  !!v && typeof v === 'object' && typeof (v as WhyLabelResult).whyLabel === 'string';
+
 export async function getDailyTop10(req: Request, res: Response): Promise<void> {
   const userId = req.user!.sub;
   await requireAiFeature(userId, 'dailyTop10');
@@ -351,10 +360,11 @@ export async function getDailyTop10(req: Request, res: Response): Promise<void> 
     try {
       const system = 'In under 10 words, explain why these two people might connect well.';
       const userMsg = `${me.interests?.slice(0, 3).join(', ') || 'unknown interests'} | ${c.interests?.slice(0, 3).join(', ') || 'unknown interests'}`;
-      const raw = await callClaude(system, userMsg);
-      whyLabels[c.id] = raw.trim().replace(/^["']|["']$/g, '').slice(0, 60);
-    } catch {
-      // skip
+      const parsed = await callGeminiJson(system, userMsg, WHY_LABEL_SCHEMA, isWhyLabelResult);
+      whyLabels[c.id] = parsed.whyLabel.trim().replace(/^["']|["']$/g, '').slice(0, 60);
+    } catch (err) {
+      console.error('[ai] top-10 why-label Gemini call failed', err);
+      // skip — whyLabel stays null for this candidate
     }
   }));
 
