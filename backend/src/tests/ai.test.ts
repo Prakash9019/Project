@@ -94,6 +94,26 @@ describe('GET /api/v1/ai/icebreakers', () => {
     ]);
   });
 
+  it('falls back to the hardcoded icebreakers when Gemini returns fewer than 3 suggestions', async () => {
+    const { token } = await createPlatinumUser('icebreakers');
+    const other = await createTestUser({ firstName: 'Riya' });
+    const convId = await startConversation(token, other.id);
+
+    mockGeminiSuccess(JSON.stringify({ suggestions: ['only one'] }));
+
+    const res = await request(app)
+      .get(`/api/v1/ai/icebreakers?conversationId=${convId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(3);
+    expect(res.body.suggestions).toEqual([
+      "Hey, I'd love to hear more about you!",
+      'Your profile caught my eye — what do you enjoy doing on weekends?',
+      'Hi there! What are you passionate about these days?',
+    ]);
+  });
+
   it('403s when the user has not opted in to the icebreakers AI feature', async () => {
     const user = await createTestUser({ plan: 'platinum' });
     const other = await createTestUser();

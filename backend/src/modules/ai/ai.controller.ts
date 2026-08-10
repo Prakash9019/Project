@@ -148,7 +148,12 @@ Never be explicit or suggestive. Respond ONLY with a JSON array of 3 strings.`;
   let suggestions: string[];
   try {
     const parsed = await callGeminiJson(system, user, ICEBREAKERS_SCHEMA, isIcebreakersResult);
-    suggestions = parsed.suggestions.length >= 3 ? parsed.suggestions.slice(0, 3) : FALLBACK_ICEBREAKERS;
+    if (parsed.suggestions.length >= 3) {
+      suggestions = parsed.suggestions.slice(0, 3);
+    } else {
+      console.error('[ai] icebreakers Gemini returned fewer than 3 suggestions', parsed.suggestions);
+      suggestions = FALLBACK_ICEBREAKERS;
+    }
   } catch (err) {
     console.error('[ai] icebreakers Gemini call failed', err);
     suggestions = FALLBACK_ICEBREAKERS;
