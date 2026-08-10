@@ -54,6 +54,8 @@ export async function callGeminiJson<T>(
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema,
+          thinkingConfig: { thinkingBudget: 0 },
+          maxOutputTokens: 1024,
         },
       }),
       signal: controller.signal,

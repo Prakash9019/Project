@@ -101,7 +101,7 @@ export async function getIcebreakers(req: Request, res: Response): Promise<void>
   const system = `You are a dating app assistant helping users start conversations.
 Generate 3 short, personalized, genuine opening messages based on the profile provided.
 Each should be under 120 characters. Be warm, specific, not generic.
-Never be explicit or suggestive. Respond ONLY with a JSON array of 3 strings.`;
+Never be explicit or suggestive.`;
 
   const user = `Profile: Name: ${target.firstName ?? 'Unknown'}, Age: ${target.age ?? 'unknown'}, Bio: ${target.bio ?? ''}, Interests: ${(target.interests ?? []).join(', ')}, Looking for: ${(target.lookingFor ?? []).join(', ')}, From: ${target.whereAreYouFrom ?? ''}, Tags: ${(target.fantasyTags ?? []).join(', ')}`;
 
@@ -157,7 +157,7 @@ export async function getReplySuggestions(req: Request, res: Response): Promise<
 
   const system = `You are a dating app assistant. Suggest 3 natural reply options for the user.
 Keep each under 100 characters. Match the tone of the conversation.
-Never be explicit. Respond ONLY with a JSON array of 3 strings.`;
+Never be explicit.`;
 
   const userMsg = `Conversation (newest last):\n${messages.map((m) => `${m.senderId === userId ? 'Me' : 'Them'}: ${m.content}`).join('\n')}`;
 
@@ -215,8 +215,7 @@ export async function getCompatibility(req: Request, res: Response): Promise<voi
 
   const system = `You are a compatibility analyst. Given two dating profiles, explain their compatibility in 2-3 short bullet points.
 Focus on shared interests, intent alignment, and lifestyle.
-Never mention race, religion, orientation, or physical appearance beyond what they stated.
-Respond ONLY with a JSON array of 2-3 strings (the bullet points).`;
+Never mention race, religion, orientation, or physical appearance beyond what they stated.`;
 
   const userMsg = `Profile A: Name ${me.firstName ?? 'A'}, Bio: ${me.bio ?? ''}, Interests: ${me.interests?.join(', ')}, Looking for: ${(me.lookingFor ?? []).join(', ')}. Profile B: Name ${them.firstName ?? 'B'}, Bio: ${them.bio ?? ''}, Interests: ${them.interests?.join(', ')}, Looking for: ${(them.lookingFor ?? []).join(', ')}. Score: ${score}/100`;
 

@@ -180,6 +180,19 @@ describe('GET /api/v1/ai/reply-suggestions', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ suggestions: ['Sounds great!', 'Tell me more!', 'Interesting! What else?'] });
   });
+
+  it('403s when the user has not opted in to the replySuggestions AI feature', async () => {
+    const user = await createTestUser({ plan: 'platinum' });
+    const other = await createTestUser();
+    const token = createTestToken(user.id, 'platinum');
+    const convId = await startConversation(token, other.id);
+
+    const res = await request(app)
+      .get(`/api/v1/ai/reply-suggestions?conversationId=${convId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(403);
+  });
 });
 
 describe('GET /api/v1/ai/compatibility/:userId', () => {
@@ -211,6 +224,18 @@ describe('GET /api/v1/ai/compatibility/:userId', () => {
     expect(res.status).toBe(200);
     expect(typeof res.body.score).toBe('number');
     expect(res.body.breakdown).toEqual([]);
+  });
+
+  it('403s when the user has not opted in to the compatibility AI feature', async () => {
+    const user = await createTestUser({ plan: 'platinum' });
+    const other = await createTestUser();
+    const token = createTestToken(user.id, 'platinum');
+
+    const res = await request(app)
+      .get(`/api/v1/ai/compatibility/${other.id}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(403);
   });
 });
 
@@ -248,6 +273,48 @@ describe('GET /api/v1/ai/top-10', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.profiles[0].whyLabel).toBeNull();
+  });
+
+  it('403s when the user has not opted in to the dailyTop10 AI feature', async () => {
+    const user = await createTestUser({ plan: 'platinum' });
+    const token = createTestToken(user.id, 'platinum');
+
+    const res = await request(app)
+      .get('/api/v1/ai/top-10')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(403);
+  });
+
+  it('isolates per-candidate Gemini failures — one succeeds, one fails, within the same Promise.all batch', async () => {
+    const { token } = await createPlatinumUser('dailyTop10');
+    for (let i = 0; i < 4; i++) {
+      await createTestUser({ firstName: `Candidate${i}`, phoneVerified: true });
+    }
+
+    let callCount = 0;
+    global.fetch = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ whyLabel: 'You both love hiking' }) }] } }],
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 500, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const res = await request(app)
+      .get('/api/v1/ai/top-10')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    const whyLabels = res.body.profiles.map((p: { whyLabel: string | null }) => p.whyLabel);
+    expect(whyLabels.some((label: string | null) => typeof label === 'string' && label.length > 0)).toBe(true);
+    expect(whyLabels.some((label: string | null) => label === null)).toBe(true);
   });
 });
 
@@ -287,5 +354,16 @@ describe('GET /api/v1/ai/profile-optimizer', () => {
     expect(res.status).toBe(200);
     expect(res.body.profileScore).toBe(Math.round(user.profileCompletenessScore));
     expect(res.body.suggestions).toEqual([]);
+  });
+
+  it('403s when the user has not opted in to the profileOptimizer AI feature', async () => {
+    const user = await createTestUser({ plan: 'platinum' });
+    const token = createTestToken(user.id, 'platinum');
+
+    const res = await request(app)
+      .get('/api/v1/ai/profile-optimizer')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(403);
   });
 });

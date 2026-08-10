@@ -55,6 +55,8 @@ describe('geminiClient — callGeminiJson', () => {
     const body = JSON.parse(calledOpts.body as string);
     expect(body.generationConfig.responseMimeType).toBe('application/json');
     expect(body.generationConfig.responseSchema).toEqual(SCHEMA);
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(body.generationConfig.maxOutputTokens).toBe(1024);
   });
 
   it('throws GeminiRequestError on a non-2xx response (caller falls back)', async () => {
