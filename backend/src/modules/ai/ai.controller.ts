@@ -1,9 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
-import { env } from '../../config/env';
 import { Errors } from '../../utils/httpError';
-import { withTimeout } from '../../utils/withTimeout';
 import { callGeminiJson } from '../../adapters/geminiClient';
 
 // ── Helpers ───────────────────────────────────────────────
@@ -29,50 +27,12 @@ async function requireAiFeature(userId: string, feature: keyof AiOptIn): Promise
   }
 }
 
-const AI_MODEL = 'claude-sonnet-4-6';
 const FALLBACK_ICEBREAKERS = [
   "Hey, I'd love to hear more about you!",
   'Your profile caught my eye — what do you enjoy doing on weekends?',
   'Hi there! What are you passionate about these days?',
 ];
 
-async function callClaudeRaw(systemPrompt: string, userPrompt: string): Promise<string> {
-  const apiKey = env.anthropic.apiKey;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
-
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: userPrompt }],
-      system: systemPrompt,
-    }),
-  });
-
-  if (!resp.ok) throw new Error(`Claude API error: ${resp.status}`);
-  const data = await resp.json() as { content: Array<{ text: string }> };
-  return data.content?.[0]?.text ?? '';
-}
-
-async function callClaude(systemPrompt: string, userPrompt: string): Promise<string> {
-  return withTimeout(callClaudeRaw(systemPrompt, userPrompt), 10000, '');
-}
-
-function safeParseJson<T>(text: string, fallback: T): T {
-  try {
-    // Strip markdown code fences if present
-    const clean = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-    return JSON.parse(clean) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 // ── Compatibility score (deterministic, no AI) ────────────────────────────────
 
