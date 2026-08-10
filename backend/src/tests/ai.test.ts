@@ -250,3 +250,42 @@ describe('GET /api/v1/ai/top-10', () => {
     expect(res.body.profiles[0].whyLabel).toBeNull();
   });
 });
+
+describe('GET /api/v1/ai/profile-optimizer', () => {
+  it('returns Gemini-generated profile suggestions', async () => {
+    const { token } = await createPlatinumUser('profileOptimizer');
+
+    mockGeminiSuccess(JSON.stringify({
+      profileScore: 72,
+      suggestions: [
+        { section: 'bio', issue: 'Bio is empty', recommendation: 'Add a sentence about your interests' },
+        { section: 'photos', issue: 'Only 1 photo', recommendation: 'Add 2-3 more photos' },
+      ],
+    }));
+
+    const res = await request(app)
+      .get('/api/v1/ai/profile-optimizer')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.profileScore).toBe(72);
+    expect(res.body.suggestions).toHaveLength(2);
+    expect(res.body.suggestions[0]).toEqual({
+      section: 'bio', issue: 'Bio is empty', recommendation: 'Add a sentence about your interests',
+    });
+  });
+
+  it('falls back to the completeness score with no suggestions when Gemini fails', async () => {
+    const { user, token } = await createPlatinumUser('profileOptimizer');
+
+    mockGeminiFailure(500);
+
+    const res = await request(app)
+      .get('/api/v1/ai/profile-optimizer')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.profileScore).toBe(Math.round(user.profileCompletenessScore));
+    expect(res.body.suggestions).toEqual([]);
+  });
+});

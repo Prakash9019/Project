@@ -388,6 +388,38 @@ export async function getDailyTop10(req: Request, res: Response): Promise<void> 
 
 // ── AI Profile Optimizer ──────────────────────────────────
 
+interface ProfileOptimizerResult {
+  profileScore: number;
+  suggestions: Array<{ section: string; issue: string; recommendation: string }>;
+}
+const PROFILE_OPTIMIZER_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    profileScore: { type: 'NUMBER' },
+    suggestions: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          section: { type: 'STRING' },
+          issue: { type: 'STRING' },
+          recommendation: { type: 'STRING' },
+        },
+        required: ['section', 'issue', 'recommendation'],
+      },
+    },
+  },
+  required: ['profileScore', 'suggestions'],
+};
+const isProfileOptimizerResult = (v: unknown): v is ProfileOptimizerResult => {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as ProfileOptimizerResult;
+  return typeof r.profileScore === 'number' && Array.isArray(r.suggestions) &&
+    r.suggestions.every((s) =>
+      s && typeof s === 'object' &&
+      typeof s.section === 'string' && typeof s.issue === 'string' && typeof s.recommendation === 'string');
+};
+
 export async function getProfileOptimizer(req: Request, res: Response): Promise<void> {
   const userId = req.user!.sub;
   await requireAiFeature(userId, 'profileOptimizer');
@@ -416,25 +448,16 @@ export async function getProfileOptimizer(req: Request, res: Response): Promise<
   };
 
   const system = `You are a dating profile coach. Analyze this profile and return specific, actionable improvements.
-Respond ONLY with JSON: { "profileScore": number (0-100), "suggestions": [{"section": string, "issue": string, "recommendation": string}] }
 Sections: bio, photos, interests, lookingFor, prompts.
 Be specific and encouraging. Max 5 suggestions.`;
 
   const userMsg = `Profile: ${JSON.stringify(profileSummary)}`;
 
-  interface OptimizerResult {
-    profileScore: number;
-    suggestions: Array<{ section: string; issue: string; recommendation: string }>;
-  }
-
-  let result: OptimizerResult;
+  let result: ProfileOptimizerResult;
   try {
-    const raw = await callClaude(system, userMsg);
-    result = safeParseJson<OptimizerResult>(raw, {
-      profileScore: Math.round(user.profileCompletenessScore),
-      suggestions: [],
-    });
-  } catch {
+    result = await callGeminiJson(system, userMsg, PROFILE_OPTIMIZER_SCHEMA, isProfileOptimizerResult);
+  } catch (err) {
+    console.error('[ai] profile-optimizer Gemini call failed', err);
     result = { profileScore: Math.round(user.profileCompletenessScore), suggestions: [] };
   }
 
