@@ -35,7 +35,7 @@ describe('geminiClient — callGeminiJson', () => {
       json: async () => ({
         candidates: [{ content: { parts: [{ text: JSON.stringify({ suggestions: ['a', 'b', 'c'] }) }] } }],
       }),
-    } as Response));
+    } as unknown as Response));
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const { callGeminiJson } = await loadClient();
@@ -43,12 +43,14 @@ describe('geminiClient — callGeminiJson', () => {
 
     expect(result).toEqual({ suggestions: ['a', 'b', 'c'] });
 
-    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    expect(fetchMock).toHaveBeenCalled();
+    const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+    const calledUrl = calls[0][0];
     expect(calledUrl).toContain('generativelanguage.googleapis.com');
     expect(calledUrl).toContain('gemini-2.5-flash');
     expect(calledUrl).not.toContain('anthropic.com');
 
-    const calledOpts = fetchMock.mock.calls[0][1] as RequestInit;
+    const calledOpts = calls[0][1];
     expect((calledOpts.headers as Record<string, string>)['x-goog-api-key']).toBe('test-gemini-key');
     const body = JSON.parse(calledOpts.body as string);
     expect(body.generationConfig.responseMimeType).toBe('application/json');
@@ -106,7 +108,7 @@ describe('geminiClient — callGeminiJson', () => {
       ok: true,
       status: 200,
       json: async () => { throw new Error('invalid body'); },
-    } as Response)) as unknown as typeof fetch;
+    } as unknown as Response)) as unknown as typeof fetch;
 
     const { callGeminiJson, GeminiRequestError } = await loadClient();
     await expect(callGeminiJson('sys', 'user', SCHEMA, isSuggestions)).rejects.toThrow(GeminiRequestError);
