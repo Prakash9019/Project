@@ -181,3 +181,35 @@ describe('GET /api/v1/ai/reply-suggestions', () => {
     expect(res.body).toEqual({ suggestions: ['Sounds great!', 'Tell me more!', 'Interesting! What else?'] });
   });
 });
+
+describe('GET /api/v1/ai/compatibility/:userId', () => {
+  it('returns the deterministic score plus a Gemini-generated breakdown', async () => {
+    const { user, token } = await createPlatinumUser('compatibility');
+    const other = await createTestUser();
+
+    mockGeminiSuccess(JSON.stringify({ breakdown: ['You both value honesty', 'Shared interest in hiking'] }));
+
+    const res = await request(app)
+      .get(`/api/v1/ai/compatibility/${other.id}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.score).toBe('number');
+    expect(res.body.breakdown).toEqual(['You both value honesty', 'Shared interest in hiking']);
+  });
+
+  it('keeps the deterministic score but returns an empty breakdown when Gemini fails', async () => {
+    const { token } = await createPlatinumUser('compatibility');
+    const other = await createTestUser();
+
+    mockGeminiFailure(500);
+
+    const res = await request(app)
+      .get(`/api/v1/ai/compatibility/${other.id}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.score).toBe('number');
+    expect(res.body.breakdown).toEqual([]);
+  });
+});

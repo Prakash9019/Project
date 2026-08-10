@@ -215,6 +215,16 @@ Never be explicit. Respond ONLY with a JSON array of 3 strings.`;
 
 // ── AI Compatibility ──────────────────────────────────────
 
+interface CompatibilityBreakdownResult { breakdown: string[] }
+const COMPATIBILITY_SCHEMA = {
+  type: 'OBJECT',
+  properties: { breakdown: { type: 'ARRAY', items: { type: 'STRING' } } },
+  required: ['breakdown'],
+};
+const isCompatibilityBreakdownResult = (v: unknown): v is CompatibilityBreakdownResult =>
+  !!v && typeof v === 'object' && Array.isArray((v as CompatibilityBreakdownResult).breakdown) &&
+  (v as CompatibilityBreakdownResult).breakdown.every((s) => typeof s === 'string');
+
 export async function getCompatibility(req: Request, res: Response): Promise<void> {
   const myId = req.user!.sub;
   const { userId: theirId } = req.params;
@@ -252,9 +262,10 @@ Respond ONLY with a JSON array of 2-3 strings (the bullet points).`;
 
   let breakdown: string[];
   try {
-    const raw = await callClaude(system, userMsg);
-    breakdown = safeParseJson<string[]>(raw, []);
-  } catch {
+    const parsed = await callGeminiJson(system, userMsg, COMPATIBILITY_SCHEMA, isCompatibilityBreakdownResult);
+    breakdown = parsed.breakdown;
+  } catch (err) {
+    console.error('[ai] compatibility Gemini call failed', err);
     breakdown = [];
   }
 
