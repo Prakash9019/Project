@@ -3,6 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Pure adapter unit test — no DB/Redis needed. Mocks global fetch and
 // re-imports the module fresh per test so env.gemini.apiKey picks up
 // process.env.GEMINI_API_KEY mutations (env.ts reads it once at import time).
+//
+// env.ts also calls dotenv.config() on every fresh load (triggered by
+// vi.resetModules() below). On a machine with a real backend/.env that has
+// GEMINI_API_KEY set, that reload would silently repopulate a deliberately
+// `delete`d process.env.GEMINI_API_KEY, breaking the "missing key" test.
+// Stub dotenv.config() to a no-op so this file only ever sees the
+// process.env values it sets itself.
+vi.mock('dotenv', () => ({ default: { config: vi.fn() } }));
 
 const ORIGINAL_GEMINI_KEY = process.env.GEMINI_API_KEY;
 const ORIGINAL_FETCH = global.fetch;

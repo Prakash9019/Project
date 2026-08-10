@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
+// env.ts calls dotenv.config() on every fresh module load (triggered by
+// vi.resetModules() below). On a machine with a real backend/.env that has
+// GEMINI_API_KEY set (e.g. for local Chat Translate testing), that reload
+// would silently repopulate a deliberately `delete`d process.env.GEMINI_API_KEY,
+// breaking the "missing key" tests. Stub dotenv.config() to a no-op so these
+// tests only ever see the process.env values this file itself sets.
+vi.mock('dotenv', () => ({ default: { config: vi.fn() } }));
+
 const ORIGINAL_GEMINI_KEY = process.env.GEMINI_API_KEY;
 const ORIGINAL_FETCH = global.fetch;
 
