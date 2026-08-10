@@ -141,3 +141,43 @@ describe('GET /api/v1/ai/icebreakers', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('GET /api/v1/ai/reply-suggestions', () => {
+  it('returns Gemini-generated reply suggestions', async () => {
+    const { token } = await createPlatinumUser('replySuggestions');
+    const other = await createTestUser();
+    const convId = await startConversation(token, other.id);
+    await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(token))
+      .send({ type: 'text', content: 'Hey, how was your day?' });
+
+    mockGeminiSuccess(JSON.stringify({ suggestions: ['It was great, thanks!', 'Pretty busy, honestly', 'Tell me about yours!'] }));
+
+    const res = await request(app)
+      .get(`/api/v1/ai/reply-suggestions?conversationId=${convId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ suggestions: ['It was great, thanks!', 'Pretty busy, honestly', 'Tell me about yours!'] });
+  });
+
+  it('falls back to the hardcoded replies when Gemini fails', async () => {
+    const { token } = await createPlatinumUser('replySuggestions');
+    const other = await createTestUser();
+    const convId = await startConversation(token, other.id);
+    await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(token))
+      .send({ type: 'text', content: 'Hey!' });
+
+    mockGeminiFailure(500);
+
+    const res = await request(app)
+      .get(`/api/v1/ai/reply-suggestions?conversationId=${convId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ suggestions: ['Sounds great!', 'Tell me more!', 'Interesting! What else?'] });
+  });
+});

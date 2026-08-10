@@ -164,6 +164,16 @@ Never be explicit or suggestive. Respond ONLY with a JSON array of 3 strings.`;
 
 // ── AI Reply Suggestions ──────────────────────────────────
 
+interface ReplySuggestionsResult { suggestions: string[] }
+const REPLY_SUGGESTIONS_SCHEMA = {
+  type: 'OBJECT',
+  properties: { suggestions: { type: 'ARRAY', items: { type: 'STRING' } } },
+  required: ['suggestions'],
+};
+const isReplySuggestionsResult = (v: unknown): v is ReplySuggestionsResult =>
+  !!v && typeof v === 'object' && Array.isArray((v as ReplySuggestionsResult).suggestions) &&
+  (v as ReplySuggestionsResult).suggestions.every((s) => typeof s === 'string');
+
 export async function getReplySuggestions(req: Request, res: Response): Promise<void> {
   const userId = req.user!.sub;
   await requireAiFeature(userId, 'replySuggestions');
@@ -193,9 +203,10 @@ Never be explicit. Respond ONLY with a JSON array of 3 strings.`;
 
   let suggestions: string[];
   try {
-    const raw = await callClaude(system, userMsg);
-    suggestions = safeParseJson<string[]>(raw, ['Sounds great!', 'Tell me more!', 'Interesting! What else?']);
-  } catch {
+    const parsed = await callGeminiJson(system, userMsg, REPLY_SUGGESTIONS_SCHEMA, isReplySuggestionsResult);
+    suggestions = parsed.suggestions;
+  } catch (err) {
+    console.error('[ai] reply-suggestions Gemini call failed', err);
     suggestions = ['Sounds great!', 'Tell me more!', 'Interesting! What else?'];
   }
 
