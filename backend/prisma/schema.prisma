@@ -554,6 +554,13 @@ model Message {
   caption    String?   @db.VarChar(1000)
   mediaUrls  String[]
   mediaUrl   String?
+  // Poster frame for a video message (R2 key or hosted URL). Generated
+  // client-side with expo-video-thumbnails before upload — the backend only
+  // stores whatever it is given. 20260726_video_and_duration.
+  thumbnailUrl String?
+  // Playback length in SECONDS for voice/video messages. The stored waveform is
+  // resampled to a fixed bar count, so its length can't encode this.
+  duration   Int?
   replyToId  String?
 
   viewOnce         Boolean   @default(false)
@@ -1123,6 +1130,9 @@ model RoomMessage {
   content           String                @db.Text
   type              RoomMessageType       @default(text)
   mediaUrl          String?
+  // Playback length in SECONDS for voice messages (mirrors Message.duration).
+  // 20260726_video_and_duration.
+  duration          Int?
   replyToId         String?
   isDeleted         Boolean               @default(false)
   isPinned          Boolean               @default(false)

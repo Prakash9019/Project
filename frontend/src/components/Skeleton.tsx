@@ -45,22 +45,35 @@ export function GridSkeleton({ cols = 3 }: { cols?: number }) {
   );
 }
 
-/** Message bubble skeletons for the chat loading state (WhatsApp-style, no spinner). */
+/** Message bubble skeletons for the chat loading state (WhatsApp-style, no spinner).
+ *  Heights and widths deliberately vary — a column of identical 44px blocks reads
+ *  as a grid, not as a conversation. */
+const CHAT_SKELETON_ROWS: { height: number; isOwn: boolean; width: `${number}%` }[] = [
+  { height: 38, isOwn: false, width: '52%' },
+  { height: 56, isOwn: true, width: '64%' },
+  { height: 44, isOwn: true, width: '46%' },
+  { height: 70, isOwn: false, width: '72%' },
+  { height: 32, isOwn: true, width: '38%' },
+  { height: 52, isOwn: false, width: '60%' },
+  { height: 44, isOwn: false, width: '55%' },
+  { height: 38, isOwn: true, width: '50%' },
+  { height: 62, isOwn: false, width: '68%' },
+  { height: 44, isOwn: true, width: '58%' },
+];
+
 export function ChatSkeleton() {
   const { theme } = useTheme();
-  // Alternating own/received bubbles; received rows carry an avatar placeholder.
-  const rows = [false, true, false, false, true, false];
   return (
     <View style={styles.chat}>
-      {rows.map((isOwn, i) => (
+      {CHAT_SKELETON_ROWS.map((row, i) => (
         <View
           key={i}
-          style={[styles.chatRow, { justifyContent: isOwn ? 'flex-end' : 'flex-start' }]}
+          style={[styles.chatRow, { justifyContent: row.isOwn ? 'flex-end' : 'flex-start' }]}
         >
-          {!isOwn && (
+          {!row.isOwn && (
             <View style={[styles.chatAvatar, { backgroundColor: theme.surfaceElevated }]} />
           )}
-          <Skeleton width={isOwn ? '58%' : '68%'} height={44} radius={16} />
+          <Skeleton width={row.width} height={row.height} radius={16} />
         </View>
       ))}
     </View>

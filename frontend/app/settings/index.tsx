@@ -5,7 +5,6 @@ import {
   StyleSheet,
   Pressable,
   ScrollView,
-  Switch,
   ActivityIndicator,
   Modal,
   TextInput,
@@ -18,6 +17,7 @@ import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { Avatar } from '../../src/components/Avatar';
+import { AnimatedSwitch } from '../../src/components/ui/AnimatedSwitch';
 import { useAuthStore } from '../../src/store/authStore';
 import { updateSettings, updateProfile, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
 import { planAtLeast } from '../../src/lib/format';
@@ -165,12 +165,7 @@ export default function Settings() {
             <Text style={[styles.lockText, { color: theme.brand }]}>{requiredPlan}</Text>
           </Pressable>
         ) : (
-          <Switch
-            value={!!toggles[settingKey]}
-            onValueChange={(v) => patch(settingKey, v)}
-            trackColor={{ true: theme.brand, false: theme.border }}
-            thumbColor="#fff"
-          />
+          <AnimatedSwitch value={!!toggles[settingKey]} onValueChange={(v) => patch(settingKey, v)} />
         )}
       </View>
     );
@@ -182,12 +177,7 @@ export default function Settings() {
         <Text style={[styles.toggleLabel, { color: theme.textPrimary }]}>{label}</Text>
         <Text style={[styles.availSub, { color: theme.textTertiary }]}>{subtitle}</Text>
       </View>
-      <Switch
-        value={!!avail[availKey]}
-        onValueChange={(v) => patchAvailability(availKey, v)}
-        trackColor={{ true: theme.brand, false: theme.border }}
-        thumbColor="#fff"
-      />
+      <AnimatedSwitch value={!!avail[availKey]} onValueChange={(v) => patchAvailability(availKey, v)} />
     </View>
   );
 
@@ -202,12 +192,7 @@ export default function Settings() {
             <Text style={[styles.lockText, { color: theme.brand }]}>platinum</Text>
           </Pressable>
         ) : (
-          <Switch
-            value={!!ai[aiKey]}
-            onValueChange={(v) => patchAi(aiKey, v)}
-            trackColor={{ true: theme.brand, false: theme.border }}
-            thumbColor="#fff"
-          />
+          <AnimatedSwitch value={!!ai[aiKey]} onValueChange={(v) => patchAi(aiKey, v)} />
         )}
       </View>
     );
@@ -309,12 +294,7 @@ export default function Settings() {
           <Group title="APPEARANCE">
             <View style={styles.toggleRow}>
               <Text style={[styles.toggleLabel, { color: theme.textPrimary }]}>Dark mode</Text>
-              <Switch
-                value={isDark}
-                onValueChange={toggleTheme}
-                trackColor={{ true: theme.brand, false: theme.border }}
-                thumbColor="#fff"
-              />
+              <AnimatedSwitch value={isDark} onValueChange={toggleTheme} />
             </View>
           </Group>
 

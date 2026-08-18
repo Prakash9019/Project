@@ -6,6 +6,10 @@ import Animated, {
   useAnimatedStyle,
   withRepeat,
   withTiming,
+  interpolate,
+  Extrapolation,
+  FadeIn,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { useTheme, FontFamily } from '../../theme';
 
@@ -20,15 +24,23 @@ const MAX_BAR_HEIGHT = 28;
  * capture/upload is wired by the parent. When `locked`, the finger has been
  * released and recording continues, so the slide-to-cancel hint is replaced by
  * a lock indicator.
+ *
+ * `panX` is the live horizontal drag from the parent's pan gesture: the cancel
+ * hint fades UP and drifts left as the finger slides toward the cancel
+ * threshold, instead of hard-cutting at it (F8 — "bind pan translation to
+ * transforms").
  */
 export function VoiceRecorder({
   cancelling,
   locked = false,
   amplitudes = [],
+  panX,
 }: {
   cancelling: boolean;
   locked?: boolean;
   amplitudes?: number[];
+  /** Live pan translationX (≤ 0 while sliding left toward cancel). */
+  panX?: SharedValue<number>;
 }) {
   const { theme } = useTheme();
   const [seconds, setSeconds] = useState(0);
@@ -53,14 +65,25 @@ export function VoiceRecorder({
   }, [pulse]);
   const micStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
+  // The hint tracks the finger: it becomes fully opaque exactly as the cancel
+  // threshold (-80) is reached, and drifts a few px left along the way. Falls
+  // back to a plain always-visible hint if the parent doesn't supply `panX`.
+  const fallbackX = useSharedValue(0);
+  const dragX = panX ?? fallbackX;
+  const hintStyle = useAnimatedStyle(() => ({
+    opacity: panX ? interpolate(dragX.value, [0, -40, -80], [0.45, 0.75, 1], Extrapolation.CLAMP) : 1,
+    transform: [{ translateX: interpolate(dragX.value, [0, -80], [0, -8], Extrapolation.CLAMP) }],
+  }));
+
   return (
     <View style={[styles.wrap, { backgroundColor: theme.surfaceElevated }]}>
       <Animated.View style={micStyle}>
         <Ionicons name="mic" size={22} color={theme.error} />
       </Animated.View>
-      <Text style={[styles.timer, { color: theme.textPrimary }]}>
+      {/* Timer fades in rather than hard-cutting when recording starts. */}
+      <Animated.Text entering={FadeIn.duration(200)} style={[styles.timer, { color: theme.textPrimary }]}>
         {mm}:{ss}
-      </Text>
+      </Animated.Text>
       <View style={styles.wave}>
         {padded.map((amp, i) => (
           <View
@@ -75,21 +98,19 @@ export function VoiceRecorder({
           />
         ))}
       </View>
-      <View style={styles.cancelHint}>
-        {locked ? (
-          <>
-            <Ionicons name="lock-closed" size={15} color={theme.brand} />
-            <Text style={[styles.cancelText, { color: theme.textSecondary }]}>Tap stop to send</Text>
-          </>
-        ) : (
-          <>
-            <Ionicons name="chevron-back" size={16} color={cancelling ? theme.error : theme.textTertiary} />
-            <Text style={[styles.cancelText, { color: cancelling ? theme.error : theme.textTertiary }]}>
-              {cancelling ? 'Release to cancel' : 'Slide to cancel'}
-            </Text>
-          </>
-        )}
-      </View>
+      {locked ? (
+        <View style={styles.cancelHint}>
+          <Ionicons name="lock-closed" size={15} color={theme.brand} />
+          <Text style={[styles.cancelText, { color: theme.textSecondary }]}>Tap stop to send</Text>
+        </View>
+      ) : (
+        <Animated.View style={[styles.cancelHint, hintStyle]}>
+          <Ionicons name="chevron-back" size={16} color={cancelling ? theme.error : theme.textTertiary} />
+          <Text style={[styles.cancelText, { color: cancelling ? theme.error : theme.textTertiary }]}>
+            {cancelling ? 'Release to cancel' : 'Slide to cancel'}
+          </Text>
+        </Animated.View>
+      )}
     </View>
   );
 }

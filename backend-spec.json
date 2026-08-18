@@ -1920,7 +1920,7 @@
             "name": "metadata",
             "type": "string",
             "nullable": true,
-            "notes": "added 20260725; opaque JSON blob (max 4000 chars), e.g. voice-note waveform amplitudes {amplitudes:number[]}. Never moderated/content-rule-checked and never rendered as message text (unlike content) — stored/returned verbatim, null when message isDeleted."
+            "notes": "added 20260725; opaque JSON blob (max 4000 chars), e.g. voice-note waveform amplitudes {amplitudes:number[]}. Never moderated/content-rule-checked and never rendered as message text (unlike content) \u2014 stored/returned verbatim, null when message isDeleted."
           }
         ]
       },
@@ -3275,6 +3275,18 @@
           "nullable": true
         },
         {
+          "name": "duration",
+          "type": "number",
+          "nullable": true,
+          "notes": "added 20260726_video_and_duration; playback length in SECONDS for voice/video messages (integer, 0..3600). Accepted on POST messages. null when not supplied. Needed because the waveform persisted with a voice note is resampled to a fixed bar count and so no longer encodes clip length."
+        },
+        {
+          "name": "thumbnailUrl",
+          "type": "string",
+          "nullable": true,
+          "notes": "added 20260726_video_and_duration; poster frame for a type='video' message. Generated client-side with expo-video-thumbnails and uploaded to R2 before sending; the backend stores the key/URL verbatim and returns it SIGNED. null for non-video messages."
+        },
+        {
           "name": "viewOnce",
           "type": "boolean"
         },
@@ -3359,7 +3371,7 @@
           "name": "replyTo",
           "type": "object",
           "nullable": true,
-          "notes": "denormalized quote in API responses only: { id, senderId, content } (content truncated to 60 chars, 'message removed' if unsent) \u2014 not a stored column"
+          "notes": "denormalized quote in API responses only: { id, senderId, content, type, mediaUrl, thumbnailUrl, duration } (content truncated to 60 chars, 'message removed' if unsent) \u2014 not a stored column. added 20260726_video_and_duration: type/mediaUrl/thumbnailUrl/duration added so a quoted photo or video renders a real thumbnail without the client having to locate the original in its loaded page. mediaUrl/thumbnailUrl are SIGNED; both are null when the quoted message is unsent or is a view-once photo (never leak the one-shot image)."
         },
         {
           "name": "reactions",
@@ -3776,6 +3788,12 @@
           "notes": "signed on read"
         },
         {
+          "name": "duration",
+          "type": "number",
+          "nullable": true,
+          "notes": "added 20260726_video_and_duration; playback length in SECONDS for voice messages (integer, 0..3600). Accepted on POST /api/rooms/:roomId/messages."
+        },
+        {
           "name": "replyToId",
           "type": "uuid",
           "nullable": true
@@ -3950,9 +3968,14 @@
           "notes": "signed"
         },
         {
+          "name": "duration",
+          "type": "number|null",
+          "notes": "added 20260726_video_and_duration; playback length in SECONDS for voice messages."
+        },
+        {
           "name": "metadata",
           "type": "string|null",
-          "notes": "added 20260725; opaque JSON blob (e.g. voice-note {amplitudes:number[]}), null when isDeleted. Never rendered as text — display code must not fall back to this for previews/snippets."
+          "notes": "added 20260725; opaque JSON blob (e.g. voice-note {amplitudes:number[]}), null when isDeleted. Never rendered as text \u2014 display code must not fall back to this for previews/snippets."
         },
         {
           "name": "isPinned",
@@ -3964,8 +3987,8 @@
         },
         {
           "name": "replyTo",
-          "type": "{id,senderFirstName,content}|null",
-          "notes": "content truncated 60"
+          "type": "{id,senderFirstName,content,type,mediaUrl,duration}|null",
+          "notes": "content truncated 60. added 20260726_video_and_duration: type/mediaUrl/duration added so a quoted image or voice message renders a thumbnail / voice affordance without a client-side lookup. mediaUrl is SIGNED, and null when the quoted message is deleted."
         },
         {
           "name": "reactions",

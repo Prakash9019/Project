@@ -13,6 +13,29 @@ export function hasUrl(content: string | null | undefined): boolean {
 }
 
 /**
+ * The first http(s)/www URL in the text, normalized to an absolute https URL —
+ * or null. Used to decide which link (if any) gets a rich preview card.
+ */
+export function firstUrl(content: string | null | undefined): string | null {
+  if (!content) return null;
+  URL_SPLIT.lastIndex = 0;
+  const match = URL_SPLIT.exec(content);
+  if (!match) return null;
+  const raw = match[0];
+  return raw.startsWith('http') ? raw : `https://${raw}`;
+}
+
+/**
+ * True when the message is nothing BUT a single URL. Those are deliberate link
+ * shares — WhatsApp lets the bare URL speak for itself rather than stacking a
+ * preview card under it.
+ */
+export function isBareUrl(content: string | null | undefined): boolean {
+  if (!content) return false;
+  return URL_TEST.test(content.trim());
+}
+
+/**
  * Render message text with URLs as tappable, underlined links.
  * Non-URL segments keep `textStyle`; URL segments get `linkStyle` layered on top.
  * Returns an array of <Text> segments — nest inside a parent <Text>.

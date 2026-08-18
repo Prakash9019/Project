@@ -13,11 +13,34 @@ function fmt(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** Inline WhatsApp-style audio bubble player (play/pause, waveform, duration, speed). */
-export function AudioPlayer({ mediaUrl, isOwn, caption }: { mediaUrl: string; isOwn: boolean; caption?: string | null }) {
+/**
+ * Inline WhatsApp-style audio bubble player (play/pause, waveform, tap-to-seek,
+ * duration, playback speed). Shared by 1:1 chat and group rooms so both behave
+ * identically — rooms used to ship a reduced copy with no speed control.
+ */
+export function AudioPlayer({
+  mediaUrl,
+  isOwn,
+  waveformSource,
+  duration,
+}: {
+  mediaUrl: string;
+  isOwn: boolean;
+  /**
+   * Encoded amplitude string used to draw the waveform. 1:1 chat stores it on the
+   * message `caption`; rooms store it on `metadata`. Either is parsed the same way.
+   */
+  waveformSource?: string | null;
+  /**
+   * Server-recorded clip length in SECONDS. Without it the bubble reads "0:00"
+   * until the audio has been loaded (which only happens on first play), because
+   * expo-audio only reports a duration once the file is decoded.
+   */
+  duration?: number | null;
+}) {
   const { theme } = useTheme();
   const playerRef = useRef<ExpoAudioPlayer | null>(null);
-  const bars = useMemo(() => parseVoiceAmplitudes(caption, WAVE_BARS), [caption]);
+  const bars = useMemo(() => parseVoiceAmplitudes(waveformSource, WAVE_BARS), [waveformSource]);
 
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -43,6 +66,7 @@ export function AudioPlayer({ mediaUrl, isOwn, caption }: { mediaUrl: string; is
     setPlaying(status.playing);
     if (status.didJustFinish) {
       setPlaying(false);
+      playerRef.current?.pause();
       playerRef.current?.seekTo(0).catch(() => {});
     }
   };
@@ -84,8 +108,11 @@ export function AudioPlayer({ mediaUrl, isOwn, caption }: { mediaUrl: string; is
   const track = isOwn ? 'rgba(255,255,255,0.35)' : theme.border;
   const fill = isOwn ? '#fff' : theme.brand;
   const iconColor = isOwn ? '#fff' : theme.brand;
+  // Prefer the decoded duration once the file has loaded; fall back to the
+  // server value so the length is correct from first paint.
+  const knownDurationMs = durationMs > 0 ? durationMs : (duration ?? 0) * 1000;
   const progress = durationMs > 0 ? positionMs / durationMs : 0;
-  const label = playing || positionMs > 0 ? fmt(positionMs) : fmt(durationMs);
+  const label = playing || positionMs > 0 ? fmt(positionMs) : fmt(knownDurationMs);
 
   if (error) {
     return (

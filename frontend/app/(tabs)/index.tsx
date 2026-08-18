@@ -14,6 +14,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { useGridStore } from '../../src/store/gridStore';
 import { useFilterStore } from '../../src/store/filterStore';
@@ -70,6 +76,24 @@ const GridRow = memo(function GridRow({
   );
 });
 
+/**
+ * Thin browser-style loading bar shown across the top of the grid while a filter
+ * refetch is in flight. It eases toward 90% and is unmounted the moment the new
+ * cards land — so it never claims to be finished before it is.
+ */
+function FilterProgressBar({ color }: { color: string }) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = withTiming(0.9, { duration: 1200, easing: Easing.out(Easing.quad) });
+  }, [progress]);
+  const fillStyle = useAnimatedStyle(() => ({ width: `${progress.value * 100}%` }));
+  return (
+    <View style={styles.progressTrack}>
+      <Animated.View style={[styles.progressFill, { backgroundColor: color }, fillStyle]} />
+    </View>
+  );
+}
+
 export default function Browse() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -110,6 +134,11 @@ export default function Browse() {
   const [hasUnread, setHasUnread] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [spotlightUsers, setSpotlightUsers] = useState<UserCard[]>([]);
+  // A filter-triggered refetch is in flight — dims the current grid and shows a
+  // thin progress bar instead of wiping to a skeleton (F44).
+  const [isFiltering, setIsFiltering] = useState(false);
+  const gridOpacity = useSharedValue(1);
+  const gridFadeStyle = useAnimatedStyle(() => ({ opacity: gridOpacity.value }));
   const lastRefresh = useRef(0);
   const locationSyncWarned = useRef(false);
 
@@ -191,8 +220,29 @@ export default function Browse() {
 
   // Initial load + reload when the quick filter, applied filters, or the
   // explored location change.
+  //
+  // Applying a filter must never WIPE the grid: with results already on screen
+  // the previous cards stay put, dimmed under a thin brand progress bar, and
+  // cross-fade back to full opacity when the new set lands. Only a cold start
+  // (nothing to show yet) falls through to the skeleton.
   useEffect(() => {
-    acquireAndLoad(false);
+    if (useGridStore.getState().cards.length === 0) {
+      acquireAndLoad(false);
+      return;
+    }
+    let cancelled = false;
+    setIsFiltering(true);
+    gridOpacity.value = withTiming(0.5, { duration: 200 });
+    // `true` → the store sets `refreshing` rather than `loading`, so the
+    // `loading && cards.length === 0` skeleton branch can never fire here.
+    acquireAndLoad(true).finally(() => {
+      if (cancelled) return;
+      setIsFiltering(false);
+      gridOpacity.value = withTiming(1, { duration: 300 });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [activeFilter, filterVersion, exploreLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-acquire a FRESH GPS fix on every focus so distances are never stale from
@@ -413,6 +463,8 @@ export default function Browse() {
           </Pressable>
         </View>
       ) : (
+        <Animated.View style={[{ flex: 1 }, gridFadeStyle]}>
+        {isFiltering ? <FilterProgressBar color={theme.brand} /> : null}
         <FlatList
           data={rows}
           keyExtractor={(_, i) => `row-${i}`}
@@ -461,6 +513,7 @@ export default function Browse() {
           }
           renderItem={renderGridRow}
         />
+        </Animated.View>
       )}
 
       <UpgradeModal
@@ -477,8 +530,13 @@ export default function Browse() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  // Filter-refetch progress bar (3px, brand-filled, sits above the grid).
+  progressTrack: { height: 3, width: '100%', overflow: 'hidden' },
+  progressFill: { height: 3, borderRadius: 2 },
   gridRow: { flexDirection: 'row', gap: GAP, marginBottom: GAP, paddingHorizontal: PAD },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 8 },
+  // `SafeAreaView edges={['top']}` already reserves the status-bar inset — this
+  // only needs a small gap below it, not another full paddingVertical worth on top.
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },
   avatarBtn: { width: 38, height: 38 },
   avatar: { width: 38, height: 38, borderRadius: 19 },
   avatarDot: { position: 'absolute', right: 0, bottom: 0, width: 11, height: 11, borderRadius: 6, borderWidth: 2 },

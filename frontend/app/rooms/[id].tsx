@@ -15,6 +15,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
+import * as MediaLibrary from 'expo-media-library';
+// SDK 56 moved the classic download/cache API under the /legacy subpath.
+import * as FileSystem from 'expo-file-system/legacy';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { MiniProfile } from '../../src/components/MiniProfile';
 import { RoomHeader } from '../../src/components/rooms/RoomHeader';
@@ -29,8 +32,9 @@ import { SearchPanel, type SearchMessage } from '../../src/components/chat/Searc
 import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
 import { MessageInfo } from '../../src/components/chat/MessageInfo';
 import { ScrollToBottomButton } from '../../src/components/chat/ScrollToBottomButton';
-import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { MediaViewer, type MediaViewerImage, type ThumbnailLayout } from '../../src/components/MediaViewer';
 import { ForwardSheet } from '../../src/components/chat/ForwardSheet';
+import { shareMediaUrl } from '../../src/utils/shareMedia';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../src/theme';
 import { ChatSkeleton } from '../../src/components/Skeleton';
 import { CustomAlert } from '../../src/components/CustomAlert';
@@ -65,8 +69,9 @@ import {
   emitRoomMessageDelivered,
 } from '../../src/services/socket';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
+import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
 import { toastApiError, showSuccess, showError } from '../../src/lib/toast';
-import type { RoomDetail, RoomMessageCard, RoomReaction, RoomUserCard } from '../../src/types/api';
+import type { RoomDetail, RoomMessageCard, RoomReaction, RoomReplyPreview, RoomUserCard } from '../../src/types/api';
 
 const PAGE = 30;
 const EDIT_WINDOW_MS = 5 * 60 * 1000;
@@ -84,13 +89,50 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-// Media classification (mirrors MessageBubble) so the MediaViewer list contains
-// only true photos — videos and GIFs are excluded.
+// Media classification (mirrors MessageBubble). Videos ride on type='image'
+// with an .mp4 url; GIFs are excluded from the MediaViewer gallery entirely.
 function isRoomVideoUrl(url: string): boolean {
   return /\.mp4($|\?)/i.test(url) || url.includes('/video-clips/');
 }
 function isRoomGifUrl(url: string): boolean {
   return /\.gif($|\?)/i.test(url) || url.includes('klipy');
+}
+
+/** mm:ss for a duration in whole seconds. */
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * What a reply quote should show for the message being replied to.
+ *
+ * Built entirely from the server's `replyTo` preview, which since
+ * 20260726_video_and_duration carries `type` + a signed `mediaUrl` + `duration`.
+ * That means a quoted image shows a real thumbnail even when the original sits
+ * far outside the loaded page — the old client-side lookup into the message list
+ * silently fell back to plain text in exactly that case.
+ */
+type RoomQuotePreview = { kind: 'image' | 'voice' | 'text'; thumbUrl?: string | null; label: string };
+
+function roomQuotePreviewFor(replyTo: RoomReplyPreview): RoomQuotePreview {
+  const { type, mediaUrl, duration } = replyTo;
+  // Videos and GIFs ride on type 'image' in rooms — rooms have no thumbnailUrl
+  // column (see MessageBubble.tsx), so there's no poster frame to quote; a
+  // clear label beats the blank/generic text a bare content fallback gave.
+  if (type === 'image' && mediaUrl && isRoomVideoUrl(mediaUrl)) {
+    return { kind: 'text', label: duration != null ? `Video · ${formatDuration(duration)}` : 'Video' };
+  }
+  if (type === 'image' && mediaUrl && isRoomGifUrl(mediaUrl)) {
+    return { kind: 'text', label: 'GIF' };
+  }
+  if (type === 'image' && mediaUrl) {
+    return { kind: 'image', thumbUrl: mediaUrl, label: replyTo.content || 'Photo' };
+  }
+  if (type === 'voice') {
+    return { kind: 'voice', label: duration != null ? formatDuration(duration) : 'Voice message' };
+  }
+  return { kind: 'text', label: replyTo.content || 'Message' };
 }
 
 export default function RoomChat() {
@@ -113,16 +155,25 @@ export default function RoomChat() {
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [contextMsg, setContextMsg] = useState<RoomMessageCard | null>(null);
+  // pageY of the long-pressed bubble — anchors the context menu near the message
+  // instead of centering it on screen (mirrors the 1:1 chat menu).
+  const [contextY, setContextY] = useState(0);
   const [forwardMessages, setForwardMessages] = useState<RoomMessageCard[] | null>(null);
   const [editingMessage, setEditingMessage] = useState<RoomMessageCard | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const isSelecting = selectedMessageIds.size > 0;
+  // Drives the selection bar's star icon: filled once every selected message is
+  // already starred, because tapping it then unstars them.
+  const allSelectedStarred =
+    isSelecting && messages.filter((m) => selectedMessageIds.has(m.id)).every((m) => m.isStarred);
   const [miniUser, setMiniUser] = useState<RoomUserCard | null>(null);
 
   const [reactTarget, setReactTarget] = useState<RoomMessageCard | null>(null);
   const [infoMessage, setInfoMessage] = useState<RoomMessageCard | null>(null);
   const [reactionDetailsFor, setReactionDetailsFor] = useState<string | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<{ id: string; firstName: string; avatarUrl?: string | null }[]>([]);
+  // Lowercased first name → member, so a tapped @mention resolves to a profile.
+  const [membersByName, setMembersByName] = useState<Map<string, RoomUserCard>>(new Map());
   // Sender ids that hold admin/creator status — drives the "Admin" chip on their messages.
   const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -130,6 +181,9 @@ export default function RoomChat() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  // Rect of the thumbnail the viewer was opened from — drives the zoom
+  // transition. null when the tap couldn't be measured (falls back to a fade).
+  const [thumbnailLayout, setThumbnailLayout] = useState<ThumbnailLayout | null>(null);
 
   // Floating scroll-to-bottom pill (F26). The list is inverted (index 0 = newest
   // at the visual bottom), so "at bottom" is scroll offset ≈ 0.
@@ -185,6 +239,15 @@ export default function RoomChat() {
             .map((m) => ({ id: m.user.id, firstName: m.user.firstName ?? 'Someone', avatarUrl: m.user.profilePhotoUrl })),
         );
         setAdminIds(new Set(res.members.filter((m) => m.isCreator || m.role === 'admin').map((m) => m.user.id)));
+        // Name → member index so a tapped @mention can open that member's
+        // MiniProfile. Messages carry no structured `mentions` array, so the
+        // first name in the text is the only key available.
+        const byName = new Map<string, RoomUserCard>();
+        res.members.forEach((m) => {
+          const name = m.user.firstName?.toLowerCase();
+          if (name && !byName.has(name)) byName.set(name, m.user);
+        });
+        setMembersByName(byName);
       })
       .catch(() => {});
     return () => {
@@ -393,22 +456,42 @@ export default function RoomChat() {
     setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [msg, ...prev]));
   };
 
-  const handleSendVideo = async (uri: string, replyToId?: string) => {
+  /**
+   * Rooms have no dedicated video message type — videos ride on type='image'
+   * with an .mp4 url (see isRoomVideoUrl). RoomMessage has no `thumbnailUrl`
+   * column either, so the client-generated poster frame travels in `metadata`,
+   * the field explicitly designed for opaque per-message data that must never be
+   * rendered as text.
+   */
+  const handleSendVideo = async (uri: string, replyToId?: string, durationMs?: number | null) => {
     await runUpload(async () => {
+      const thumbnailUrl = await generateAndUploadVideoThumbnail(uri);
       const url = await uploadToR2(uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
-      const msg = await sendRoomMessage(roomId, { content: '', type: 'image', mediaUrl: url, replyToId });
+      const duration = durationMs != null ? Math.max(0, Math.round(durationMs / 1000)) : undefined;
+      const metadata = thumbnailUrl ? JSON.stringify({ thumbnailUrl }) : undefined;
+      const msg = await sendRoomMessage(roomId, {
+        content: '',
+        type: 'image',
+        mediaUrl: url,
+        replyToId,
+        metadata,
+        duration,
+      });
       appendMessage(msg);
     });
   };
 
-  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string, amplitudes?: number[]) => {
+  const handleSendAudioClip = async (uri: string, durationMs: number, replyToId?: string, amplitudes?: number[]) => {
     await runUpload(async () => {
       const url = await uploadToR2(uri, 'voice_clip', 'audio/mp4', { onProgress: setUploadProgress });
       // The real waveform rides in `metadata` (added 20260725), never `content` —
       // content IS rendered as plain text elsewhere (pinned banner, reply quotes,
       // search) and would leak raw JSON there.
       const metadata = amplitudes?.length ? JSON.stringify({ amplitudes }) : undefined;
-      const msg = await sendRoomMessage(roomId, { content: '', type: 'voice', mediaUrl: url, replyToId, metadata });
+      // Persist the real clip length: the stored waveform is resampled to a fixed
+      // bar count, so it can't be recovered from the amplitudes afterwards.
+      const duration = Math.max(0, Math.round(durationMs / 1000));
+      const msg = await sendRoomMessage(roomId, { content: '', type: 'voice', mediaUrl: url, replyToId, metadata, duration });
       appendMessage(msg);
     });
   };
@@ -555,6 +638,38 @@ export default function RoomChat() {
     }
   };
 
+  /**
+   * Media url of the long-pressed message, or null when it isn't saveable/shareable.
+   * GIFs are excluded (they're remote KLIPY assets, same rule the media viewer uses).
+   */
+  const contextMediaUrl =
+    contextMsg &&
+    !contextMsg.isDeleted &&
+    contextMsg.type === 'image' &&
+    contextMsg.mediaUrl &&
+    !isRoomGifUrl(contextMsg.mediaUrl)
+      ? contextMsg.mediaUrl
+      : null;
+
+  /** Mirrors the 1:1 chat "Save to Gallery" action. */
+  const saveMediaToGallery = async (url: string) => {
+    setContextMsg(null);
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted) {
+        showError('Allow photo library access to save media.');
+        return;
+      }
+      const isVideo = isRoomVideoUrl(url);
+      const target = `${FileSystem.cacheDirectory}nearme-${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`;
+      const dl = await FileSystem.downloadAsync(url, target);
+      await MediaLibrary.saveToLibraryAsync(dl.uri);
+      showSuccess('Saved to gallery');
+    } catch {
+      showError('Could not save media');
+    }
+  };
+
   const isAdmin = room?.isCreator === true || room?.myRole === 'admin';
 
   const doPin = async (msg: RoomMessageCard) => {
@@ -597,15 +712,44 @@ export default function RoomChat() {
   );
 
   const openForward = (items: RoomMessageCard[]) => {
-    setContextMsg(null);
+    if (!items.length) return;
+    // The forward sheet is an RN Modal and so is the context menu; iOS refuses to
+    // present a modal while another is still dismissing, so wait for the menu to
+    // go before presenting. From the selection bar there is nothing to wait on.
+    if (contextMsg) {
+      setContextMsg(null);
+      setTimeout(() => setForwardMessages(items), 250);
+      return;
+    }
     setForwardMessages(items);
   };
 
+  /**
+   * Star/unstar every selected message — same group-toggle semantics as 1:1 chat:
+   * all already starred → unstar, otherwise star.
+   */
   const batchStar = async () => {
     const ids = [...selectedMessageIds];
+    if (!ids.length) return;
+    const selected = messages.filter((m) => ids.includes(m.id));
+    const next = !selected.every((m) => m.isStarred);
     clearSelection();
-    setMessages((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, isStarred: true } : m)));
-    await Promise.all(ids.map((id) => starMessage(id, 'room').catch(() => {})));
+    setMessages((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, isStarred: next } : m)));
+    const results = await Promise.all(
+      ids.map((id) =>
+        (next ? starMessage(id, 'room') : unstarMessage(id)).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    );
+    const failed = ids.filter((_, i) => !results[i]);
+    if (failed.length) {
+      setMessages((prev) => prev.map((m) => (failed.includes(m.id) ? { ...m, isStarred: !next } : m)));
+      showError(next ? 'Could not star some messages' : 'Could not unstar some messages');
+    } else {
+      showSuccess(next ? `${ids.length} starred` : `${ids.length} unstarred`);
+    }
   };
 
   const batchDeleteForMe = async () => {
@@ -715,27 +859,34 @@ export default function RoomChat() {
     [messages, pinnedDismissed],
   );
 
-  // Chronological list of true images (excludes videos/GIFs/docs) for the
+  // Chronological list of images AND videos (GIFs/docs excluded) for the
   // full-screen MediaViewer. `messages` is newest-first, so reverse a copy.
   const viewerImages = useMemo<MediaViewerImage[]>(() => {
     const out: MediaViewerImage[] = [];
     [...messages].reverse().forEach((m) => {
       if (m.isDeleted || m.type !== 'image' || !m.mediaUrl) return;
-      if (isRoomVideoUrl(m.mediaUrl) || isRoomGifUrl(m.mediaUrl)) return;
+      if (isRoomGifUrl(m.mediaUrl)) return;
       out.push({
         uri: m.mediaUrl,
         senderId: m.senderId,
         senderName: m.senderId === me?.id ? 'You' : m.sender.firstName ?? 'Someone',
         createdAt: m.createdAt,
+        kind: isRoomVideoUrl(m.mediaUrl) ? 'video' : 'image',
       });
     });
     return out;
   }, [messages, me?.id]);
 
-  const openImageViewer = useCallback(
-    (url: string) => {
+  /**
+   * Open the full-screen viewer at a given media url (image or video).
+   * `layout` is the tapped thumbnail's measured rect — the viewer zooms out of
+   * it on open and back into it on dismiss.
+   */
+  const openMediaViewer = useCallback(
+    (url: string, layout?: ThumbnailLayout) => {
       const idx = viewerImages.findIndex((e) => e.uri === url);
       setMediaViewerIndex(idx < 0 ? 0 : idx);
+      setThumbnailLayout(layout ?? null);
       setMediaViewerOpen(true);
     },
     [viewerImages],
@@ -798,6 +949,18 @@ export default function RoomChat() {
 
   const searchHighlightId = null;
 
+  // Tapping an @mention opens that member's MiniProfile. Unresolvable names
+  // (a member who has since left, or a false-positive "@word") are ignored
+  // rather than opening an empty sheet.
+  const onMentionPress = useCallback(
+    (firstName: string) => {
+      const member = membersByName.get(firstName.toLowerCase());
+      if (member) setMiniUser(member);
+    },
+    [membersByName],
+  );
+
+
   const renderItem = useCallback(
     ({ item, index }: { item: RoomMessageCard; index: number }) => {
       const older = messages[index + 1];
@@ -821,13 +984,17 @@ export default function RoomChat() {
             highlight={highlightId === item.id || searchHighlightId === item.id}
             isSelecting={isSelecting}
             isSelected={selectedMessageIds.has(item.id)}
+            isMenuTarget={contextMsg?.id === item.id}
+            replyPreview={item.replyTo ? roomQuotePreviewFor(item.replyTo) : null}
             onAvatarPress={() => setMiniUser(item.sender)}
-            onLongPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            onLongPress={(pageY) => {
+              // Medium impact matches the 1:1 surface (unified haptic vocabulary).
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
               if (isSelecting) {
                 toggleSelect(item.id);
                 return;
               }
+              setContextY(pageY ?? 0);
               setContextMsg(item);
             }}
             onTap={() => onTapSelectable(item)}
@@ -835,13 +1002,15 @@ export default function RoomChat() {
             onReactionPress={(emoji) => toggleReaction(item, emoji)}
             onReactionLongPress={() => setReactionDetailsFor(item.id)}
             onReplyPress={() => item.replyTo && scrollToMessage(item.replyTo.id)}
-            onImagePress={openImageViewer}
+            onImagePress={openMediaViewer}
+            onVideoPress={openMediaViewer}
+            onMentionPress={onMentionPress}
           />
         </View>
       );
     },
     // toggleReaction stable enough; deps kept minimal to avoid re-renders
-    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage, openImageViewer, adminIds, isSelecting, selectedMessageIds, toggleSelect, onTapSelectable],
+    [messages, me?.id, highlightId, searchHighlightId, initialUnread, onSwipeReply, scrollToMessage, openMediaViewer, adminIds, isSelecting, selectedMessageIds, toggleSelect, onTapSelectable, contextMsg?.id, onMentionPress],
   );
 
   return (
@@ -864,7 +1033,12 @@ export default function RoomChat() {
             <Ionicons name="arrow-redo-outline" size={22} color={theme.textPrimary} />
           </Pressable>
           <Pressable onPress={batchStar} hitSlop={10} style={styles.selectionAction}>
-            <Ionicons name="star-outline" size={22} color={theme.textPrimary} />
+            {/* Filled star = every selected message is starred, so the action unstars. */}
+            <Ionicons
+              name={allSelectedStarred ? 'star' : 'star-outline'}
+              size={22}
+              color={allSelectedStarred ? theme.brand : theme.textPrimary}
+            />
           </Pressable>
           <Pressable onPress={confirmBatchDelete} hitSlop={10} style={styles.selectionAction}>
             <Ionicons name="trash-outline" size={22} color={theme.error} />
@@ -965,7 +1139,7 @@ export default function RoomChat() {
             query={searchQuery}
             messages={searchItems}
             onJumpToMessage={jumpToMessage}
-            onOpenMedia={openImageViewer}
+            onOpenMedia={openMediaViewer}
           />
         ) : loading ? (
           <ChatSkeleton />
@@ -1015,7 +1189,26 @@ export default function RoomChat() {
             roomId={roomId}
             replyTo={
               replyTo
-                ? { id: replyTo.id, senderName: replyTo.sender.firstName ?? 'Someone', content: replyTo.content || 'Photo' }
+                ? (() => {
+                    // Reuse the same preview logic the sent-message quote uses, so the
+                    // reply banner shows a real thumbnail/label instead of a generic
+                    // "Photo" fallback for videos, voice notes, and GIFs.
+                    const preview = roomQuotePreviewFor({
+                      id: replyTo.id,
+                      senderFirstName: replyTo.sender.firstName,
+                      content: replyTo.content,
+                      type: replyTo.type,
+                      mediaUrl: replyTo.mediaUrl,
+                      duration: replyTo.duration,
+                    });
+                    return {
+                      id: replyTo.id,
+                      senderName: replyTo.sender.firstName ?? 'Someone',
+                      content: preview.label,
+                      kind: preview.kind,
+                      thumbUrl: preview.thumbUrl,
+                    };
+                  })()
                 : null
             }
             editingMessage={editingMessage ? { id: editingMessage.id, content: editingMessage.content } : null}
@@ -1075,6 +1268,7 @@ export default function RoomChat() {
         message={contextMsg}
         isOwn={contextMsg?.senderId === me?.id}
         isAdmin={isAdmin}
+        anchorY={contextY}
         canEdit={
           !!contextMsg &&
           contextMsg.senderId === me?.id &&
@@ -1100,6 +1294,15 @@ export default function RoomChat() {
           setEditingMessage(contextMsg);
           setContextMsg(null);
         }}
+        onSave={contextMediaUrl ? () => saveMediaToGallery(contextMediaUrl) : undefined}
+        onShare={
+          contextMediaUrl
+            ? () => {
+                setContextMsg(null);
+                shareMediaUrl(contextMediaUrl);
+              }
+            : undefined
+        }
         onSelect={() => contextMsg && enterSelectMode(contextMsg)}
         onDeleteForMe={() => contextMsg && doDeleteForMe(contextMsg)}
         onDelete={() => contextMsg && doDelete(contextMsg)}
@@ -1119,16 +1322,23 @@ export default function RoomChat() {
         onClose={() => setForwardMessages(null)}
         onForward={async (targetConversationIds) => {
           const items = forwardMessages ?? [];
+          if (!items.length || !targetConversationIds.length) return;
           try {
-            for (const item of items) {
+            // Oldest → newest, sequentially, so the recipient sees the same order.
+            const ordered = [...items].sort(
+              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+            );
+            for (const item of ordered) {
               await forwardRoomMessage(roomId, item.id, targetConversationIds);
             }
-            showSuccess(`Message${items.length > 1 ? 's' : ''} forwarded`);
+            const chats = `${targetConversationIds.length} chat${targetConversationIds.length > 1 ? 's' : ''}`;
+            showSuccess(
+              items.length > 1 ? `${items.length} messages forwarded to ${chats}` : `Forwarded to ${chats}`,
+            );
             clearSelection();
+            setForwardMessages(null);
           } catch (e) {
             toastApiError(e, 'Could not forward message');
-          } finally {
-            setForwardMessages(null);
           }
         }}
       />
@@ -1150,6 +1360,7 @@ export default function RoomChat() {
         visible={mediaViewerOpen}
         images={viewerImages}
         initialIndex={mediaViewerIndex}
+        thumbnailLayout={thumbnailLayout}
         onClose={() => setMediaViewerOpen(false)}
       />
 

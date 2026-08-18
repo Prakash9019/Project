@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Modal, View, Text, StyleSheet, Pressable, TextInput, ScrollView } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { AppBottomSheet, BottomSheetScrollView, BottomSheetTextInput } from '../ui/AppBottomSheet';
 import { useTheme, FontFamily, DisplayFont, spacing, radius } from '../../theme';
 import { ROOM_SORTS, MEMBER_FLOORS, type RoomSort } from '../../lib/rooms';
 
@@ -30,26 +31,25 @@ export function RoomFilterSheet({
   const { theme } = useTheme();
   const [draft, setDraft] = useState<DiscoverFilters>(value);
 
+  // Re-seed the draft each time the sheet opens. (The old Modal did this via
+  // `onShow`, which AppBottomSheet has no equivalent of.)
+  useEffect(() => {
+    if (visible) setDraft(value);
+    // Only re-seed on open — edits while open must not be clobbered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      onShow={() => setDraft(value)}
-    >
-      <Pressable style={[styles.backdrop, { backgroundColor: theme.overlay }]} onPress={onClose}>
-        <Pressable style={[styles.sheet, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
-          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
-          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <AppBottomSheet visible={visible} onClose={onClose} snapPoints={['80%']}>
+          <BottomSheetScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
             <Text style={[styles.title, { color: theme.textPrimary }]}>Filters</Text>
 
             {/* City */}
             <Text style={[styles.label, { color: theme.textSecondary }]}>City</Text>
             <View style={[styles.input, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
-              <TextInput
+              <BottomSheetTextInput
                 value={draft.city}
-                onChangeText={(city) => setDraft((d) => ({ ...d, city }))}
+                onChangeText={(city: string) => setDraft((d) => ({ ...d, city }))}
                 placeholder="Any city"
                 placeholderTextColor={theme.textTertiary}
                 style={[styles.inputText, { color: theme.textPrimary }]}
@@ -113,18 +113,14 @@ export function RoomFilterSheet({
                 <Text style={styles.applyText}>Apply</Text>
               </Pressable>
             </View>
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+          </BottomSheetScrollView>
+    </AppBottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%', paddingBottom: spacing.xxl },
-  grabber: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: spacing.md },
-  content: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
+  // Sheet chrome (surface, rounded top, grabber, backdrop) is AppBottomSheet's.
+  content: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.xxl },
   title: { fontSize: 20, fontFamily: DisplayFont.bold, marginBottom: spacing.lg },
   label: { fontSize: 13, fontFamily: FontFamily.semibold, marginTop: spacing.lg, marginBottom: spacing.sm },
   input: { height: 46, borderRadius: radius.lg, paddingHorizontal: spacing.md, borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center' },

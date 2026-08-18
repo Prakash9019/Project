@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Modal, View, Text, StyleSheet, Pressable, TextInput, FlatList } from 'react-native';
+import { Modal, View, Text, StyleSheet, Pressable, TextInput, FlatList, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { RemoteImage } from '../RemoteImage';
 import { useTheme, FontFamily, FontSize } from '../../theme';
@@ -101,10 +101,17 @@ export function ForwardSheet({
   };
 
   return (
+    // A plain RN <Modal>, deliberately NOT the gorhom AppBottomSheet: this sheet is
+    // opened *from* the long-press context menu, which is itself an RN <Modal>. A
+    // gorhom sheet lives inside the React root view, so it renders underneath any
+    // native modal window and its RNGH-driven content swallows Pressable taps on
+    // Android — which is exactly how forwarding "silently did nothing". An RN Modal
+    // presents above everything on both platforms.
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={[styles.overlay, { backgroundColor: theme.overlay }]}>
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
         <View style={[styles.sheet, { backgroundColor: theme.surface }]}>
-          <View style={styles.handle} />
+          <View style={[styles.handle, { backgroundColor: theme.border }]} />
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.textPrimary }]}>Forward to</Text>
             <Pressable onPress={onClose} hitSlop={10}>
@@ -125,9 +132,10 @@ export function ForwardSheet({
 
           <FlatList
             data={filtered}
-            keyExtractor={(c) => c.id}
+            keyExtractor={(c: ConversationSummary) => c.id}
             renderItem={renderRow}
-            style={{ maxHeight: 380 }}
+            style={styles.list}
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
               <Text style={[styles.empty, { color: theme.textSecondary }]}>No chats found</Text>
             }
@@ -138,12 +146,16 @@ export function ForwardSheet({
             onPress={handleForward}
             style={[
               styles.forwardBtn,
-              { backgroundColor: selected.size === 0 ? theme.backgroundTertiary : theme.brand },
+              { backgroundColor: selected.size === 0 || sending ? theme.backgroundTertiary : theme.brand },
             ]}
           >
-            <Text style={[styles.forwardBtnText, { color: selected.size === 0 ? theme.textTertiary : '#fff' }]}>
-              Forward{selected.size > 0 ? ` (${selected.size})` : ''}
-            </Text>
+            {sending ? (
+              <ActivityIndicator size="small" color={theme.textSecondary} />
+            ) : (
+              <Text style={[styles.forwardBtnText, { color: selected.size === 0 ? theme.textTertiary : '#fff' }]}>
+                Forward{selected.size > 0 ? ` (${selected.size})` : ''}
+              </Text>
+            )}
           </Pressable>
         </View>
       </View>
@@ -153,8 +165,9 @@ export function ForwardSheet({
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32, maxHeight: '75%' },
-  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.4)', alignSelf: 'center', marginBottom: 12 },
+  sheet: { maxHeight: '78%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32 },
+  handle: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, marginBottom: 12 },
+  list: { flexGrow: 0, maxHeight: 380 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   title: { fontSize: FontSize.lg, fontFamily: FontFamily.semibold },
   searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, marginBottom: 8 },

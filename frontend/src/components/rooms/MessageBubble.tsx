@@ -1,15 +1,14 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Linking } from 'react-native';
 import { Image, type ImageLoadEventData } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { createAudioPlayer, type AudioPlayer, type AudioStatus } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
+  withTiming,
   runOnJS,
   interpolate,
   Extrapolation,
@@ -17,30 +16,57 @@ import Animated, {
 import { Avatar } from '../Avatar';
 import { MessageTick } from '../MessageTick';
 import { ReactionPill } from '../chat/ReactionPill';
+import { VideoBubble } from '../chat/VideoBubble';
+import { LinkPreview } from '../chat/LinkPreview';
+import { AudioPlayer } from '../chat/AudioPlayer';
+import { measureThumbnail } from '../../utils/measureThumbnail';
+import type { ThumbnailLayout } from '../MediaViewer';
 import { useTheme, FontFamily, FontSize } from '../../theme';
-import { parseVoiceAmplitudes } from '../../lib/audioAmplitude';
-import { hasUrl, linkifyText } from '../../lib/linkify';
+import { hasUrl, linkifyText, firstUrl, isBareUrl } from '../../lib/linkify';
 import type { RoomMessageCard } from '../../types/api';
 
 const SWIPE_TRIGGER = 60;
+
+/** Pressable that can carry the animated long-press "lift" style. */
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /** Haptic fired the instant the swipe-to-reply threshold is crossed (WhatsApp "click"). */
 function swipeThresholdHaptic() {
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 }
 
-/** Render message text with @mentions highlighted (brand color, semibold). */
-function renderWithMentions(content: string, mentionColor: string): React.ReactNode {
+/**
+ * Render message text with @mentions highlighted and TAPPABLE.
+ *
+ * On own (gradient) bubbles a plain `#fff` mention was indistinguishable from
+ * the surrounding body text — it now carries a translucent white pill plus an
+ * underline so it reads as a distinct, tappable entity on both bubble styles.
+ */
+function renderWithMentions(
+  content: string,
+  mentionColor: string,
+  isOwn: boolean,
+  onMentionPress?: (firstName: string) => void,
+): React.ReactNode {
   const parts = content.split(/(@[\p{L}\p{N}_]+)/gu);
-  return parts.map((part, i) =>
-    /^@[\p{L}\p{N}_]+$/u.test(part) ? (
-      <Text key={i} style={{ color: mentionColor, fontFamily: FontFamily.semibold }}>
+  return parts.map((part, i) => {
+    if (!/^@[\p{L}\p{N}_]+$/u.test(part)) return part;
+    return (
+      <Text
+        key={i}
+        suppressHighlighting
+        onPress={onMentionPress ? () => onMentionPress(part.slice(1)) : undefined}
+        style={[
+          styles.mention,
+          isOwn
+            ? { color: '#fff', backgroundColor: 'rgba(255,255,255,0.22)', textDecorationLine: 'underline' }
+            : { color: mentionColor },
+        ]}
+      >
         {part}
       </Text>
-    ) : (
-      part
-    ),
-  );
+    );
+  });
 }
 
 function timeLabel(iso: string): string {
@@ -55,6 +81,8 @@ function MessageBubbleBase({
   highlight,
   isSelecting,
   isSelected,
+  isMenuTarget,
+  replyPreview,
   onLongPress,
   onTap,
   onSwipeReply,
@@ -63,6 +91,8 @@ function MessageBubbleBase({
   onAvatarPress,
   onReplyPress,
   onImagePress,
+  onVideoPress,
+  onMentionPress,
 }: {
   message: RoomMessageCard;
   isOwn: boolean;
@@ -73,7 +103,17 @@ function MessageBubbleBase({
   /** Multi-select mode is active (shows a leading checkbox, dims unselected bubbles). */
   isSelecting?: boolean;
   isSelected?: boolean;
-  onLongPress: () => void;
+  /** This bubble is the open context menu's target — lifts it above the blur. */
+  isMenuTarget?: boolean;
+  /**
+   * Resolved preview of the replied-to message, derived by the parent from the
+   * server's `replyTo` (which carries type + signed media + duration), so a
+   * quoted image/voice renders correctly even when the original is far outside
+   * the loaded page.
+   */
+  replyPreview?: { kind: 'image' | 'voice' | 'text'; thumbUrl?: string | null; label: string } | null;
+  /** Receives the press `pageY` so the context menu can anchor near the bubble. */
+  onLongPress: (pageY?: number) => void;
   /** Tap toggles selection while `isSelecting`; a no-op otherwise. */
   onTap?: () => void;
   onSwipeReply: () => void;
@@ -81,8 +121,12 @@ function MessageBubbleBase({
   onReactionLongPress?: (emoji: string) => void;
   onAvatarPress: () => void;
   onReplyPress?: () => void;
-  /** Open the full-screen media viewer for a tapped image. */
-  onImagePress?: (url: string) => void;
+  /** Opens the viewer; `layout` is the tapped thumbnail's rect for the zoom. */
+  onImagePress?: (url: string, layout?: ThumbnailLayout) => void;
+  /** Open the in-app player for a video message (never a browser). */
+  onVideoPress?: (url: string, layout?: ThumbnailLayout) => void;
+  /** Tapping an @mention — receives the mentioned first name (without the "@"). */
+  onMentionPress?: (firstName: string) => void;
 }) {
   const { theme } = useTheme();
   const s = message.sender;
@@ -110,9 +154,22 @@ function MessageBubbleBase({
   const locationLat = locationParts ? Number(locationParts[1]) : 0;
   const locationLng = locationParts ? Number(locationParts[2]) : 0;
 
-  // Bare media (image/GIF with no caption or reply quote) renders edge-to-edge —
-  // no bubble padding, border or background, WhatsApp-style.
-  const bareMedia = !deleted && (isImage || isGif) && !message.content && !message.replyTo;
+  // Bare media (image/GIF/video with no caption or reply quote) renders
+  // edge-to-edge — no bubble padding, border or background, WhatsApp-style.
+  const bareMedia = !deleted && (isImage || isGif || isVideo) && !message.content && !message.replyTo;
+
+  // Rooms have no thumbnailUrl column, so a video's poster frame travels in the
+  // opaque `metadata` JSON (written by rooms/[id].tsx handleSendVideo). Videos
+  // sent before that shipped simply have none and fall back to a placeholder.
+  const videoThumbnailUrl = useMemo(() => {
+    if (!isVideo || !message.metadata) return null;
+    try {
+      const parsed = JSON.parse(message.metadata) as { thumbnailUrl?: unknown };
+      return typeof parsed.thumbnailUrl === 'string' ? parsed.thumbnailUrl : null;
+    } catch {
+      return null;
+    }
+  }, [isVideo, message.metadata]);
 
   const [gifAspect, setGifAspect] = useState<number | null>(null);
   const onGifLoad = (e: ImageLoadEventData) => {
@@ -124,6 +181,9 @@ function MessageBubbleBase({
   const [imgError, setImgError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Measured at tap time so the MediaViewer can zoom out of this exact tile.
+  const imageRef = useRef<View>(null);
+
   const openMedia = () => {
     if (media) Linking.openURL(media).catch(() => {});
   };
@@ -134,7 +194,7 @@ function MessageBubbleBase({
     const iconBg = isOwn ? 'rgba(255,255,255,0.2)' : theme.brand + '22';
     const iconColor = isOwn ? '#fff' : theme.brand;
     return (
-      <Pressable onPress={openMedia} onLongPress={onLongPress} delayLongPress={220} style={styles.mediaCard}>
+      <Pressable onPress={openMedia} onLongPress={(e) => onLongPress(e.nativeEvent.pageY)} delayLongPress={220} style={styles.mediaCard}>
         <View style={[styles.mediaIcon, { backgroundColor: iconBg }]}>
           <Ionicons name={icon} size={22} color={iconColor} />
         </View>
@@ -169,15 +229,26 @@ function MessageBubbleBase({
     .onEnd(() => {
       if (translateX.value >= SWIPE_TRIGGER) runOnJS(onSwipeReply)();
       armed.value = false;
-      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+      // A plain timing snap-back, not a spring — a spring here visibly overshoots
+      // past 0 and "bounces", which reads as the row dancing after release.
+      translateX.value = withTiming(0, { duration: 150 });
     });
 
+  // FlashList recycles row views rather than remounting them, so this component
+  // instance can be reused for a different message. Without this, a cell that was
+  // mid-swipe (or just sprung back) when recycled would briefly render the old
+  // offset for the new message before snapping to 0 — the reported "jumps left
+  // and right". Resetting on identity change (not animated) keeps a fresh row stable.
+  useEffect(() => {
+    translateX.value = 0;
+    armed.value = false;
+  }, [message.id, translateX, armed]);
+
   const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
+  // Opacity only — no scale. A scaling arrow on top of the row's own translateX
+  // is a second, independent animation racing the drag, which read as "dancing".
   const arrowStyle = useAnimatedStyle(() => ({
     opacity: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0, 1], Extrapolation.CLAMP),
-    transform: [
-      { scale: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0.5, 1], Extrapolation.CLAMP) },
-    ],
   }));
 
   // WhatsApp-style meta: timestamp + ticks INSIDE the bubble bottom-right for
@@ -203,6 +274,17 @@ function MessageBubbleBase({
     </View>
   );
 
+  // Link preview target: the first url in a plain text message. Location and
+  // file cards are excluded (they render their own card), as are bare-url
+  // messages and deleted ones.
+  const previewUrl =
+    !deleted && !isDoc && !isAudioFile && !isLocation && !isBareUrl(message.content)
+      ? firstUrl(message.content)
+      : null;
+
+  const quoteAccent = isOwn ? '#fff' : theme.brand;
+  const quote = replyPreview ?? { kind: 'text' as const, label: message.replyTo?.content ?? '', thumbUrl: null };
+
   const bubbleInner = (
     <>
       {/* Reply quote */}
@@ -213,19 +295,42 @@ function MessageBubbleBase({
               styles.quote,
               {
                 backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
-                borderLeftColor: isOwn ? '#fff' : theme.brand,
+                borderLeftColor: quoteAccent,
               },
             ]}
           >
-            <Text style={[styles.quoteName, { color: isOwn ? '#fff' : theme.brand }]} numberOfLines={1}>
-              {message.replyTo.senderFirstName ?? '—'}
-            </Text>
-            <Text
-              style={[styles.quoteText, { color: isOwn ? '#ffffffcc' : theme.textSecondary }]}
-              numberOfLines={1}
-            >
-              {message.replyTo.content}
-            </Text>
+            <View style={styles.quoteBody}>
+              <Text style={[styles.quoteName, { color: quoteAccent }]} numberOfLines={1}>
+                {message.replyTo.senderFirstName ?? '—'}
+              </Text>
+              {quote.kind === 'voice' ? (
+                <View style={styles.quoteMediaRow}>
+                  <Ionicons name="mic" size={13} color={quoteAccent} />
+                  <Text
+                    style={[styles.quoteText, { color: isOwn ? '#ffffffcc' : theme.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {quote.label}
+                  </Text>
+                </View>
+              ) : (
+                <Text
+                  style={[styles.quoteText, { color: isOwn ? '#ffffffcc' : theme.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {quote.label}
+                </Text>
+              )}
+            </View>
+            {/* Photo replies show the actual image, not the words "📷 Photo". */}
+            {quote.kind === 'image' && quote.thumbUrl ? (
+              <Image
+                source={{ uri: quote.thumbUrl }}
+                style={styles.quoteThumb}
+                contentFit="cover"
+                transition={120}
+              />
+            ) : null}
           </View>
         </Pressable>
       ) : null}
@@ -242,9 +347,12 @@ function MessageBubbleBase({
       ) : null}
       {!deleted && isImage ? (
         <Pressable
+          // collapsable={false} keeps the node measurable on Android.
+          ref={imageRef}
+          collapsable={false}
           style={styles.imageWrap}
-          onPress={() => onImagePress?.(media)}
-          onLongPress={onLongPress}
+          onPress={() => measureThumbnail(imageRef, (layout) => onImagePress?.(media, layout))}
+          onLongPress={(e) => onLongPress(e.nativeEvent.pageY)}
           delayLongPress={220}
         >
           <Image
@@ -270,14 +378,31 @@ function MessageBubbleBase({
           ) : null}
         </Pressable>
       ) : null}
-      {!deleted && isVideo ? renderMediaCard('videocam', 'Video', 'Tap to play') : null}
-      {!deleted && isVoice ? <VoicePlayer uri={media} metadata={message.metadata} isOwn={isOwn} /> : null}
+      {!deleted && isVideo ? (
+        <VideoBubble
+          thumbnailUrl={videoThumbnailUrl}
+          duration={message.duration}
+          stableId={`video-thumb-${message.id}`}
+          onPress={(layout) => onVideoPress?.(media, layout)}
+          onLongPress={onLongPress}
+        />
+      ) : null}
+      {/* The SAME player the 1:1 chat uses — speed control, tap-to-seek and
+          error/retry included. Rooms used to have a reduced local copy. */}
+      {!deleted && isVoice ? (
+        <AudioPlayer
+          mediaUrl={media}
+          isOwn={isOwn}
+          waveformSource={message.metadata}
+          duration={message.duration}
+        />
+      ) : null}
       {!deleted && isDoc ? renderMediaCard('document-text', message.content.replace(/^📄\s*/, '') || 'Document', 'Tap to open') : null}
       {!deleted && isAudioFile ? renderMediaCard('musical-notes', message.content.replace(/^🎵\s*/, '') || 'Audio', 'Tap to play') : null}
       {!deleted && isLocation ? (
         <Pressable
           onPress={() => Linking.openURL(`https://maps.google.com/?q=${locationLat},${locationLng}`).catch(() => {})}
-          onLongPress={onLongPress}
+          onLongPress={(e) => onLongPress(e.nativeEvent.pageY)}
           delayLongPress={220}
           style={styles.mediaCard}
         >
@@ -303,17 +428,22 @@ function MessageBubbleBase({
           </Text>
         </View>
       ) : message.content && !isDoc && !isAudioFile && !isLocation ? (
-        <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>
-          {hasUrl(message.content)
-            ? linkifyText(
-                message.content,
-                undefined,
-                isOwn
-                  ? { color: '#fff', textDecorationLine: 'underline' }
-                  : { color: theme.info, textDecorationLine: 'underline' },
-              )
-            : renderWithMentions(message.content, isOwn ? '#fff' : theme.brand)}
-        </Text>
+        <View>
+          <Text style={[styles.text, { color: isOwn ? '#fff' : theme.textPrimary }]}>
+            {hasUrl(message.content)
+              ? linkifyText(
+                  message.content,
+                  undefined,
+                  isOwn
+                    ? { color: '#fff', textDecorationLine: 'underline' }
+                    : { color: theme.info, textDecorationLine: 'underline' },
+                )
+              : renderWithMentions(message.content, theme.brand, isOwn, onMentionPress)}
+          </Text>
+          {/* Rich preview for the FIRST url. A message that is nothing but a url
+              is a deliberate link share — let the url speak for itself. */}
+          {previewUrl ? <LinkPreview url={previewUrl} isOwn={isOwn} /> : null}
+        </View>
       ) : null}
 
       {/* Meta rides inside padded bubbles; bare media renders it below instead. */}
@@ -350,7 +480,7 @@ function MessageBubbleBase({
               </Pressable>
             ) : null}
 
-            <Pressable onLongPress={onLongPress} delayLongPress={220} onPress={onTap}>
+            <AnimatedPressable style={styles.liftLayer} onLongPress={(e) => onLongPress(e.nativeEvent.pageY)} delayLongPress={220} onPress={onTap}>
               {bareMedia ? (
                 <View
                   style={[
@@ -385,7 +515,7 @@ function MessageBubbleBase({
                   {bubbleInner}
                 </View>
               )}
-            </Pressable>
+            </AnimatedPressable>
 
             {/* Bare media keeps its timestamp + delivery below the image */}
             {bareMedia ? metaNode : null}
@@ -449,95 +579,13 @@ export const MessageBubble = memo(MessageBubbleBase, (prev, next) => {
     prev.deliveryStatus === next.deliveryStatus &&
     prev.highlight === next.highlight &&
     prev.isSelecting === next.isSelecting &&
-    prev.isSelected === next.isSelected
+    prev.isSelected === next.isSelected &&
+    prev.isMenuTarget === next.isMenuTarget &&
+    prev.replyPreview?.kind === next.replyPreview?.kind &&
+    prev.replyPreview?.thumbUrl === next.replyPreview?.thumbUrl &&
+    prev.replyPreview?.label === next.replyPreview?.label
   );
 });
-
-/* ── Voice message player (expo-audio) ── */
-const WAVE_BARS = 26;
-
-function fmt(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function VoicePlayer({ uri, metadata, isOwn }: { uri: string; metadata?: string | null; isOwn: boolean }) {
-  const { theme } = useTheme();
-  const playerRef = useRef<AudioPlayer | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [durationMs, setDurationMs] = useState(0);
-  const [positionMs, setPositionMs] = useState(0);
-  const bars = useMemo(() => parseVoiceAmplitudes(metadata, WAVE_BARS), [metadata]);
-
-  useEffect(() => {
-    return () => {
-      playerRef.current?.remove();
-      playerRef.current = null;
-    };
-  }, []);
-
-  const onStatus = (status: AudioStatus) => {
-    if (!status.isLoaded) return;
-    setDurationMs(status.duration * 1000);
-    setPositionMs(status.currentTime * 1000);
-    setPlaying(status.playing);
-    if (status.didJustFinish) {
-      setPlaying(false);
-      playerRef.current?.seekTo(0).catch(() => {});
-    }
-  };
-
-  const toggle = async () => {
-    try {
-      if (!playerRef.current) {
-        setLoading(true);
-        const player = createAudioPlayer(uri);
-        player.addListener('playbackStatusUpdate', onStatus);
-        playerRef.current = player;
-        player.play();
-        setLoading(false);
-        return;
-      }
-      if (playing) playerRef.current.pause();
-      else playerRef.current.play();
-    } catch {
-      setLoading(false);
-    }
-  };
-
-  const fg = isOwn ? '#fff' : theme.textPrimary;
-  const track = isOwn ? 'rgba(255,255,255,0.35)' : theme.border;
-  const fill = isOwn ? '#fff' : theme.brand;
-  const btnBg = isOwn ? 'rgba(255,255,255,0.22)' : theme.brand + '22';
-  const btnFg = isOwn ? '#fff' : theme.brand;
-  const progress = durationMs > 0 ? positionMs / durationMs : 0;
-  const label = playing || positionMs > 0 ? fmt(positionMs) : fmt(durationMs);
-
-  return (
-    <View style={styles.voiceRow}>
-      <Pressable onPress={toggle} style={[styles.voiceBtn, { backgroundColor: btnBg }]} hitSlop={6}>
-        {loading ? (
-          <ActivityIndicator size="small" color={btnFg} />
-        ) : (
-          <Ionicons name={playing ? 'pause' : 'play'} size={18} color={btnFg} />
-        )}
-      </Pressable>
-      <View style={styles.voiceWave}>
-        {bars.map((b, i) => {
-          const active = i / WAVE_BARS <= progress;
-          return (
-            <View
-              key={i}
-              style={{ width: 2.5, height: 22 * b, borderRadius: 2, backgroundColor: active ? fill : track }}
-            />
-          );
-        })}
-      </View>
-      <Text style={[styles.voiceTime, { color: fg }]}>{label}</Text>
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
   selectRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 4 },
@@ -551,12 +599,15 @@ const styles = StyleSheet.create({
   adminChip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999 },
   adminChipText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold },
 
+  // Carries the long-press "lift" (scale + shadow) while the context menu is open.
+  liftLayer: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 } },
   bubble: { paddingVertical: 6, paddingHorizontal: 9 },
   bubbleOther: { borderTopLeftRadius: 0, borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   bubbleOwn: { borderTopLeftRadius: 16, borderTopRightRadius: 0, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   // Bare image/GIF bubble — no padding, border or background (WhatsApp-style).
   mediaBubble: { borderRadius: 12, overflow: 'hidden' },
   text: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
+  mention: { fontFamily: FontFamily.semibold },
   deleted: { fontStyle: 'italic' },
   deletedRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   imageWrap: { borderRadius: 12, overflow: 'hidden' },
@@ -564,16 +615,15 @@ const styles = StyleSheet.create({
   imageRetry: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)' },
   imageRetryText: { color: '#fff', fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   gif: { width: 200, borderRadius: 12, marginBottom: 4, backgroundColor: 'rgba(0,0,0,0.1)' },
-  voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
-  voiceBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  voiceWave: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 24 },
-  voiceTime: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, width: 34, textAlign: 'right' },
   mediaCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 200, paddingVertical: 2 },
   mediaIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   mediaLabel: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
   mediaSub: { fontSize: FontSize.xs, fontFamily: FontFamily.regular, marginTop: 1 },
 
-  quote: { borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 8, borderRadius: 6, marginBottom: 4 },
+  quote: { flexDirection: 'row', alignItems: 'center', gap: 8, borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 4, borderRadius: 6, marginBottom: 4 },
+  quoteBody: { flex: 1 },
+  quoteMediaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  quoteThumb: { width: 40, height: 40, borderRadius: 4 },
   quoteName: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   quoteText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
 

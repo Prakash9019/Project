@@ -10,9 +10,9 @@ import {
   Keyboard,
   ActivityIndicator,
   Modal,
-  Share,
   Dimensions,
 } from 'react-native';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { RemoteImage } from '../../src/components/RemoteImage';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -29,7 +29,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
+  withTiming,
   runOnJS,
   interpolate,
   Extrapolation,
@@ -40,7 +40,7 @@ import { useTheme, FontFamily, FontSize, DisplayFont } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { ExpiringPhotoViewer } from '../../src/components/ExpiringPhotoViewer';
 import { PhotoViewer } from '../../src/components/PhotoViewer';
-import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { MediaViewer, type MediaViewerImage, type ThumbnailLayout } from '../../src/components/MediaViewer';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { EmojiPicker } from '../../src/components/rooms/EmojiPicker';
@@ -53,7 +53,8 @@ import { ReactionPill } from '../../src/components/chat/ReactionPill';
 import { ReactionDetails } from '../../src/components/chat/ReactionDetails';
 import { MessageInfo } from '../../src/components/chat/MessageInfo';
 import { ForwardSheet } from '../../src/components/chat/ForwardSheet';
-import { showSuccess, toastApiError } from '../../src/lib/toast';
+import { shareMediaUrl } from '../../src/utils/shareMedia';
+import { showSuccess, showError, toastApiError } from '../../src/lib/toast';
 import {
   ChatLockScreen,
   ChatLockSetup,
@@ -64,8 +65,12 @@ import {
 } from '../../src/components/chat/ChatLock';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { AudioPlayer } from '../../src/components/chat/AudioPlayer';
+import { VideoBubble } from '../../src/components/chat/VideoBubble';
+import { LinkPreview } from '../../src/components/chat/LinkPreview';
+import { measureThumbnail } from '../../src/utils/measureThumbnail';
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
+import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
 import {
   listMessages,
   markConversationRead,
@@ -95,8 +100,8 @@ import { isAgoraAvailable } from '../../src/services/agora';
 import { useAuthStore } from '../../src/store/authStore';
 import { useChatStore } from '../../src/store/chatStore';
 import { clockTime, planAtLeast, chatDateHeader, sameCalendarDay, formatLastSeen } from '../../src/lib/format';
-import { hasUrl, linkifyText } from '../../src/lib/linkify';
-import { isNearBottom, classifyMessagesChange, shouldAutoScrollOnAppend } from '../../src/lib/chatScroll';
+import { hasUrl, linkifyText, firstUrl, isBareUrl } from '../../src/lib/linkify';
+import { classifyMessagesChange, shouldAutoScrollOnAppend } from '../../src/lib/chatScroll';
 import { ChatSkeleton } from '../../src/components/Skeleton';
 import { MessageTick } from '../../src/components/MessageTick';
 import type { Message, AlbumSummary } from '../../src/types/api';
@@ -131,6 +136,42 @@ function isViewOnce(msg: Message) {
   return msg.type === 'expiring_photo' || (msg.type === 'photo' && msg.viewOnce);
 }
 
+/** mm:ss for a duration in whole seconds. */
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * What a reply quote should show for the message being replied to.
+ *
+ * Built entirely from the server's `replyTo` preview, which since
+ * 20260726_video_and_duration carries `type` + signed `mediaUrl`/`thumbnailUrl`
+ * + `duration`. That means a quoted photo/video shows a real thumbnail even when
+ * the original sits far outside the loaded page — the old client-side lookup
+ * into the message list silently fell back to plain text in exactly that case.
+ */
+type QuotePreview = { kind: 'image' | 'voice' | 'text'; thumbUrl?: string | null; label: string };
+
+function quotePreviewFor(replyTo: NonNullable<Message['replyTo']>): QuotePreview {
+  const { type, mediaUrl, thumbnailUrl, duration } = replyTo;
+  // Video quotes prefer the poster frame; a photo quote uses the image itself.
+  if (type === 'video' && (thumbnailUrl || mediaUrl)) {
+    return {
+      kind: 'image',
+      thumbUrl: thumbnailUrl ?? mediaUrl,
+      label: duration != null ? `Video · ${formatDuration(duration)}` : 'Video',
+    };
+  }
+  if (type === 'photo' && mediaUrl) {
+    return { kind: 'image', thumbUrl: mediaUrl, label: replyTo.content || 'Photo' };
+  }
+  if (type === 'voice' || type === 'voice_note') {
+    return { kind: 'voice', label: duration != null ? formatDuration(duration) : 'Voice message' };
+  }
+  return { kind: 'text', label: replyTo.content };
+}
+
 const SWIPE_TRIGGER = 60;
 
 /** Haptic fired the instant the swipe-to-reply threshold is crossed (WhatsApp "click"). */
@@ -139,12 +180,29 @@ function swipeThresholdHaptic() {
 }
 
 /** Swipe-right-to-reply wrapper (mirrors the group-chat MessageBubble gesture). */
-function SwipeToReply({ onSwipeReply, children }: { onSwipeReply: () => void; children: React.ReactNode }) {
+function SwipeToReply({
+  messageId,
+  onSwipeReply,
+  children,
+}: {
+  messageId: string;
+  onSwipeReply: () => void;
+  children: React.ReactNode;
+}) {
   const { theme } = useTheme();
   const translateX = useSharedValue(0);
   // Tracks whether the 60px threshold is currently crossed so the haptic fires
   // exactly once at the crossing (and re-arms if the finger pulls back).
   const armed = useSharedValue(false);
+  // FlashList recycles row views rather than remounting them, so this component
+  // instance can be reused for a different message. Without this, a cell that was
+  // mid-swipe (or just sprung back) when recycled would briefly render the old
+  // offset for the new message before snapping to 0 — the reported "jumps left
+  // and right". Resetting on identity change (not animated) keeps a fresh row stable.
+  useEffect(() => {
+    translateX.value = 0;
+    armed.value = false;
+  }, [messageId, translateX, armed]);
   const pan = Gesture.Pan()
     .activeOffsetX([-15, 15])
     .failOffsetY([-12, 12])
@@ -160,12 +218,15 @@ function SwipeToReply({ onSwipeReply, children }: { onSwipeReply: () => void; ch
     .onEnd(() => {
       if (translateX.value >= SWIPE_TRIGGER) runOnJS(onSwipeReply)();
       armed.value = false;
-      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+      // A plain timing snap-back, not a spring — a spring here visibly overshoots
+      // past 0 and "bounces", which reads as the row dancing after release.
+      translateX.value = withTiming(0, { duration: 150 });
     });
   const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
+  // Opacity only — no scale. A scaling arrow on top of the row's own translateX
+  // is a second, independent animation racing the drag, which read as "dancing".
   const arrowStyle = useAnimatedStyle(() => ({
     opacity: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0, 1], Extrapolation.CLAMP),
-    transform: [{ scale: interpolate(translateX.value, [0, SWIPE_TRIGGER], [0.5, 1], Extrapolation.CLAMP) }],
   }));
 
   return (
@@ -195,13 +256,20 @@ type ChatMessageRowProps = {
   onSwipeReply: (item: Message) => void;
   onReact: (item: Message, emoji: string) => void;
   onReactionLongPress: (messageId: string) => void;
-  onImagePress: (url: string) => void;
+  /** Opens the viewer; `layout` is the tapped thumbnail's rect for the zoom. */
+  onImagePress: (url: string, layout?: ThumbnailLayout) => void;
+  /** Open the in-app player for a video message (never a browser). */
+  onVideoPress: (url: string, layout?: ThumbnailLayout) => void;
   onViewOncePress: (item: Message) => void;
   onRetry: (item: Message) => void;
   onTap: (item: Message) => void;
   onReplyPress: (messageId: string) => void;
   isSelecting: boolean;
   isSelected: boolean;
+  /** This bubble is the open context menu's target — lifts it above the blur. */
+  isMenuTarget: boolean;
+  /** Resolved preview of the replied-to message (thumbnail / voice / text). */
+  replyPreview: QuotePreview | null;
 };
 
 /**
@@ -227,14 +295,20 @@ function ChatMessageRowBase({
   onReact,
   onReactionLongPress,
   onImagePress,
+  onVideoPress,
   onViewOncePress,
   onRetry,
   onTap,
   onReplyPress,
   isSelecting,
   isSelected,
+  isMenuTarget,
+  replyPreview,
 }: ChatMessageRowProps) {
   const { theme } = useTheme();
+
+  // Measured at tap time so the MediaViewer can zoom out of this exact tile.
+  const photoRef = useRef<View>(null);
 
   const renderBody = () => {
     if (item.isUnsent) {
@@ -280,11 +354,16 @@ function ChatMessageRowBase({
       const isAlbum = item.content?.startsWith('📁 ');
       return (
         <Pressable
-          onPress={() => onImagePress(item.mediaUrls[0] ?? item.mediaUrl ?? '')}
+          onPress={() =>
+            measureThumbnail(photoRef, (layout) =>
+              onImagePress(item.mediaUrls[0] ?? item.mediaUrl ?? '', layout),
+            )
+          }
           onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
           delayLongPress={220}
         >
-          <View style={styles.photoStack}>
+          {/* collapsable={false} keeps the node measurable on Android. */}
+          <View ref={photoRef} collapsable={false} style={styles.photoStack}>
             <RemoteImage source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} />
             {item.mediaUrls.length > 1 && (
               <View style={styles.multiBadge}>
@@ -307,18 +386,22 @@ function ChatMessageRowBase({
     }
 
     if (item.type === 'video') {
+      const videoUrl = item.mediaUrls[0] ?? item.mediaUrl;
       return (
-        <View style={styles.mediaChip}>
-          <Ionicons name="videocam" size={16} color={mine ? theme.textInverse : theme.textPrimary} />
-          <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Video</Text>
-        </View>
+        <VideoBubble
+          thumbnailUrl={item.thumbnailUrl}
+          duration={item.duration}
+          stableId={`video-thumb-${item.id}`}
+          onPress={(layout) => videoUrl && onVideoPress(videoUrl, layout)}
+          onLongPress={(pageY) => onLongPress(item, pageY)}
+        />
       );
     }
 
     if (item.type === 'voice' || item.type === 'voice_note') {
       const voiceUrl = item.mediaUrls[0] ?? item.mediaUrl;
       if (voiceUrl) {
-        return <AudioPlayer mediaUrl={voiceUrl} isOwn={mine} caption={item.caption} />;
+        return <AudioPlayer mediaUrl={voiceUrl} isOwn={mine} waveformSource={item.caption} duration={item.duration} />;
       }
       return (
         <View style={styles.mediaChip}>
@@ -416,18 +499,24 @@ function ChatMessageRowBase({
       return <Text style={baseTextStyle}>{segs}</Text>;
     }
 
-    // Tappable links (skipped for location/file cards — those returned above).
+    // Tappable links (skipped for location/file cards — those returned above),
+    // plus a rich preview card for the FIRST url. A message that is nothing but
+    // a url is a deliberate link share — WhatsApp lets it speak for itself.
     if (item.content && hasUrl(item.content)) {
+      const previewUrl = isBareUrl(item.content) ? null : firstUrl(item.content);
       return (
-        <Text style={baseTextStyle}>
-          {linkifyText(
-            item.content,
-            baseTextStyle,
-            mine
-              ? { color: '#fff', textDecorationLine: 'underline' }
-              : { color: theme.info, textDecorationLine: 'underline' },
-          )}
-        </Text>
+        <View>
+          <Text style={baseTextStyle}>
+            {linkifyText(
+              item.content,
+              baseTextStyle,
+              mine
+                ? { color: '#fff', textDecorationLine: 'underline' }
+                : { color: theme.info, textDecorationLine: 'underline' },
+            )}
+          </Text>
+          {previewUrl ? <LinkPreview url={previewUrl} isOwn={mine} /> : null}
+        </View>
       );
     }
 
@@ -436,13 +525,17 @@ function ChatMessageRowBase({
 
   const body = renderBody();
 
+  // Bare media (photo or video with no album caption) renders edge-to-edge with
+  // its meta below, rather than padded inside a gradient/received bubble.
   const mediaOnly =
     !item.isUnsent &&
     !isViewOnce(item) &&
-    item.type === 'photo' &&
-    item.mediaUrls.length > 0 &&
+    (item.type === 'photo' || item.type === 'video') &&
+    (item.mediaUrls.length > 0 || !!item.mediaUrl) &&
     !item.content?.startsWith('📁 ');
 
+  const preview: QuotePreview = replyPreview ?? { kind: 'text', label: item.replyTo?.content ?? '' };
+  const quoteAccent = mine ? '#fff' : theme.brand;
   const quote = item.replyTo ? (
     <Pressable onPress={() => item.replyTo && onReplyPress(item.replyTo.id)}>
       <View
@@ -450,16 +543,37 @@ function ChatMessageRowBase({
           styles.quote,
           {
             backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary,
-            borderLeftColor: mine ? '#fff' : theme.brand,
+            borderLeftColor: quoteAccent,
           },
         ]}
       >
-        <Text style={[styles.quoteName, { color: mine ? '#fff' : theme.brand }]} numberOfLines={1}>
-          {item.replyTo.senderId === meId ? 'You' : peerName || 'Someone'}
-        </Text>
-        <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
-          {item.replyTo.content}
-        </Text>
+        <View style={styles.quoteBody}>
+          <Text style={[styles.quoteName, { color: quoteAccent }]} numberOfLines={1}>
+            {item.replyTo.senderId === meId ? 'You' : peerName || 'Someone'}
+          </Text>
+          {preview.kind === 'voice' ? (
+            <View style={styles.quoteMediaRow}>
+              <Ionicons name="mic" size={13} color={quoteAccent} />
+              <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
+                {preview.label}
+              </Text>
+            </View>
+          ) : (
+            <Text style={[styles.quoteText, { color: mine ? '#ffffffcc' : theme.textSecondary }]} numberOfLines={1}>
+              {preview.label}
+            </Text>
+          )}
+        </View>
+        {/* Photo replies show the actual image, not the words "📷 Photo". */}
+        {preview.kind === 'image' && preview.thumbUrl ? (
+          <RemoteImage
+            source={{ uri: preview.thumbUrl }}
+            stableId={`quote-${item.replyTo.id}`}
+            style={styles.quoteThumb}
+            contentFit="cover"
+            transition={120}
+          />
+        ) : null}
       </View>
     </Pressable>
   ) : null;
@@ -520,7 +634,8 @@ function ChatMessageRowBase({
   );
 
   const rowContent = (
-    <SwipeToReply onSwipeReply={() => onSwipeReply(item)}>
+    <View style={styles.liftLayer}>
+    <SwipeToReply messageId={item.id} onSwipeReply={() => onSwipeReply(item)}>
       <Pressable
         style={[styles.bubbleRow, mine ? styles.right : styles.left, isSelecting && !isSelected ? { opacity: 0.6 } : null]}
         onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
@@ -566,6 +681,7 @@ function ChatMessageRowBase({
         )}
       </Pressable>
     </SwipeToReply>
+    </View>
   );
 
   // Only newly appended rows animate in (optimistic `tmp-` bubble, or a message
@@ -625,7 +741,11 @@ const ChatMessageRow = memo(ChatMessageRowBase, (prev, next) => {
     prev.showDisappearing === next.showDisappearing &&
     prev.canReadReceipts === next.canReadReceipts &&
     prev.isSelecting === next.isSelecting &&
-    prev.isSelected === next.isSelected
+    prev.isSelected === next.isSelected &&
+    prev.isMenuTarget === next.isMenuTarget &&
+    prev.replyPreview?.kind === next.replyPreview?.kind &&
+    prev.replyPreview?.thumbUrl === next.replyPreview?.thumbUrl &&
+    prev.replyPreview?.label === next.replyPreview?.label
   );
 });
 
@@ -646,7 +766,7 @@ export default function Chat() {
   const canEdit = planAtLeast(me?.plan, 'gold');
   const canUseTemplates = (me?.effectiveLimits?.messageTemplates ?? 0) > 0;
   const EDIT_WINDOW_MS = 5 * 60 * 1000;
-  const listRef = useRef<FlatList<ChatRow>>(null);
+  const listRef = useRef<FlashListRef<ChatRow>>(null);
   // When jumping to a pinned/search result, block the content-size auto-scroll so
   // the list doesn't snap back to the bottom (the highlight border resizes the row,
   // which would otherwise fire onContentSizeChange → scrollToEnd).
@@ -697,6 +817,9 @@ export default function Chat() {
   const [photoViewUrl, setPhotoViewUrl] = useState<string | null>(null);
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  // Rect of the thumbnail the viewer was opened from — drives the zoom
+  // transition. null when the tap couldn't be measured (falls back to a fade).
+  const [thumbnailLayout, setThumbnailLayout] = useState<ThumbnailLayout | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -706,8 +829,18 @@ export default function Chat() {
   // Y position (pageY) of the long-pressed bubble — anchors the context menu
   // near the message instead of centering it on screen.
   const [menuY, setMenuY] = useState(0);
-  const menuScale = useSharedValue(1);
-  const menuAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: menuScale.value }] }));
+  // The menu drives its own entry AND exit (the Modal is animationType="none").
+  // Opacity ONLY — no spring, no scale. A spring scale-in overshoots past 1, which
+  // reads as the popup jumping/bouncing; a plain cross-fade just appears.
+  const menuOpacity = useSharedValue(0);
+  const menuOverlayStyle = useAnimatedStyle(() => ({ opacity: menuOpacity.value }));
+
+  /** Fade out, then unmount the message once the exit finishes. */
+  const dismissMenu = useCallback(() => {
+    menuOpacity.value = withTiming(0, { duration: 120 }, (finished) => {
+      if (finished) runOnJS(setMenuMessage)(null);
+    });
+  }, [menuOpacity]);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -731,14 +864,24 @@ export default function Chat() {
   const [forwardMessages, setForwardMessages] = useState<Message[] | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const isSelecting = selectedMessageIds.size > 0;
+  // Drives the selection bar's star icon: filled once every selected message is
+  // already starred, because tapping it then unstars them.
+  const allSelectedStarred =
+    isSelecting && messages.filter((m) => selectedMessageIds.has(m.id)).every((m) => m.isStarred);
 
   const rows = useMemo(() => buildRows(messages, me?.id), [messages, me?.id]);
+  // FlashList data: newest-first (mirrors rooms/[id].tsx). The list itself and
+  // each row are flipped with a scaleY transform (FlashList v2 has no `inverted`
+  // prop) — index 0 renders visually at the bottom, so opening the chat is
+  // bottom-anchored for free with no scrollToEnd anchoring hacks.
+  const invertedRows = useMemo(() => [...rows].reverse(), [rows]);
 
   // Event-driven auto-scroll. Runs on every messages change but only scrolls on a
-  // real append: initial load anchors at the bottom; a new appended message
-  // scrolls only if it's mine or I'm already near the bottom. Prepends (older
-  // pages) and non-length changes (edits, reactions, unsend, highlight, pin) are
-  // deliberately ignored — that is what used to yank the view back after a jump.
+  // real append: a new appended message scrolls only if it's mine or I'm already
+  // near the bottom. Prepends (older pages) and non-length changes (edits,
+  // reactions, unsend, highlight, pin) are deliberately ignored — that is what
+  // used to yank the view back after a jump. The initial load needs no anchor —
+  // the inverted list already starts at offset 0 (the newest message).
   useEffect(() => {
     if (loading) return;
     const last = messages[messages.length - 1] ?? null;
@@ -746,20 +889,12 @@ export default function Chat() {
     prevLastIdRef.current = last?.id ?? null;
     prevLenRef.current = messages.length;
     if (!last) return;
-    if (change === 'initial') {
-      // First render reflows several times (text rows, then images) — anchor a few
-      // times so we reliably land at the newest message on open.
-      const anchor = () => listRef.current?.scrollToEnd({ animated: false });
-      requestAnimationFrame(anchor);
-      setTimeout(anchor, 80);
-      setTimeout(anchor, 220);
-      return;
-    }
+    if (change === 'initial') return;
     if (change !== 'appended') return;
     if (suppressAutoScroll.current) return;
     const mine = last.senderId === me?.id;
     if (shouldAutoScrollOnAppend(mine, nearBottomRef.current)) {
-      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
       setUnseenCount(0);
     } else if (!mine) {
       // A peer message arrived while the user is reading history — surface it on
@@ -769,7 +904,7 @@ export default function Chat() {
   }, [messages, loading, me?.id]);
 
   const scrollToBottom = useCallback(() => {
-    listRef.current?.scrollToEnd({ animated: true });
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
     setUnseenCount(0);
     setShowScrollDown(false);
     markRead(conversationId);
@@ -805,7 +940,10 @@ export default function Chat() {
 
   const scrollAndHighlight = useCallback(
     (id: string) => {
-      const rowIndex = rows.findIndex((r) => r.kind === 'message' && r.message.id === id);
+      // `invertedRows` is the array actually handed to FlashList as `data` — its
+      // index for a given message is already correct for the inverted list (the
+      // newest message sits at index 0), so no reversal is needed here.
+      const rowIndex = invertedRows.findIndex((r) => r.kind === 'message' && r.message.id === id);
       if (rowIndex >= 0) {
         suppressAutoScroll.current = true;
         listRef.current?.scrollToIndex({ index: rowIndex, animated: true, viewPosition: 0.5 });
@@ -820,7 +958,7 @@ export default function Chat() {
       if (highlightTimer.current) clearTimeout(highlightTimer.current);
       highlightTimer.current = setTimeout(() => setHighlightId(null), 1500);
     },
-    [rows],
+    [invertedRows],
   );
 
   // Navigate to a specific match while KEEPING the search bar open (up/down
@@ -856,13 +994,15 @@ export default function Chat() {
     [searchOpen, matchIds, scrollToMatch, scrollAndHighlight],
   );
 
-  // Flat list of every shareable photo in the conversation (album/multi-photo
-  // messages contribute each url) for the full-screen MediaViewer. View-once and
-  // unsent messages are excluded — they have their own consume-once flow.
+  // Flat list of every shareable photo AND video in the conversation (album/
+  // multi-photo messages contribute each url) for the full-screen MediaViewer,
+  // in chronological order so swiping moves through the thread's media. View-once
+  // and unsent messages are excluded — they have their own consume-once flow.
   const viewerImages = useMemo<MediaViewerImage[]>(() => {
     const out: MediaViewerImage[] = [];
     messages.forEach((m) => {
-      if (m.isUnsent || isViewOnce(m) || m.type !== 'photo') return;
+      if (m.isUnsent || isViewOnce(m)) return;
+      if (m.type !== 'photo' && m.type !== 'video') return;
       const urls = m.mediaUrls.length ? m.mediaUrls : m.mediaUrl ? [m.mediaUrl] : [];
       urls.forEach((uri) => {
         if (!uri) return;
@@ -871,16 +1011,23 @@ export default function Chat() {
           senderId: m.senderId,
           senderName: m.senderId === me?.id ? 'You' : peerName || 'Someone',
           createdAt: m.createdAt,
+          kind: m.type === 'video' ? 'video' : 'image',
         });
       });
     });
     return out;
   }, [messages, me?.id, peerName]);
 
-  const openImageViewer = useCallback(
-    (url: string) => {
+  /**
+   * Open the full-screen viewer at a given media url (photo or video).
+   * `layout` is the tapped thumbnail's measured rect — the viewer zooms out of
+   * it on open and back into it on dismiss.
+   */
+  const openMediaViewer = useCallback(
+    (url: string, layout?: ThumbnailLayout) => {
       const idx = viewerImages.findIndex((e) => e.uri === url);
       setMediaViewerIndex(idx < 0 ? 0 : idx);
+      setThumbnailLayout(layout ?? null);
       setMediaViewerOpen(true);
     },
     [viewerImages],
@@ -1099,10 +1246,11 @@ export default function Chat() {
     return () => cleanup();
   }, [conversationId, me?.id, upsert]);
 
-  // Scroll-to-top → load the previous page of older messages and PREPEND them.
-  // The FlatList's `maintainVisibleContentPosition` keeps the current messages
-  // visually anchored so the view doesn't jump; suppressAutoScroll stops the
-  // content-size auto-scroll from snapping back to the bottom during the prepend.
+  // Scroll to the visual top → load the previous page of older messages and
+  // PREPEND them to the chronological `messages` array (which lands them at the
+  // END of the inverted list, i.e. above the current view). FlashList's own
+  // maintainVisibleContentPosition keeps the current messages visually anchored
+  // so the view doesn't jump.
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMoreOlder || !oldestCursor.current) return;
     setLoadingOlder(true);
@@ -1264,10 +1412,29 @@ export default function Chat() {
     }
   };
 
-  const handleSendVideo = (uri: string, replyToId?: string) =>
-    uploadAndSendFile(uri, 'video', 'video/mp4', { type: 'video', content: '', replyToId });
+  /**
+   * Videos are sent with a client-generated poster frame so the bubble can show
+   * a real thumbnail + play button instead of a generic card. The thumbnail is
+   * uploaded first; if it fails the video still sends (posterless).
+   */
+  const handleSendVideo = async (uri: string, replyToId?: string, durationMs?: number | null) => {
+    setSending(true);
+    setBanner(null);
+    try {
+      setUploadProgress(0);
+      const thumbnailUrl = (await generateAndUploadVideoThumbnail(uri)) ?? undefined;
+      const url = await uploadToR2(uri, 'video', 'video/mp4', { onProgress: setUploadProgress });
+      const duration = durationMs != null ? Math.max(0, Math.round(durationMs / 1000)) : undefined;
+      await postMessage({ type: 'video', content: '', mediaUrls: [url], thumbnailUrl, duration, replyToId });
+    } catch (e) {
+      setBanner((e as ApiError).message ?? 'Could not send video');
+    } finally {
+      setSending(false);
+      setUploadProgress(null);
+    }
+  };
 
-  const handleSendAudioClip = async (uri: string, _durationMs: number, replyToId?: string, amplitudes?: number[]) => {
+  const handleSendAudioClip = async (uri: string, durationMs: number, replyToId?: string, amplitudes?: number[]) => {
     setSending(true);
     setBanner(null);
     try {
@@ -1276,7 +1443,10 @@ export default function Chat() {
       // `caption` is unused for type='voice' — repurposed to carry the real waveform
       // so playback doesn't have to fake it (see src/lib/audioAmplitude.ts).
       const caption = amplitudes?.length ? JSON.stringify({ amplitudes }) : undefined;
-      await postMessage({ type: 'voice', mediaUrls: [url], caption, replyToId });
+      // Persist the real clip length: the stored waveform is resampled to a fixed
+      // bar count, so it can't be recovered from the amplitudes afterwards.
+      const duration = Math.max(0, Math.round(durationMs / 1000));
+      await postMessage({ type: 'voice', mediaUrls: [url], caption, duration, replyToId });
     } catch (e) {
       setBanner((e as ApiError).message ?? 'Could not send voice message');
     } finally {
@@ -1356,7 +1526,7 @@ export default function Chat() {
   };
 
   const confirmUnsend = (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     confirm(
       'Delete for Everyone?',
       'This message will be deleted for both of you.',
@@ -1375,7 +1545,7 @@ export default function Chat() {
   }, []);
 
   const enterSelectMode = useCallback((item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     setSelectedMessageIds(new Set([item.id]));
   }, []);
 
@@ -1389,11 +1559,11 @@ export default function Chat() {
       return;
     }
     setMenuY(pageY ?? 0);
-    // Scale in from near the message (0.85 → 1, spring).
-    menuScale.value = 0.85;
-    menuScale.value = withSpring(1, { damping: 20, stiffness: 320 });
+    // Plain fade up — no scale/spring, so the popup never jumps or bounces.
+    menuOpacity.value = 0;
+    menuOpacity.value = withTiming(1, { duration: 120 });
     setMenuMessage(item);
-  }, [isSelecting, toggleSelect, menuScale]);
+  }, [isSelecting, toggleSelect, menuOpacity]);
 
   const onTapMessage = useCallback((item: Message) => {
     if (!isSelecting || item.id.startsWith('tmp-')) return;
@@ -1408,7 +1578,7 @@ export default function Chat() {
   }, []);
 
   const onReact = useCallback(async (item: Message, emoji: string) => {
-    setMenuMessage(null);
+    dismissMenu();
     // Optimistic toggle
     setMessages((prev) =>
       prev.map((m) => {
@@ -1436,12 +1606,12 @@ export default function Chat() {
   }, [conversationId]);
 
   const copyMessage = async (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     if (item.content) await Clipboard.setStringAsync(item.content);
   };
 
   const runDeleteSelf = async (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     try {
       await deleteMessage(conversationId, item.id);
       setMessages((prev) => prev.filter((m) => m.id !== item.id));
@@ -1451,7 +1621,7 @@ export default function Chat() {
   };
 
   const toggleStar = async (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     const next = !item.isStarred;
     setMessages((prev) => prev.map((m) => (m.id === item.id ? { ...m, isStarred: next } : m)));
     try {
@@ -1463,7 +1633,7 @@ export default function Chat() {
   };
 
   const togglePin = async (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     const next = !item.isPinned;
     setPinnedDismissed(false);
     setMessages((prev) => prev.map((m) => (m.id === item.id ? { ...m, isPinned: next } : m)));
@@ -1476,29 +1646,72 @@ export default function Chat() {
   };
 
   const openForward = (items: Message[]) => {
-    setMenuMessage(null);
+    if (!items.length) return;
+    const fromMenu = menuMessage != null;
+    // Close the context menu SYNCHRONOUSLY (not via the 120ms fade). The forward
+    // sheet is itself an RN Modal, and iOS refuses to present a modal while
+    // another one is still dismissing — so when we came from the menu, wait for
+    // that dismissal before presenting. From the selection bar there is no modal
+    // to wait on, so it opens immediately.
+    if (fromMenu) {
+      menuOpacity.value = 0;
+      setMenuMessage(null);
+      setTimeout(() => setForwardMessages(items), 250);
+      return;
+    }
     setForwardMessages(items);
   };
 
   const runForward = async (targetConversationIds: string[]) => {
     const items = forwardMessages ?? [];
+    if (!items.length || !targetConversationIds.length) return;
     try {
-      for (const item of items) {
+      // Oldest → newest, sequentially, so the recipient sees the same order.
+      const ordered = [...items].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+      for (const item of ordered) {
         await forwardMessage(conversationId, item.id, targetConversationIds);
       }
       setForwardMessages(null);
       clearSelection();
-      showSuccess(`Forwarded to ${targetConversationIds.length} chat${targetConversationIds.length > 1 ? 's' : ''}`);
+      const chats = `${targetConversationIds.length} chat${targetConversationIds.length > 1 ? 's' : ''}`;
+      showSuccess(
+        items.length > 1 ? `${items.length} messages forwarded to ${chats}` : `Forwarded to ${chats}`,
+      );
     } catch (e) {
       toastApiError(e, 'Could not forward message');
     }
   };
 
+  /**
+   * Star/unstar every selected message. Toggles as a group: if all of them are
+   * already starred the action unstars them, otherwise it stars the rest — the
+   * same semantics as the single-message Star/Unstar action.
+   */
   const batchStar = async () => {
     const ids = [...selectedMessageIds];
+    if (!ids.length) return;
+    const selected = messages.filter((m) => ids.includes(m.id));
+    const next = !selected.every((m) => m.isStarred);
     clearSelection();
-    setMessages((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, isStarred: true } : m)));
-    await Promise.all(ids.map((id) => starMessage(id, 'chat').catch(() => {})));
+    setMessages((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, isStarred: next } : m)));
+    const results = await Promise.all(
+      ids.map((id) =>
+        (next ? starMessage(id, 'chat') : unstarMessage(id)).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    );
+    const failed = ids.filter((_, i) => !results[i]);
+    if (failed.length) {
+      // Roll the failed ones back so the UI never claims a state the server rejected.
+      setMessages((prev) => prev.map((m) => (failed.includes(m.id) ? { ...m, isStarred: !next } : m)));
+      showError(next ? 'Could not star some messages' : 'Could not unstar some messages');
+    } else {
+      showSuccess(next ? `${ids.length} starred` : `${ids.length} unstarred`);
+    }
   };
 
   const batchDeleteForMe = async () => {
@@ -1540,7 +1753,7 @@ export default function Chat() {
   };
 
   const saveMediaToGallery = async (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     const url = item.mediaUrls[0] ?? item.mediaUrl;
     if (!url) return;
     try {
@@ -1560,7 +1773,7 @@ export default function Chat() {
   };
 
   const translateMessageText = async (item: Message) => {
-    setMenuMessage(null);
+    dismissMenu();
     if (translations[item.id]) {
       // Toggle off
       setTranslations((prev) => {
@@ -1595,7 +1808,7 @@ export default function Chat() {
   };
 
   const openReportFromMenu = () => {
-    setMenuMessage(null);
+    dismissMenu();
     setReportOpen(true);
   };
 
@@ -1687,30 +1900,6 @@ export default function Chat() {
       else setBanner(err.message ?? 'Could not send photo');
     } finally {
       setSending(false);
-    }
-  };
-
-  // Upload a non-photo file to R2 and send it. Videos use the native 'video'
-  // message type; documents/audio ride on a text message carrying the file url
-  // in mediaUrls with an emoji-prefixed caption (rendered as a tappable card,
-  // mirroring the group chat MessageBubble contract).
-  const uploadAndSendFile = async (
-    localUri: string,
-    uploadType: 'video' | 'document' | 'audio',
-    contentType: string,
-    body: SendMessageBody,
-  ) => {
-    setSending(true);
-    setBanner(null);
-    try {
-      setUploadProgress(0);
-      const url = await uploadToR2(localUri, uploadType, contentType, { onProgress: setUploadProgress });
-      await postMessage({ ...body, mediaUrls: [url] });
-    } catch (e) {
-      setBanner((e as ApiError).message ?? 'Could not send attachment');
-    } finally {
-      setSending(false);
-      setUploadProgress(null);
     }
   };
 
@@ -1866,10 +2055,14 @@ export default function Chat() {
     }
   };
 
+  // Rows are rendered into an INVERTED FlashList (see `invertedRows`): the list
+  // carries `scaleY: -1` and every row flips itself back, so within a row the
+  // content order and margins read normally. `index` here indexes `invertedRows`
+  // (newest-first), so the row visually ABOVE this one is at `index + 1`.
   const renderRow = useCallback(({ item: row, index }: { item: ChatRow; index: number }) => {
     if (row.kind === 'date') {
       return (
-        <View style={styles.dateRow}>
+        <View style={[styles.invertRow, styles.dateRow]}>
           <Text style={[styles.dateLabel, { color: theme.textTertiary, backgroundColor: theme.surfaceElevated }]}>
             {row.label}
           </Text>
@@ -1878,7 +2071,7 @@ export default function Chat() {
     }
     if (row.kind === 'unread_divider') {
       return (
-        <View style={styles.unreadDivider}>
+        <View style={[styles.invertRow, styles.unreadDivider]}>
           <View style={[styles.unreadLine, { backgroundColor: theme.brand }]} />
           <Text style={[styles.unreadText, { color: theme.brand }]}>Unread messages</Text>
           <View style={[styles.unreadLine, { backgroundColor: theme.brand }]} />
@@ -1888,10 +2081,10 @@ export default function Chat() {
     const item = row.message;
     // WhatsApp grouping: consecutive messages from the same sender sit 2px
     // apart; a sender change (or a divider row above) gets the full 8px gap.
-    const prevRow = rows[index - 1];
+    const prevRow = invertedRows[index + 1];
     const sameSenderAsPrev = prevRow?.kind === 'message' && prevRow.message.senderId === item.senderId;
     return (
-      <View style={{ marginTop: sameSenderAsPrev ? 2 : 8 }}>
+      <View style={[styles.invertRow, { marginTop: sameSenderAsPrev ? 2 : 8 }]}>
         <ChatMessageRow
           item={item}
           mine={item.senderId === me?.id}
@@ -1906,17 +2099,20 @@ export default function Chat() {
           onSwipeReply={onSwipeReply}
           onReact={onReact}
           onReactionLongPress={setReactionDetailsFor}
-          onImagePress={openImageViewer}
+          onImagePress={openMediaViewer}
+          onVideoPress={openMediaViewer}
           onViewOncePress={openViewOnce}
           onRetry={retryFailedMessage}
           onTap={onTapMessage}
           onReplyPress={jumpToMessage}
           isSelecting={isSelecting}
           isSelected={selectedMessageIds.has(item.id)}
+          isMenuTarget={menuMessage?.id === item.id}
+          replyPreview={item.replyTo ? quotePreviewFor(item.replyTo) : null}
         />
       </View>
     );
-  }, [theme, rows, me?.id, peerName, highlightId, searchOpen, searchNav, searchQuery, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openImageViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds]);
+  }, [theme, invertedRows, me?.id, peerName, highlightId, searchOpen, searchNav, searchQuery, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openMediaViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds, menuMessage?.id]);
 
   const CallButton = ({ type }: { type: 'audio' | 'video' }) => {
     const { enabled, tip } = callState(type);
@@ -1973,7 +2169,12 @@ export default function Chat() {
             <Ionicons name="arrow-redo-outline" size={22} color={theme.textPrimary} />
           </Pressable>
           <Pressable onPress={batchStar} hitSlop={10} style={styles.callBtn}>
-            <Ionicons name="star-outline" size={22} color={theme.textPrimary} />
+            {/* Filled star = every selected message is starred, so the action unstars. */}
+            <Ionicons
+              name={allSelectedStarred ? 'star' : 'star-outline'}
+              size={22}
+              color={allSelectedStarred ? theme.brand : theme.textPrimary}
+            />
           </Pressable>
           <Pressable onPress={confirmBatchDelete} hitSlop={10} style={styles.callBtn}>
             <Ionicons name="trash-outline" size={22} color={theme.error} />
@@ -2172,19 +2373,20 @@ export default function Chat() {
             query={searchQuery}
             messages={searchItems}
             onJumpToMessage={jumpToMessage}
-            onOpenMedia={openImageViewer}
+            onOpenMedia={openMediaViewer}
           />
         ) : loading ? (
           <ChatSkeleton />
         ) : (
-          <FlatList
+          <FlashList
             ref={listRef}
-            data={rows}
+            data={invertedRows}
+            style={styles.invertList}
             keyExtractor={(r) => (r.kind === 'message' ? r.message.id : r.id)}
-            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, flexGrow: 1 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 }}
             renderItem={renderRow}
             ListEmptyComponent={
-              <View style={styles.emptyConversation}>
+              <View style={[styles.invertRow, styles.emptyConversation]}>
                 <RemoteImage
                   source={{ uri: peerPhoto }}
                   style={styles.emptyAvatar}
@@ -2197,50 +2399,35 @@ export default function Chat() {
               </View>
             }
             keyboardShouldPersistTaps="handled"
-            // Keep older messages visually anchored when a previous page is
-            // prepended so the list doesn't jump to the top.
-            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            // Inverted list: the visual TOP (oldest messages) is the list's END,
+            // so onEndReached is what pages in older history.
+            onEndReached={() => {
+              // Don't paginate while a programmatic jump is in flight — landing
+              // near the top would otherwise append a page and shift the list,
+              // pulling the view away from the message we just jumped to.
+              if (suppressAutoScroll.current) return;
+              if (hasMoreOlder && !loadingOlder) loadOlder();
+            }}
+            onEndReachedThreshold={0.3}
             scrollEventThrottle={64}
             onScroll={(e) => {
-              const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-              // Remember whether the user is parked at the bottom — the auto-scroll
-              // effect uses this to decide whether an incoming peer message should
-              // scroll into view or stay put (so we never yank a user who has
-              // scrolled up to read history).
-              const near = isNearBottom(contentOffset.y, contentSize.height, layoutMeasurement.height);
+              // Inverted list: offset ≈ 0 means the newest message is visible.
+              // The auto-scroll effect uses this to decide whether an incoming peer
+              // message should scroll into view or stay put (so we never yank a
+              // user who has scrolled up to read history).
+              const near = e.nativeEvent.contentOffset.y < 200;
               nearBottomRef.current = near;
               // Drive the floating scroll-to-bottom pill (F26).
               setShowScrollDown(!near);
               if (near) setUnseenCount(0);
-              // Don't paginate older messages while a programmatic jump is in
-              // flight — landing near the top would otherwise prepend a page and
-              // shift the list (maintainVisibleContentPosition), pulling the view
-              // away from the message we just jumped to.
-              if (suppressAutoScroll.current) return;
-              if (contentOffset.y <= 60 && hasMoreOlder && !loadingOlder) loadOlder();
             }}
-            ListHeaderComponent={
-              loadingOlder ? <ActivityIndicator color={theme.brand} style={{ marginVertical: 12 }} /> : null
+            ListFooterComponent={
+              loadingOlder ? (
+                <View style={styles.invertRow}>
+                  <ActivityIndicator color={theme.brand} style={{ marginVertical: 12 }} />
+                </View>
+              ) : null
             }
-            // NOTE: intentionally NO onContentSizeChange auto-scroll. That fired on
-            // every layout change (highlight border, reaction pill, image load,
-            // pinned banner) and was the real cause of the "pin jumps back" bug.
-            // Auto-scroll is now driven purely by message arrival (effect above).
-            onScrollToIndexFailed={(info) => {
-              // The target row isn't measured yet (pinned/searched message is far
-              // outside the rendered window). Jump to an approximate offset, let
-              // the row lay out, then retry the exact scroll. suppressAutoScroll is
-              // still true here (set by jumpToMessage) so this can't snap to bottom.
-              listRef.current?.scrollToOffset({
-                offset: info.averageItemLength * info.index,
-                animated: false,
-              });
-              setTimeout(() => {
-                if (info.index < rows.length) {
-                  listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
-                }
-              }, 250);
-            }}
           />
         )}
 
@@ -2254,11 +2441,22 @@ export default function Chat() {
           conversationId={conversationId}
           replyTo={
             replyTo
-              ? {
-                  id: replyTo.id,
-                  senderName: replyTo.senderId === me?.id ? 'yourself' : peerName || 'them',
-                  content: replyTo.isUnsent ? 'This message was deleted' : replyTo.content || 'Media',
-                }
+              ? (() => {
+                  if (replyTo.isUnsent) {
+                    return { id: replyTo.id, senderName: replyTo.senderId === me?.id ? 'yourself' : peerName || 'them', content: 'This message was deleted' };
+                  }
+                  // Reuse the same preview logic the sent-message quote uses, so the
+                  // reply banner shows a real thumbnail/label instead of a generic
+                  // "Media" fallback for photos, videos, and voice notes.
+                  const preview = quotePreviewFor({ ...replyTo, content: replyTo.content ?? '' });
+                  return {
+                    id: replyTo.id,
+                    senderName: replyTo.senderId === me?.id ? 'yourself' : peerName || 'them',
+                    content: preview.label,
+                    kind: preview.kind,
+                    thumbUrl: preview.thumbUrl,
+                  };
+                })()
               : null
           }
           editingMessage={editingMessage ? { id: editingMessage.id, content: editingMessage.content ?? '' } : null}
@@ -2357,6 +2555,7 @@ export default function Chat() {
         visible={mediaViewerOpen}
         images={viewerImages}
         initialIndex={mediaViewerIndex}
+        thumbnailLayout={thumbnailLayout}
         onClose={() => setMediaViewerOpen(false)}
       />
       {(() => {
@@ -2372,7 +2571,7 @@ export default function Chat() {
         const isFileCard = item.type === 'text' && !!item.mediaUrls?.length && (item.content?.startsWith('📄') || item.content?.startsWith('🎵'));
         const isPlainText = item.type === 'text' && !isFileCard;
         const actions: { key: string; label: string; icon: React.ComponentProps<typeof Ionicons>['name']; onPress: () => void; destructive?: boolean }[] = [
-          { key: 'reply', label: 'Reply', icon: 'arrow-undo-outline', onPress: () => { onSwipeReply(item); setMenuMessage(null); } },
+          { key: 'reply', label: 'Reply', icon: 'arrow-undo-outline', onPress: () => { onSwipeReply(item); dismissMenu(); } },
         ];
         if (!item.isUnsent && isPlainText && item.content) {
           actions.push({ key: 'copy', label: 'Copy', icon: 'copy-outline', onPress: () => copyMessage(item) });
@@ -2385,7 +2584,7 @@ export default function Chat() {
           actions.push({ key: 'pin', label: item.isPinned ? 'Unpin' : 'Pin', icon: item.isPinned ? 'pin' : 'pin-outline', onPress: () => togglePin(item) });
         }
         if (mine && isPlainText && canEdit && withinEditWindow && !item.isUnsent) {
-          actions.push({ key: 'edit', label: 'Edit', icon: 'create-outline', onPress: () => { setMenuMessage(null); startEditing(item); } });
+          actions.push({ key: 'edit', label: 'Edit', icon: 'create-outline', onPress: () => { dismissMenu(); startEditing(item); } });
         }
         if (!mine && isPlainText && item.content && canEdit) {
           actions.push({ key: 'translate', label: translations[item.id] ? 'Hide translation' : 'Translate', icon: 'language-outline', onPress: () => translateMessageText(item) });
@@ -2394,7 +2593,7 @@ export default function Chat() {
           actions.push({ key: 'save', label: 'Save to Gallery', icon: 'download-outline', onPress: () => saveMediaToGallery(item) });
           const shareUrl = item.mediaUrls[0] ?? item.mediaUrl;
           if (shareUrl) {
-            actions.push({ key: 'share', label: 'Share', icon: 'share-outline', onPress: () => { setMenuMessage(null); Share.share({ url: shareUrl, message: '' }).catch(() => {}); } });
+            actions.push({ key: 'share', label: 'Share', icon: 'share-outline', onPress: () => { dismissMenu(); shareMediaUrl(shareUrl); } });
           }
         }
         if (!item.isUnsent && !item.id.startsWith('tmp-')) {
@@ -2410,7 +2609,7 @@ export default function Chat() {
           actions.push({ key: 'report', label: 'Report', icon: 'flag-outline', onPress: openReportFromMenu });
         }
         if (mine && !item.isUnsent) {
-          actions.push({ key: 'info', label: 'Message Info', icon: 'information-circle-outline', onPress: () => { setMenuMessage(null); setInfoMessage(item); } });
+          actions.push({ key: 'info', label: 'Message Info', icon: 'information-circle-outline', onPress: () => { dismissMenu(); setInfoMessage(item); } });
         }
 
         // Anchor the menu near the pressed bubble: above it when the press was
@@ -2422,15 +2621,17 @@ export default function Chat() {
         const top = Math.max(70, Math.min(rawTop, screenH - menuH - 40));
 
         return (
-          <Modal visible transparent animationType="fade" onRequestClose={() => setMenuMessage(null)}>
-            <Pressable style={{ flex: 1 }} onPress={() => setMenuMessage(null)}>
+          /* animationType="none": entry AND exit are driven by menuOpacity /
+             menuScale so the dismissal scales down instead of a plain fade. */
+          <Modal visible transparent animationType="none" onRequestClose={dismissMenu}>
+            <Animated.View style={[{ flex: 1 }, menuOverlayStyle]}>
+            <Pressable style={{ flex: 1 }} onPress={dismissMenu}>
               <BlurView intensity={28} tint="dark" style={{ flex: 1 }}>
                 <Animated.View
                   style={[
                     styles.menuWrap,
                     { top },
                     mine ? { right: 16, alignItems: 'flex-end' } : { left: 16, alignItems: 'flex-start' },
-                    menuAnimStyle,
                   ]}
                 >
                   <View style={[styles.emojiRow, { backgroundColor: theme.surface }]}>
@@ -2467,6 +2668,7 @@ export default function Chat() {
                 </Animated.View>
               </BlurView>
             </Pressable>
+            </Animated.View>
           </Modal>
         );
       })()}
@@ -2587,7 +2789,13 @@ export default function Chat() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  emptyConversation: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+  // Inverted chat list (mirrors app/rooms/[id].tsx): the list is flipped and every
+  // row flips itself back, so index 0 (the newest message) renders at the visual
+  // bottom. The chat is bottom-anchored on open with zero settle, and an image
+  // that loads mid-list pushes content UP off-screen instead of shifting the view.
+  invertList: { transform: [{ scaleY: -1 }] },
+  invertRow: { transform: [{ scaleY: -1 }] },
+  emptyConversation: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyAvatar: { width: 80, height: 80, borderRadius: 40 },
   emptyName: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, marginTop: 16 },
   emptySubtitle: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 },
@@ -2618,6 +2826,8 @@ const styles = StyleSheet.create({
   tooltipText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, lineHeight: 17 },
   dateRow: { alignItems: 'center', marginVertical: 8 },
   dateLabel: { fontSize: 12, fontFamily: FontFamily.medium, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, overflow: 'hidden' },
+  // Carries the long-press "lift" (scale + shadow) while the context menu is open.
+  liftLayer: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 } },
   bubbleRow: { maxWidth: '75%' },
   selectRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   selectCheckbox: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
@@ -2654,7 +2864,10 @@ const styles = StyleSheet.create({
   retryRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   retryText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold, marginLeft: 1 },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
-  quote: { borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 8, borderRadius: 6, marginBottom: 4 },
+  quote: { flexDirection: 'row', alignItems: 'center', gap: 8, borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 4, paddingRight: 4, borderRadius: 6, marginBottom: 4 },
+  quoteBody: { flex: 1 },
+  quoteMediaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  quoteThumb: { width: 40, height: 40, borderRadius: 4 },
   quoteName: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   quoteText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3, marginHorizontal: 4 },

@@ -747,14 +747,22 @@ async function serializeMessage(msg: any, ctx: SerializeMsgCtx) {
     content: msg.isDeleted ? 'Message removed' : msg.content,
     mediaUrl: msg.isDeleted ? null : await signUrl(msg.mediaUrl),
     metadata: msg.isDeleted ? null : msg.metadata ?? null,
+    // Playback length in seconds (voice messages).
+    duration: msg.isDeleted ? null : msg.duration ?? null,
     isPinned: msg.isPinned,
     isStarred: ctx.starred?.has(msg.id) ?? false,
     isDeleted: msg.isDeleted,
+    // The quote carries `type` + signed media so a reply to an image/voice
+    // renders a real thumbnail or voice affordance without the client having to
+    // find the original in its loaded page (it may be far outside the window).
     replyTo: msg.replyTo
       ? {
           id: msg.replyTo.id,
           senderFirstName: msg.replyTo.sender?.firstName ?? msg.replyTo.sender?.name ?? null,
           content: msg.replyTo.isDeleted ? 'Message removed' : truncate(msg.replyTo.content, 60),
+          type: msg.replyTo.type,
+          mediaUrl: msg.replyTo.isDeleted ? null : await signUrl(msg.replyTo.mediaUrl),
+          duration: msg.replyTo.isDeleted ? null : msg.replyTo.duration ?? null,
         }
       : null,
     reactions: ctx.reactions.get(msg.id) ?? [],
@@ -933,6 +941,7 @@ export async function sendMessage(userId: string, roomId: string, body: SendMess
       mediaUrl: body.mediaUrl ?? null,
       replyToId: body.replyToId ?? null,
       metadata: body.metadata ?? null,
+      duration: body.duration ?? null,
     },
     include: {
       sender: { include: PHOTO_INCLUDE },

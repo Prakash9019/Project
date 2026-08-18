@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,6 @@ import {
   Alert,
 } from 'react-native';
 import { RemoteImage } from '../../src/components/RemoteImage';
-import { PressableScale } from '../../src/components/ui/PressableScale';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,12 +22,14 @@ import { useChatStore } from '../../src/store/chatStore';
 import { inboxDateLabel, formatLastMessagePreview } from '../../src/lib/format';
 import { showInfo } from '../../src/lib/toast';
 import { ListSkeleton } from '../../src/components/Skeleton';
+import { UpgradeModal } from '../../src/components/UpgradeModal';
 import {
   listAlbums,
   listConversations,
   archiveConversation,
   pinConversation,
   deleteConversationThread,
+  type ApiError,
 } from '../../src/services/api';
 import type { ConversationSummary, AlbumSummary, UserCard } from '../../src/types/api';
 
@@ -77,6 +78,9 @@ export default function Inbox() {
   const [viewArchived, setViewArchived] = useState(false);
   const [archivedList, setArchivedList] = useState<ConversationSummary[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
+  // Guards against a double-tap firing router.push twice before the chat
+  // screen has actually mounted and taken focus away from this row.
+  const navigatingRef = useRef(false);
 
   const loadArchived = useCallback(async () => {
     setArchivedLoading(true);
@@ -125,7 +129,30 @@ export default function Inbox() {
     [selectedIds, clearSelection, fetchConversations, viewArchived, loadArchived],
   );
 
-  const pinSelected = useCallback(() => runOnSelected((id) => pinConversation(id, true)), [runOnSelected]);
+  // Pin chats is a Gold+ feature (backend throws `plan_required` for free/premium
+  // users). runOnSelected swallows per-id errors so bulk actions never partially
+  // fail silently on-screen — but that also meant an ineligible user's pin tap did
+  // nothing with zero feedback. Detect that specific error and show the upgrade
+  // prompt instead of just eating it.
+  const [pinUpgradeOpen, setPinUpgradeOpen] = useState(false);
+  const pinSelected = useCallback(async () => {
+    const ids = [...selectedIds];
+    clearSelection();
+    let planBlocked = false;
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          pinConversation(id, true).catch((e) => {
+            if ((e as ApiError).code === 'plan_required') planBlocked = true;
+          }),
+        ),
+      );
+    } finally {
+      await fetchConversations('inbox', true);
+      if (viewArchived) await loadArchived();
+    }
+    if (planBlocked) setPinUpgradeOpen(true);
+  }, [selectedIds, clearSelection, fetchConversations, viewArchived, loadArchived]);
   const muteSelected = useCallback(() => {
     clearSelection();
     showInfo('Muting chats is coming soon!');
@@ -160,6 +187,7 @@ export default function Inbox() {
 
   useFocusEffect(
     useCallback(() => {
+      navigatingRef.current = false;
       fetchConversations('inbox');
       if (seg === 'albums') loadAlbums();
     }, [fetchConversations, seg, loadAlbums])
@@ -198,13 +226,22 @@ export default function Inbox() {
     const unread = item.unreadCount ?? 0;
     const selected = selectedIds.has(item.id);
     return (
-      <PressableScale
-        style={[styles.row, isSelecting && !selected && { opacity: 0.6 }]}
+      <Pressable
+        style={({ pressed }) => [
+          styles.row,
+          isSelecting && !selected && { opacity: 0.6 },
+          pressed && { backgroundColor: theme.backgroundTertiary },
+        ]}
+        android_ripple={{ color: theme.brand + '33' }}
         onPress={() => {
           if (isSelecting) {
             toggleSelection(item.id);
             return;
           }
+          // A row can register a second tap before the chat screen takes focus
+          // away from Inbox — without this guard that opens the conversation twice.
+          if (navigatingRef.current) return;
+          navigatingRef.current = true;
           router.push({ pathname: '/chat/[id]', params: { id: item.id, peerName: item.peer.firstName ?? '', peerPhoto: item.peer.profilePhoto ?? '' } });
         }}
         onLongPress={() => (isSelecting ? toggleSelection(item.id) : enterSelection(item.id))}
@@ -243,12 +280,13 @@ export default function Inbox() {
             </Text>
             {unread > 0 && (
               <View style={[styles.badge, { backgroundColor: theme.brand }]}>
-                <Text style={styles.badgeText}>{unread}</Text>
+                {/* Cap at 99+ — a raw 3-digit count overflows the 20px pill. */}
+                <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
               </View>
             )}
           </View>
         </View>
-      </PressableScale>
+      </Pressable>
     );
   };
 
@@ -426,6 +464,13 @@ export default function Inbox() {
           contentContainerStyle={(viewArchived ? archivedList : filtered).length === 0 ? { flex: 1 } : { paddingBottom: 24 }}
         />
       )}
+
+      <UpgradeModal
+        visible={pinUpgradeOpen}
+        onClose={() => setPinUpgradeOpen(false)}
+        title="Pin chats"
+        message="Pinning chats is available on Gold and above. Upgrade to keep your favorite conversations at the top."
+      />
     </SafeAreaView>
   );
 }

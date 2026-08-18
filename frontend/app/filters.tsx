@@ -8,6 +8,7 @@ import { useFilterStore, type Filters, type AdvancedFilters } from '../src/store
 import { useAuthStore } from '../src/store/authStore';
 import { UpgradeModal } from '../src/components/UpgradeModal';
 import { RangeSlider } from '../src/components/RangeSlider';
+import { AnimatedSwitch } from '../src/components/ui/AnimatedSwitch';
 import { planAtLeast, labelize } from '../src/lib/format';
 import type {
   BodyType,
@@ -201,9 +202,7 @@ export default function Filters() {
           <Text style={[styles.lockText, { color: theme.brand }]}>{requiredPlan}</Text>
         </View>
       ) : (
-        <View style={[styles.switch, { backgroundColor: value ? theme.brand : theme.backgroundTertiary }]}>
-          <View style={[styles.knob, { transform: [{ translateX: value ? 20 : 2 }] }]} />
-        </View>
+        <AnimatedSwitch value={value} onValueChange={onToggle} size="sm" />
       )}
     </Pressable>
   );
@@ -379,8 +378,6 @@ const styles = StyleSheet.create({
 
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 },
   toggleLabel: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600' },
-  switch: { width: 44, height: 26, borderRadius: 13, justifyContent: 'center' },
-  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFFFFF' },
 
   lock: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   lockText: { fontSize: 12, fontFamily: FontFamily.bold, fontWeight: '700', textTransform: 'capitalize' },

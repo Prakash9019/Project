@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont } from '../theme';
 import { Avatar } from './Avatar';
+import { UpgradeModal } from './UpgradeModal';
 import { useAuthStore } from '../store/authStore';
 import { updateSettings } from '../services/api';
 import { planLabel, planBadgeColor, planAtLeast } from '../lib/format';
@@ -42,6 +43,7 @@ export function ProfileSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: 
   const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(isOpen);
+  const [incognitoUpgradeOpen, setIncognitoUpgradeOpen] = useState(false);
 
   const isGoldPlus = planAtLeast(user?.plan, 'gold');
   // Online = NOT hiding active status. Incognito mirrors user.incognitoMode.
@@ -92,7 +94,9 @@ export function ProfileSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: 
 
   const toggleIncognito = async () => {
     if (!user) return;
-    if (!isGoldPlus) { go(() => router.push('/(tabs)/store')); return; }
+    // Explain the restriction before sending the user to the Store — a bare
+    // redirect with no context reads the same as the tap doing nothing.
+    if (!isGoldPlus) { setIncognitoUpgradeOpen(true); return; }
     const next = !incognito;
     setUser({ ...user, incognitoMode: next });
     try {
@@ -201,6 +205,13 @@ export function ProfileSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: 
           </ScrollView>
         </SafeAreaView>
       </Animated.View>
+
+      <UpgradeModal
+        visible={incognitoUpgradeOpen}
+        onClose={() => setIncognitoUpgradeOpen(false)}
+        title="Incognito mode"
+        message="Browsing incognito is available on Gold and above. Upgrade to hide your activity while you browse."
+      />
     </View>
   );
 }

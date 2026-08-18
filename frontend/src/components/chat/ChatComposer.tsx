@@ -19,10 +19,9 @@ import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, withSpring, Easing, runOnJS, FadeInDown, FadeOutDown } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, withSpring, Easing, runOnJS, interpolate, Extrapolation, FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import { Avatar } from '../Avatar';
-import { PressableScale } from '../ui/PressableScale';
 import { showError } from '../../lib/toast';
 import { EmojiPicker } from '../rooms/EmojiPicker';
 import { VoiceRecorder } from '../rooms/VoiceRecorder';
@@ -62,7 +61,14 @@ export interface ChatComposerProps {
   conversationId?: string;
   roomId?: string;
 
-  replyTo?: { id: string; senderName: string; content: string } | null;
+  replyTo?: {
+    id: string;
+    senderName: string;
+    content: string;
+    /** Drives the ReplyBar's thumbnail/icon — matches the sent-message quote preview. */
+    kind?: 'image' | 'voice' | 'text';
+    thumbUrl?: string | null;
+  } | null;
   editingMessage?: { id: string; content: string } | null;
   onClearReply: () => void;
   onClearEdit: () => void;
@@ -71,7 +77,11 @@ export interface ChatComposerProps {
   // rooms use R2), so the composer hands back local URIs / raw values.
   onSendText: (content: string, replyToId?: string) => Promise<void>;
   onSendImages: (uris: string[], caption: string, replyToId?: string) => Promise<void>;
-  onSendVideo: (uri: string, replyToId?: string) => Promise<void>;
+  /**
+   * `durationMs` comes from the picker asset — it is the only place the clip
+   * length is available without decoding the file ourselves.
+   */
+  onSendVideo: (uri: string, replyToId?: string, durationMs?: number | null) => Promise<void>;
   onSendAudio: (uri: string, durationMs: number, replyToId?: string, amplitudes?: number[]) => Promise<void>;
   onSendDocument: () => void | Promise<void>;
   onSendAudioFile?: () => void | Promise<void>;
@@ -174,6 +184,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   // recording.
   const isLockedSV = useSharedValue(false);
   const isRecordingSV = useSharedValue(false);
+  // Live pan translation while recording. Drives the cancel/lock hints so they
+  // TRACK THE FINGER instead of hard-cutting at their thresholds (F8).
+  const panX = useSharedValue(0);
+  const panY = useSharedValue(0);
   const isRecording = recordState !== 'idle';
 
   // Poll mic metering (dB) while recording and normalise to 0..1, keeping the
@@ -265,7 +279,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   }, []);
 
   // Tapping the emoji button swaps the keyboard for the emoji panel (and back),
-  // rather than stacking the panel below an open keyboard.
+  // rather than stacking the panel below an open keyboard. The keyboard is
+  // dismissed first and the panel mounts only after it has fully left, so the
+  // two surfaces never fight the same layout animation at once.
   const toggleEmoji = () => {
     if (emojiOpen) {
       setEmojiOpen(false);
@@ -383,13 +399,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.8 });
     if (res.canceled || !res.assets[0]) return;
     const asset = res.assets[0];
-    if (asset.type === 'video') await onSendVideo(asset.uri, replyTo?.id);
+    if (asset.type === 'video') await onSendVideo(asset.uri, replyTo?.id, asset.duration);
     else setPreviewUris([asset.uri]);
   };
 
   const handleVideoLibrary = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 0.7 });
-    if (!res.canceled && res.assets[0]) await onSendVideo(res.assets[0].uri, replyTo?.id);
+    if (!res.canceled && res.assets[0]) await onSendVideo(res.assets[0].uri, replyTo?.id, res.assets[0].duration);
   };
 
   const onPickAttachment = (kind: AttachmentKind) => {
@@ -445,6 +461,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     recordCancelled.current = false;
     lockedRef.current = false;
     isLockedSV.value = false;
+    panX.value = 0;
+    panY.value = 0;
     setCancelling(false);
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
@@ -588,12 +606,27 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       // Only react once a recording is actually in progress and not yet locked —
       // otherwise stray touches on the mic flip the cancel hint on spuriously.
       if (!isRecordingSV.value || isLockedSV.value) return;
+      // Mirror the drag onto the UI thread every frame so the hints can follow
+      // the finger without a JS round-trip.
+      panX.value = Math.min(0, e.translationX);
+      panY.value = Math.min(0, e.translationY);
       if (e.translationY < LOCK_DY) {
         runOnJS(lockRecording)();
         return;
       }
       runOnJS(updateCancelling)(e.translationX < CANCEL_DX);
+    })
+    .onFinalize(() => {
+      panX.value = 0;
+      panY.value = 0;
     });
+
+  // Lock affordance: fades up and rides upward with the finger as it approaches
+  // the lock threshold, rather than sitting there statically.
+  const lockHintStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(panY.value, [0, -30, -60], [0.45, 0.75, 1], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(panY.value, [0, -60], [0, -20], Extrapolation.CLAMP) }],
+  }));
 
   const micGesture = Gesture.Simultaneous(holdGesture, dragGesture);
 
@@ -659,7 +692,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       ) : null}
       {replyTo && !editingMessage ? (
         <Animated.View entering={FadeInDown.duration(150)} exiting={FadeOutDown.duration(120)}>
-          <ReplyBar senderName={replyTo.senderName} content={replyTo.content} onCancel={onClearReply} />
+          <ReplyBar
+            senderName={replyTo.senderName}
+            content={replyTo.content}
+            kind={replyTo.kind}
+            thumbUrl={replyTo.thumbUrl}
+            onCancel={onClearReply}
+          />
         </Animated.View>
       ) : null}
 
@@ -668,12 +707,12 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
           recording so the release gesture is never lost to an unmount. */}
       <View style={styles.composerRow}>
         {isRecording ? (
-          <VoiceRecorder cancelling={cancelling} locked={recordState === 'locked'} amplitudes={amplitudes} />
+          <VoiceRecorder cancelling={cancelling} locked={recordState === 'locked'} amplitudes={amplitudes} panX={panX} />
         ) : (
           <View style={[styles.pill, { backgroundColor: theme.inputBackground }]}>
-            <PressableScale style={styles.pillIcon} onPress={toggleEmoji} hitSlop={4} scale={0.88} haptic={false} ripple={false}>
+            <Pressable style={styles.pillIcon} onPress={toggleEmoji} hitSlop={4}>
               <Ionicons name={emojiOpen ? 'keypad-outline' : 'happy-outline'} size={22} color={theme.textSecondary} />
-            </PressableScale>
+            </Pressable>
 
             <TextInput
               ref={inputRef}
@@ -689,25 +728,25 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
             />
 
             {/* Attachment — always visible */}
-            <PressableScale style={styles.pillIcon} onPress={() => setAttachOpen(true)} hitSlop={4} scale={0.88} haptic={false} ripple={false}>
+            <Pressable style={styles.pillIcon} onPress={() => setAttachOpen(true)} hitSlop={4}>
               <Ionicons name="attach" size={22} color={theme.textSecondary} />
-            </PressableScale>
+            </Pressable>
 
             {/* Camera — collapses to width 0 when typing so the input reflows */}
             <Animated.View style={[styles.cameraWrap, cameraStyle]}>
-              <PressableScale style={styles.pillIcon} onPress={handleCamera} hitSlop={4} scale={0.88} haptic={false} ripple={false}>
+              <Pressable style={styles.pillIcon} onPress={handleCamera} hitSlop={4}>
                 <Ionicons name="camera-outline" size={22} color={theme.textSecondary} />
-              </PressableScale>
+              </Pressable>
             </Animated.View>
           </View>
         )}
 
         {/* Floating lock affordance above the circle while (unlocked) recording */}
         {recordState === 'recording' ? (
-          <View style={styles.lockHint} pointerEvents="none">
+          <Animated.View style={[styles.lockHint, lockHintStyle]} pointerEvents="none">
             <Ionicons name="lock-open-outline" size={16} color={theme.textSecondary} />
             <Ionicons name="chevron-up" size={12} color={theme.textTertiary} />
-          </View>
+          </Animated.View>
         ) : null}
 
         {recordState === 'locked' ? (

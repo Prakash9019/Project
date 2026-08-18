@@ -393,6 +393,13 @@ export interface Message {
   caption: string | null;
   mediaUrls: string[];
   mediaUrl: string | null;
+  /**
+   * Poster frame for a `video` message (signed URL). Generated client-side with
+   * expo-video-thumbnails before upload. null for every other message type.
+   */
+  thumbnailUrl?: string | null;
+  /** Playback length in SECONDS for voice/video messages; null when unknown. */
+  duration?: number | null;
   viewOnce: boolean;
   expiresInSeconds: number | null;
   viewedAt: string | null;
@@ -412,7 +419,22 @@ export interface Message {
   deletedAt: string | null;
   createdAt: string;
   replyToId?: string | null;
-  replyTo?: { id: string; senderId: string; content: string } | null;
+  /**
+   * Denormalized quote of the replied-to message. Carries `type` + signed media
+   * so a quoted photo/video renders a real thumbnail WITHOUT the client having
+   * to find the original in its loaded page (it may be far outside the window).
+   * `mediaUrl`/`thumbnailUrl` are null when the quoted message is unsent or is a
+   * view-once photo.
+   */
+  replyTo?: {
+    id: string;
+    senderId: string;
+    content: string;
+    type?: MessageType;
+    mediaUrl?: string | null;
+    thumbnailUrl?: string | null;
+    duration?: number | null;
+  } | null;
   reactions: { emoji: string; count: number; userReacted: boolean }[];
   /**
    * Client-only optimistic-send flag. An unsent `tmp-` bubble whose server call
@@ -611,10 +633,20 @@ export interface RoomReaction {
   userReacted: boolean;
 }
 
+/**
+ * Denormalized quote of the replied-to room message. Carries `type` + a signed
+ * `mediaUrl` so a quoted image/voice renders a thumbnail or voice affordance
+ * without the client having to locate the original in its loaded page.
+ * `mediaUrl` is null when the quoted message was deleted.
+ */
 export interface RoomReplyPreview {
   id: string;
   senderFirstName: string | null;
   content: string;
+  type?: RoomMessageType;
+  mediaUrl?: string | null;
+  /** Playback length in SECONDS for a quoted voice message. */
+  duration?: number | null;
 }
 
 export interface RoomMessageCard {
@@ -627,6 +659,8 @@ export interface RoomMessageCard {
   mediaUrl: string | null;
   /** Opaque JSON metadata (e.g. voice-note waveform amplitudes) — never message text. */
   metadata?: string | null;
+  /** Playback length in SECONDS for voice messages; null when unknown. */
+  duration?: number | null;
   isPinned: boolean;
   isStarred?: boolean;
   isDeleted: boolean;

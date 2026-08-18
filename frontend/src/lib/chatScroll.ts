@@ -1,6 +1,12 @@
 // Pure decision logic for chat auto-scroll. Kept free of React/Native so the
 // rules can be reasoned about and tested in isolation (see the runnable check
-// in scratchpad / any node runner). The chat screen wires these to the FlatList.
+// in scratchpad / any node runner).
+//
+// NOTE: since the 1:1 chat list was inverted (FlashList, newest at offset 0),
+// "at the bottom" is simply `contentOffset.y < 200` and the screen no longer
+// needs `distanceFromBottom` / `isNearBottom`. `classifyMessagesChange` and
+// `shouldAutoScrollOnAppend` are still wired up there; the offset helpers below
+// are retained for any non-inverted list that needs the same rule.
 
 /** How close (px) to the bottom still counts as "at the bottom". */
 export const NEAR_BOTTOM_THRESHOLD_PX = 120;

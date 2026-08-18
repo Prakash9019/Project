@@ -66,6 +66,8 @@ export const sendMessageSchema = z
     // Opaque JSON metadata (e.g. voice-note waveform amplitudes) — never shown
     // as message text, unlike `content`. Not moderated/content-rule-checked.
     metadata: z.string().max(4000).optional(),
+    // Playback length in seconds for voice messages. Capped at 1 hour.
+    duration: z.coerce.number().int().min(0).max(3600).optional(),
   })
   .refine((b) => (b.type === 'image' || b.type === 'voice' ? !!b.mediaUrl : b.content.length > 0), {
     message: 'Message cannot be empty',

@@ -6,10 +6,10 @@ import {
   Pressable,
   ActivityIndicator,
   FlatList,
-  Share,
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,18 +25,35 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   runOnJS,
+  interpolate,
   type EntryExitAnimationFunction,
 } from 'react-native-reanimated';
 import { showSuccess, showError } from '../lib/toast';
+import { shareMediaUrl } from '../utils/shareMedia';
 import { FontFamily, FontSize } from '../theme';
 
 const CONTROLS_AUTO_HIDE_MS = 3000;
+
+/** Gradient that can carry an animated (Reanimated) style. */
+const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
+
+/**
+ * On-screen rect of the thumbnail the viewer was opened from (page coordinates),
+ * captured with `measure()` at tap time. Drives the zoom-from-the-bubble open
+ * and the zoom-back-to-the-bubble dismiss.
+ */
+export type ThumbnailLayout = { x: number; y: number; width: number; height: number };
 
 export type MediaViewerImage = {
   uri: string;
   senderId: string;
   senderName: string;
   createdAt: string;
+  /**
+   * 'video' renders an in-app player instead of a zoomable image. Defaults to
+   * 'image' so every existing caller is unaffected.
+   */
+  kind?: 'image' | 'video';
 };
 
 const MAX_SCALE = 5;
@@ -202,7 +219,53 @@ function ImagePage({
 }
 
 /**
- * Full-screen, swipeable media viewer for chat images.
+ * A single video page. Playback is bound to `active` so only the on-screen page
+ * plays — swiping to the next item pauses the one you left rather than leaving
+ * audio running off-screen. `nativeControls` supplies play/pause, the seek bar
+ * and the fullscreen button, so we don't hand-roll a transport.
+ */
+function VideoPage({
+  item,
+  width,
+  height,
+  active,
+}: {
+  item: MediaViewerImage;
+  width: number;
+  height: number;
+  active: boolean;
+}) {
+  const player = useVideoPlayer(item.uri, (p) => {
+    p.loop = false;
+  });
+
+  useEffect(() => {
+    // Guarded: the player is torn down with the component, and calling into a
+    // released player throws.
+    try {
+      if (active) player.play();
+      else player.pause();
+    } catch {
+      /* player already released */
+    }
+  }, [active, player]);
+
+  return (
+    <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
+      <VideoView
+        player={player}
+        style={{ width, height: height * 0.6 }}
+        nativeControls
+        contentFit="contain"
+        allowsPictureInPicture
+        fullscreenOptions={{ enable: true }}
+      />
+    </View>
+  );
+}
+
+/**
+ * Full-screen, swipeable media viewer for chat images and videos.
  * - Horizontal paging via FlatList (smooth, hardware-paged transitions).
  * - Each page pinch/double-tap zooms independently; zoom resets on page change.
  * - Pure black background is required for a media viewer — the only hardcoded
@@ -215,6 +278,7 @@ export function MediaViewer({
   onClose,
   currentUserId,
   onDelete,
+  thumbnailLayout,
 }: {
   visible: boolean;
   images: MediaViewerImage[];
@@ -225,6 +289,12 @@ export function MediaViewer({
   /** Invoked when the user deletes the current image — caller runs its own
    *  unsend/delete flow. Only wired if provided; existing callers are unaffected. */
   onDelete?: (image: MediaViewerImage) => void;
+  /**
+   * Rect of the tapped thumbnail. When supplied the viewer zooms out of that
+   * rect on open and back into it on dismiss; when omitted it falls back to the
+   * plain fade+scale entry, so callers that don't measure are unaffected.
+   */
+  thumbnailLayout?: ThumbnailLayout | null;
 }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -238,10 +308,67 @@ export function MediaViewer({
   const controlsOpacity = useSharedValue(1);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Video pages own their vertical drags (the native seek bar and fullscreen
+  // gesture), so swipe-to-dismiss is disabled while one is on screen.
+  const currentIsVideo = images[currentIndex]?.kind === 'video';
+
+  // ── Shared-element open/close ──────────────────────────────────────────
+  // 0 = collapsed onto the thumbnail, 1 = full screen.
+  //
+  // The whole full-screen layer is SCALED and TRANSLATED rather than having its
+  // width/height animated: shrinking the box would clip the content (the pages
+  // inside stay screen-sized), which reads as a crop, not a zoom. Scaling about
+  // the centre and then moving that centre onto the thumbnail's centre gives a
+  // real "grows out of the bubble" motion.
+  const expand = useSharedValue(thumbnailLayout ? 0 : 1);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (thumbnailLayout) {
+      expand.value = 0;
+      expand.value = withTiming(1, { duration: 280 });
+    } else {
+      expand.value = 1;
+    }
+    // `thumbnailLayout` is captured fresh per open; re-running on identity change
+    // is intended.
+  }, [visible, thumbnailLayout, expand]);
+
+  const sharedElementStyle = useAnimatedStyle(() => {
+    if (!thumbnailLayout) return {};
+    const scale = thumbnailLayout.width / width;
+    const dx = thumbnailLayout.x + thumbnailLayout.width / 2 - width / 2;
+    const dy = thumbnailLayout.y + thumbnailLayout.height / 2 - height / 2;
+    return {
+      transform: [
+        { translateX: interpolate(expand.value, [0, 1], [dx, 0]) },
+        { translateY: interpolate(expand.value, [0, 1], [dy, 0]) },
+        { scale: interpolate(expand.value, [0, 1], [scale, 1]) },
+      ],
+    };
+  });
+
+  // Chrome (header/footer/toolbar) only belongs to the full-screen state.
+  const chromeStyle = useAnimatedStyle(() => ({ opacity: expand.value }));
+
+  /**
+   * Dismiss through the reverse zoom, unmounting only once it finishes. Without
+   * a measured thumbnail there is nothing to fly back to, so close immediately.
+   */
+  const requestClose = useCallback(() => {
+    if (!thumbnailLayout) {
+      onClose();
+      return;
+    }
+    expand.value = withTiming(0, { duration: 240 }, (finished) => {
+      if (finished) runOnJS(onClose)();
+    });
+  }, [thumbnailLayout, onClose, expand]);
+
   // Swipe-down-to-dismiss: content follows the finger, backdrop fades with drag.
   const dismissY = useSharedValue(0);
   const dismissPan = Gesture.Pan()
-    .enabled(!zoomed)
+    .enabled(!zoomed && !currentIsVideo)
     .activeOffsetY(30)
     .failOffsetX([-15, 15])
     .onUpdate((e) => {
@@ -249,7 +376,7 @@ export function MediaViewer({
     })
     .onEnd(() => {
       if (dismissY.value > DISMISS_DY) {
-        runOnJS(onClose)();
+        runOnJS(requestClose)();
         dismissY.value = 0;
       } else {
         dismissY.value = withTiming(0, { duration: 150 });
@@ -257,7 +384,7 @@ export function MediaViewer({
     });
   const dismissStyle = useAnimatedStyle(() => ({ transform: [{ translateY: dismissY.value }] }));
   const backdropStyle = useAnimatedStyle(() => ({
-    opacity: 1 - Math.min(1, Math.max(0, dismissY.value / 300)),
+    opacity: expand.value * (1 - Math.min(1, Math.max(0, dismissY.value / 300))),
   }));
 
   const clearHideTimer = useCallback(() => {
@@ -313,7 +440,8 @@ export function MediaViewer({
         return;
       }
       // Remote signed URL → download to cache → save the local file to the gallery.
-      const name = `nearme-${Date.now()}.jpg`;
+      // The extension must match the media or the gallery rejects the import.
+      const name = `nearme-${Date.now()}.${current.kind === 'video' ? 'mp4' : 'jpg'}`;
       const localUri = FileSystem.cacheDirectory + name;
       const dl = await FileSystem.downloadAsync(current.uri, localUri);
       await MediaLibrary.saveToLibraryAsync(dl.uri);
@@ -328,11 +456,9 @@ export function MediaViewer({
 
   const handleShare = useCallback(async () => {
     if (!current) return;
-    try {
-      await Share.share({ url: current.uri, message: current.uri });
-    } catch {
-      /* user dismissed the share sheet — no-op */
-    }
+    // Shares the real file (see shareMedia.ts) — RN's Share drops `url` on
+    // Android, which turns an image share into an empty/text-only payload.
+    await shareMediaUrl(current.uri);
   }, [current]);
 
   const handleDelete = useCallback(() => {
@@ -348,11 +474,11 @@ export function MediaViewer({
   const canDelete = !!onDelete && !!currentUserId && current.senderId === currentUserId;
 
   return (
-    <Animated.View entering={viewerEntering} style={styles.root}>
+    <Animated.View entering={thumbnailLayout ? undefined : viewerEntering} style={styles.root}>
       <Animated.View style={[styles.backdrop, backdropStyle]} pointerEvents="none" />
       <StatusBar hidden />
       <GestureDetector gesture={dismissPan}>
-      <Animated.View style={[styles.content, dismissStyle]}>
+      <Animated.View style={[styles.content, sharedElementStyle, dismissStyle]}>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <FlatList
           ref={listRef}
@@ -373,25 +499,30 @@ export function MediaViewer({
             if (next !== currentIndex) setCurrentIndex(next);
             setZoomed(false);
           }}
-          renderItem={({ item, index }) => (
-            <ImagePage
-              image={item}
-              width={width}
-              height={height}
-              active={index === currentIndex}
-              onZoomChange={setZoomed}
-              onSingleTap={toggleControls}
-            />
-          )}
+          renderItem={({ item, index }) =>
+            item.kind === 'video' ? (
+              <VideoPage item={item} width={width} height={height} active={index === currentIndex} />
+            ) : (
+              <ImagePage
+                image={item}
+                width={width}
+                height={height}
+                active={index === currentIndex}
+                onZoomChange={setZoomed}
+                onSingleTap={toggleControls}
+              />
+            )
+          }
         />
 
-        {/* Header */}
-        <LinearGradient
+        {/* Header — chrome belongs to the full-screen state only, so it fades
+            in with the shared-element zoom rather than riding the thumbnail. */}
+        <AnimatedLinearGradient
           colors={['rgba(0,0,0,0.75)', 'transparent']}
-          style={styles.header}
+          style={[styles.header, chromeStyle]}
           pointerEvents="box-none"
         >
-          <Pressable onPress={onClose} hitSlop={12} style={styles.backBtn}>
+          <Pressable onPress={requestClose} hitSlop={12} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={24} color="#fff" />
           </Pressable>
           <View style={styles.headerText}>
@@ -400,13 +531,13 @@ export function MediaViewer({
             </Text>
             <Text style={styles.timestamp}>{headerTime(current.createdAt)}</Text>
           </View>
-        </LinearGradient>
+        </AnimatedLinearGradient>
 
         {/* Footer — dot indicators for ≤10 images, "n of N" text otherwise */}
         {images.length > 1 ? (
-          <LinearGradient
+          <AnimatedLinearGradient
             colors={['transparent', 'rgba(0,0,0,0.75)']}
-            style={styles.footer}
+            style={[styles.footer, chromeStyle]}
             pointerEvents="none"
           >
             {useDots ? (
@@ -423,13 +554,13 @@ export function MediaViewer({
                 {currentIndex + 1} of {images.length}
               </Text>
             )}
-          </LinearGradient>
+          </AnimatedLinearGradient>
         ) : null}
 
         {/* Bottom action toolbar — Save / Share / (Delete). Auto-hides after 3s;
             tap the image to toggle. */}
         <Animated.View
-          style={[styles.toolbar, { bottom: insets.bottom + 16 }, toolbarStyle]}
+          style={[styles.toolbar, { bottom: insets.bottom + 16 }, toolbarStyle, chromeStyle]}
           pointerEvents={controlsVisible ? 'auto' : 'none'}
         >
           <Pressable style={styles.toolBtn} onPress={handleSave} disabled={saving} hitSlop={8}>

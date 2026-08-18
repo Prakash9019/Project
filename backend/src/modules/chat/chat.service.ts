@@ -76,6 +76,33 @@ async function reactionsByMessage(messageIds: string[], viewerId: string) {
   return map;
 }
 
+/**
+ * Reply-quote preview for a message.
+ *
+ * Carries `type` + media so the client can render a real thumbnail (photo/video)
+ * or a voice affordance for the quoted message WITHOUT having to find the
+ * original in its loaded page — quoted thumbnails now work even when the
+ * original sits far outside the paginated window.
+ *
+ * Media URLs are passed in already-signed by the caller: the sync
+ * `serializeMessage` has no way to await `signUrl`, so it passes null and only
+ * the viewer-aware `serializeMessageForViewer` resolves them. Raw R2 keys are
+ * never emitted.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function replyPreview(replyTo: any, signedMediaUrl: string | null, signedThumbnailUrl: string | null) {
+  if (!replyTo) return null;
+  return {
+    id: replyTo.id,
+    senderId: replyTo.senderId,
+    content: replyTo.isUnsent ? 'message removed' : truncate(replyTo.content ?? '', 60),
+    type: replyTo.type,
+    mediaUrl: replyTo.isUnsent ? null : signedMediaUrl,
+    thumbnailUrl: replyTo.isUnsent ? null : signedThumbnailUrl,
+    duration: replyTo.isUnsent ? null : (replyTo.duration ?? null),
+  };
+}
+
 /** Serialize a message for API responses — never exposes originalContent, moderationFlagged, deletedAt. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function serializeMessage(msg: any, reactions?: { emoji: string; count: number; userReacted: boolean }[]) {
@@ -89,6 +116,10 @@ export function serializeMessage(msg: any, reactions?: { emoji: string; count: n
     ciphertext: msg.isUnsent ? null : msg.ciphertext,
     mediaUrls:  msg.mediaUrls ?? [],
     mediaUrl:   msg.mediaUrl ?? null,
+    // Video poster frame; signed by serializeMessageForViewer.
+    thumbnailUrl: msg.thumbnailUrl ?? null,
+    // Playback length in seconds (voice / video).
+    duration:   msg.duration ?? null,
     viewOnce:   msg.viewOnce,
     viewedAt:   msg.viewedAt ?? null,
     expiresInSeconds: msg.expiresInSeconds,
@@ -104,13 +135,8 @@ export function serializeMessage(msg: any, reactions?: { emoji: string; count: n
     deliveredAt: msg.deliveredAt ?? null,
     readAt:     msg.readAt ?? null,
     replyToId:  msg.replyToId ?? null,
-    replyTo: msg.replyTo
-      ? {
-          id: msg.replyTo.id,
-          senderId: msg.replyTo.senderId,
-          content: msg.replyTo.isUnsent ? 'message removed' : truncate(msg.replyTo.content ?? '', 60),
-        }
-      : null,
+    // Media in the quote is resolved (signed) by serializeMessageForViewer.
+    replyTo: replyPreview(msg.replyTo, null, null),
     reactions: reactions ?? [],
     createdAt:  msg.createdAt,
   };
@@ -134,8 +160,23 @@ export async function serializeMessageForViewer(
   const rawUrls: string[] = hideMedia ? [] : (msg.mediaUrls ?? []);
   const signed = (await signUrls(rawUrls)).filter((u): u is string => !!u);
   const mediaUrl = signed[0] ?? (hideMedia ? null : await signUrl(msg.mediaUrl));
+  const thumbnailUrl = hideMedia ? null : await signUrl(msg.thumbnailUrl);
 
-  return { ...base, mediaUrls: signed, mediaUrl };
+  // The quoted message's own media is signed here too, so a reply to a photo or
+  // video renders its thumbnail without the client re-deriving anything. A quote
+  // of a view-once photo deliberately carries no media (it would leak the
+  // one-shot image into every reply that references it).
+  const quoted = msg.replyTo;
+  const quoteHidden = quoted ? isExpiringViewOnce(quoted) : false;
+  const replyTo = quoted
+    ? replyPreview(
+        quoted,
+        quoteHidden ? null : await signUrl((quoted.mediaUrls ?? [])[0] ?? quoted.mediaUrl),
+        quoteHidden ? null : await signUrl(quoted.thumbnailUrl),
+      )
+    : null;
+
+  return { ...base, mediaUrls: signed, mediaUrl, thumbnailUrl, replyTo };
 }
 
 /** Free-tier lifetime interaction cap, plus any active chat-pack bonuses. */
@@ -361,6 +402,10 @@ export async function sendMessage(
     content?: string;
     caption?: string;
     mediaUrls?: string[];
+    /** Video poster frame (R2 key or hosted URL), generated client-side. */
+    thumbnailUrl?: string;
+    /** Playback length in seconds (voice / video). */
+    duration?: number;
     viewOnce?: boolean;
     expiresInSeconds?: number;
     replyToId?: string;
@@ -483,6 +528,8 @@ export async function sendMessage(
         content: payload.content,
         caption: payload.caption ?? null,
         mediaUrls: payload.mediaUrls ?? [],
+        thumbnailUrl: payload.thumbnailUrl ?? null,
+        duration: payload.duration ?? null,
         viewOnce: payload.viewOnce ?? payload.type === 'expiring_photo',
         expiresAfterView: payload.type === 'expiring_photo',
         expiresInSeconds: payload.expiresInSeconds ?? (payload.type === 'expiring_photo' ? env.expiringPhoto.viewSeconds : null),

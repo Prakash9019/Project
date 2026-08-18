@@ -26,6 +26,11 @@ export const sendMessageSchema = z.object({
   content:          z.string().max(4096).optional(),
   caption:          z.string().max(1000).optional(),
   mediaUrls:        z.array(z.string().min(1)).max(10).optional(),
+  // Video poster frame (R2 object key or hosted URL) — generated client-side
+  // with expo-video-thumbnails and stored verbatim.
+  thumbnailUrl:     z.string().min(1).max(2048).optional(),
+  // Playback length in seconds for voice/video. Capped at 1 hour.
+  duration:         z.number().int().min(0).max(3600).optional(),
   viewOnce:         z.boolean().optional(),
   expiresInSeconds: z.number().int().min(1).max(60).optional(),
   replyToId:        z.string().uuid().optional(),
@@ -141,6 +146,7 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
     type: message.type, ciphertext: message.ciphertext, content: message.content,
     caption: message.caption,
     mediaUrls: message.mediaUrls, mediaUrl: message.mediaUrl,
+    thumbnailUrl: message.thumbnailUrl, duration: message.duration,
     viewOnce: message.viewOnce, expiresInSeconds: message.expiresInSeconds,
     expiresAfterView: message.expiresAfterView, createdAt: message.createdAt,
     replyToId: message.replyToId, replyTo: message.replyTo, reactions: message.reactions,

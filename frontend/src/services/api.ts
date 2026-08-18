@@ -464,6 +464,10 @@ export interface SendMessageBody {
   caption?: string;
   ciphertext?: string;
   mediaUrls?: string[];
+  /** Video poster frame (R2 key) — uploaded separately before sending. */
+  thumbnailUrl?: string;
+  /** Playback length in SECONDS for voice/video (integer, 0..3600). */
+  duration?: number;
   viewOnce?: boolean;
   expiresInSeconds?: number;
   replyToId?: string;
@@ -1022,6 +1026,8 @@ export interface SendRoomMessageBody {
   replyToId?: string;
   /** Opaque JSON metadata (e.g. voice-note waveform amplitudes) — never rendered as text. */
   metadata?: string;
+  /** Playback length in SECONDS for voice messages (integer, 0..3600). */
+  duration?: number;
 }
 
 export const sendRoomMessage = (roomId: string, body: SendRoomMessageBody) =>

@@ -435,3 +435,194 @@ describe('Disappearing messages', () => {
     expect(ids).not.toContain(msg.id);
   });
 });
+
+// ─── Video thumbnails + media duration (20260726_video_and_duration) ──────
+
+describe('Video thumbnail and duration', () => {
+  it('round-trips thumbnailUrl and duration on a video message', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const res = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({
+        type: 'video',
+        mediaUrls: ['videos/clip.mp4'],
+        thumbnailUrl: 'thumbs/clip.jpg',
+        duration: 42,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.duration).toBe(42);
+    // Signed on the way out — never the raw object key.
+    expect(res.body.thumbnailUrl).toBeTruthy();
+    expect(res.body.thumbnailUrl).not.toBe('thumbs/clip.jpg');
+
+    const dbMsg = await prisma.message.findUnique({ where: { id: res.body.id } });
+    expect(dbMsg?.thumbnailUrl).toBe('thumbs/clip.jpg');
+    expect(dbMsg?.duration).toBe(42);
+  });
+
+  it('stores duration on a voice message and returns it when listing', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const sent = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({ type: 'voice', mediaUrls: ['voice/clip.m4a'], duration: 24 });
+    expect(sent.status).toBe(201);
+
+    const list = await request(app)
+      .get(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB));
+    expect(list.status).toBe(200);
+    const voice = list.body.messages.find((m: { id: string }) => m.id === sent.body.id);
+    expect(voice.duration).toBe(24);
+  });
+
+  it('rejects a duration above the 1 hour cap', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const res = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({ type: 'voice', mediaUrls: ['voice/long.m4a'], duration: 3601 });
+
+    expect(res.status).toBe(422);
+  });
+
+  it('omitting duration leaves it null (backward compatible)', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const msg = await sendMessage(tokenA, convId, 'plain text');
+    expect(msg.duration).toBeNull();
+    expect(msg.thumbnailUrl).toBeNull();
+  });
+});
+
+// ─── Reply preview carries type + media (Week 2 Fix 6) ────────────────────
+
+describe('Reply preview', () => {
+  it('includes type, signed mediaUrl and thumbnailUrl for a quoted video', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const original = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({
+        type: 'video',
+        mediaUrls: ['videos/orig.mp4'],
+        thumbnailUrl: 'thumbs/orig.jpg',
+        duration: 12,
+      });
+    expect(original.status).toBe(201);
+
+    const reply = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB))
+      .send({ type: 'text', content: 'nice clip', replyToId: original.body.id });
+    expect(reply.status).toBe(201);
+
+    expect(reply.body.replyTo.type).toBe('video');
+    expect(reply.body.replyTo.duration).toBe(12);
+    expect(reply.body.replyTo.mediaUrl).toBeTruthy();
+    expect(reply.body.replyTo.mediaUrl).not.toBe('videos/orig.mp4');
+    expect(reply.body.replyTo.thumbnailUrl).toBeTruthy();
+    expect(reply.body.replyTo.thumbnailUrl).not.toBe('thumbs/orig.jpg');
+  });
+
+  it('quoting a photo exposes its media so the thumbnail renders without a lookup', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id);
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const photo = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({ type: 'photo', mediaUrls: ['photos/a.jpg'] });
+    expect(photo.status).toBe(201);
+
+    const reply = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB))
+      .send({ type: 'text', content: 'love it', replyToId: photo.body.id });
+    expect(reply.status).toBe(201);
+    expect(reply.body.replyTo.type).toBe('photo');
+    expect(reply.body.replyTo.mediaUrl).toBeTruthy();
+  });
+
+  it('never leaks media for a quoted view-once photo', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    // Expiring photos are a paid feature, and plan is read from the JWT claim.
+    const tokenA = createTestToken(userA.id, 'gold');
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const snap = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({ type: 'expiring_photo', mediaUrls: ['photos/secret.jpg'] });
+    expect(snap.status).toBe(201);
+
+    const reply = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB))
+      .send({ type: 'text', content: 'what was that', replyToId: snap.body.id });
+    expect(reply.status).toBe(201);
+    expect(reply.body.replyTo.type).toBe('expiring_photo');
+    expect(reply.body.replyTo.mediaUrl).toBeNull();
+    expect(reply.body.replyTo.thumbnailUrl).toBeNull();
+  });
+
+  it('an unsent quoted message exposes no media', async () => {
+    const userA = await createTestUser();
+    const userB = await createTestUser();
+    // Unsend-after-read is a Gold perk; plan is read from the JWT claim.
+    const tokenA = createTestToken(userA.id, 'gold');
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const photo = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA))
+      .send({ type: 'photo', mediaUrls: ['photos/b.jpg'] });
+
+    const reply = await request(app)
+      .post(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB))
+      .send({ type: 'text', content: 'hm', replyToId: photo.body.id });
+    expect(reply.status).toBe(201);
+
+    await request(app)
+      .post(`/api/v1/conversations/${convId}/messages/${photo.body.id}/unsend`)
+      .set(authHeader(tokenA))
+      .expect(200);
+
+    const list = await request(app)
+      .get(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenB));
+    const quoted = list.body.messages.find((m: { id: string }) => m.id === reply.body.id);
+    expect(quoted.replyTo.content).toBe('message removed');
+    expect(quoted.replyTo.mediaUrl).toBeNull();
+  });
+});
