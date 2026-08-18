@@ -67,6 +67,7 @@ import { ReportSheet } from '../../src/components/ReportSheet';
 import { AudioPlayer } from '../../src/components/chat/AudioPlayer';
 import { VideoBubble } from '../../src/components/chat/VideoBubble';
 import { LinkPreview } from '../../src/components/chat/LinkPreview';
+import { AiIcebreakers } from '../../src/components/chat/AiIcebreakers';
 import { measureThumbnail } from '../../src/utils/measureThumbnail';
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
@@ -88,9 +89,11 @@ import {
   reactToMessage,
   deleteMessage,
   pinChatMessage,
+  translateMessage,
   starMessage,
   unstarMessage,
   setDisappearingMessages,
+  getIcebreakers,
   ApiError,
   type SendMessageBody,
   type MessageTemplate,
@@ -241,6 +244,59 @@ function SwipeToReply({
   );
 }
 
+type AlbumRef = { albumId: string; ownerId: string; title: string };
+
+/** decodeURIComponent that tolerates a malformed `%` sequence instead of throwing. */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, ' '));
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Recognize an album share inside a message's `content`, in either of the two
+ * shapes an album can reach a chat as:
+ *
+ *   1. `📁 albumId|ownerId|title`  — sent by ShareAlbumSheet / the in-chat album
+ *      picker (the structured-content convention also used for locations).
+ *   2. An album deep link — `nearme://albums/<id>?ownerId=…&title=…` (or the
+ *      `exp://…/--/albums/…` dev-build form) — what "Copy link" puts on the
+ *      clipboard, so a pasted or externally-shared link renders as a card too
+ *      instead of falling through to the plain-text renderer.
+ *
+ * Returns null for anything else. Album privacy is unaffected: the card only
+ * carries ids, and opening it re-checks access server-side.
+ */
+function parseAlbumRef(content: string | null | undefined): AlbumRef | null {
+  if (!content) return null;
+  const text = content.trim();
+
+  if (text.startsWith('📁 ') && text.includes('|')) {
+    const [albumId, ownerId, ...titleParts] = text.slice(2).trim().split('|');
+    if (albumId && ownerId) return { albumId, ownerId, title: titleParts.join('|') || 'Album' };
+    return null;
+  }
+
+  // A bare deep link only — never a link embedded in a longer sentence.
+  const link = /^[a-z][a-z0-9+.-]*:\/\/\S*?albums\/([^/?#\s]+)(\?\S*)?$/i.exec(text);
+  if (!link) return null;
+  const albumId = safeDecode(link[1]);
+  // Parsed by hand rather than with URLSearchParams — Hermes/RN ships an
+  // incomplete polyfill whose behaviour varies by version.
+  const params: Record<string, string> = {};
+  for (const pair of (link[2]?.slice(1) ?? '').split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const key = safeDecode(eq === -1 ? pair : pair.slice(0, eq));
+    params[key] = eq === -1 ? '' : safeDecode(pair.slice(eq + 1));
+  }
+  const ownerId = params.ownerId;
+  if (!albumId || !ownerId) return null;
+  return { albumId, ownerId, title: params.title || 'Album' };
+}
+
 type ChatMessageRowProps = {
   item: Message;
   mine: boolean;
@@ -258,6 +314,8 @@ type ChatMessageRowProps = {
   onReactionLongPress: (messageId: string) => void;
   /** Opens the viewer; `layout` is the tapped thumbnail's rect for the zoom. */
   onImagePress: (url: string, layout?: ThumbnailLayout) => void;
+  /** Opens an album shared via chat (album card bubbles only). */
+  onAlbumPress: (albumId: string, ownerId: string, title: string) => void;
   /** Open the in-app player for a video message (never a browser). */
   onVideoPress: (url: string, layout?: ThumbnailLayout) => void;
   onViewOncePress: (item: Message) => void;
@@ -295,6 +353,7 @@ function ChatMessageRowBase({
   onReact,
   onReactionLongPress,
   onImagePress,
+  onAlbumPress,
   onVideoPress,
   onViewOncePress,
   onRetry,
@@ -351,7 +410,28 @@ function ChatMessageRowBase({
     }
 
     if (item.type === 'photo' && item.mediaUrls.length > 0) {
-      const isAlbum = item.content?.startsWith('📁 ');
+      // Album share card: a photo message whose content is '📁 albumId|ownerId|title'.
+      const albumRef = parseAlbumRef(item.content);
+      if (albumRef) {
+        const { albumId, ownerId: albumOwnerId, title: albumTitle } = albumRef;
+        return (
+          <Pressable
+            onPress={() => onAlbumPress(albumId, albumOwnerId, albumTitle)}
+            onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
+            delayLongPress={220}
+          >
+            <View style={styles.photoStack}>
+              <RemoteImage source={{ uri: item.mediaUrls[0] }} style={styles.chatPhoto} contentFit="cover" transition={120} />
+              <View style={styles.albumBadge}>
+                <Ionicons name="folder" size={13} color="#fff" />
+              </View>
+              <Text style={[styles.albumCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
+                📁 {albumTitle}
+              </Text>
+            </View>
+          </Pressable>
+        );
+      }
       return (
         <Pressable
           onPress={() =>
@@ -369,11 +449,6 @@ function ChatMessageRowBase({
               <View style={styles.multiBadge}>
                 <Text style={styles.multiBadgeText}>+{item.mediaUrls.length - 1}</Text>
               </View>
-            )}
-            {isAlbum && (
-              <Text style={[styles.albumCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
-                {item.content}
-              </Text>
             )}
             {item.caption ? (
               <Text style={[styles.photoCaption, mine ? styles.textMe : { color: theme.textPrimary }]}>
@@ -409,6 +484,35 @@ function ChatMessageRowBase({
           <Text style={mine ? styles.textMe : { color: theme.textPrimary }}>Voice message</Text>
         </View>
       );
+    }
+
+    // Album share card (no cover photo): a text message carrying either the
+    // structured '📁 albumId|ownerId|title' content — the same convention as the
+    // photo-type album card above, for albums shared without a cover image —
+    // or a bare album deep link (a pasted / externally shared "Copy link").
+    if (item.type === 'text') {
+      const albumRef = parseAlbumRef(item.content);
+      if (albumRef) {
+        const { albumId, ownerId: albumOwnerId, title: albumTitle } = albumRef;
+        const fg = mine ? theme.textInverse : theme.textPrimary;
+        const sub = mine ? 'rgba(255,255,255,0.8)' : theme.textTertiary;
+        return (
+          <Pressable
+            style={styles.locationCard}
+            onPress={() => onAlbumPress(albumId, albumOwnerId, albumTitle)}
+            onLongPress={(e) => onLongPress(item, e.nativeEvent.pageY)}
+            delayLongPress={220}
+          >
+            <View style={[styles.locationPin, { backgroundColor: mine ? 'rgba(255,255,255,0.15)' : theme.backgroundTertiary }]}>
+              <Ionicons name="folder" size={32} color={mine ? '#fff' : theme.brand} />
+            </View>
+            <View style={styles.locationInfo}>
+              <Text style={[styles.fileName, { color: fg }]} numberOfLines={1}>{albumTitle}</Text>
+              <Text style={[styles.fileSub, { color: sub }]}>Tap to view album</Text>
+            </View>
+          </Pressable>
+        );
+      }
     }
 
     // Location card: a text message with structured content '📍 label|lat|lng'.
@@ -532,7 +636,7 @@ function ChatMessageRowBase({
     !isViewOnce(item) &&
     (item.type === 'photo' || item.type === 'video') &&
     (item.mediaUrls.length > 0 || !!item.mediaUrl) &&
-    !item.content?.startsWith('📁 ');
+    !parseAlbumRef(item.content);
 
   const preview: QuotePreview = replyPreview ?? { kind: 'text', label: item.replyTo?.content ?? '' };
   const quoteAccent = mine ? '#fff' : theme.brand;
@@ -802,6 +906,9 @@ export default function Chat() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const composerRef = useRef<ChatComposerHandle>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  // AI Icebreakers (Platinum, opt-in) — shown in the empty-conversation state only.
+  const [icebreakers, setIcebreakers] = useState<string[]>([]);
+  const icebreakersFetchedForRef = useRef<string | null>(null);
   // Floating scroll-to-bottom pill (F26): visible when the user has scrolled up
   // away from the newest message; `unseenCount` counts peer messages that
   // arrived while scrolled up.
@@ -852,6 +959,7 @@ export default function Chat() {
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [translatingIds, setTranslatingIds] = useState<Record<string, boolean>>({});
   const [reactionDetailsFor, setReactionDetailsFor] = useState<string | null>(null);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [disappearing, setDisappearing] = useState<'24h' | '7d' | '90d' | null>(null);
@@ -1033,6 +1141,14 @@ export default function Chat() {
     [viewerImages],
   );
 
+  /** Opens an album shared via chat (📁 albumId|ownerId|title). Privacy is re-checked server-side on open. */
+  const openAlbum = useCallback(
+    (albumId: string, ownerId: string, title: string) => {
+      router.push({ pathname: '/albums/[id]', params: { id: albumId, ownerId, title } });
+    },
+    [router],
+  );
+
   const upsert = useCallback((msg: Message) => {
     setMessages((prev) => {
       if (prev.some((m) => m.id === msg.id)) {
@@ -1048,6 +1164,8 @@ export default function Chat() {
     setBanner(null);
     setUnlocked(false);
     setHasMoreOlder(false);
+    setIcebreakers([]);
+    icebreakersFetchedForRef.current = null;
     oldestCursor.current = null;
     nearBottomRef.current = true;
     prevLastIdRef.current = null;
@@ -1120,6 +1238,25 @@ export default function Chat() {
     markConversationRead(conversationId).catch(() => {});
     return () => { active = false; };
   }, [conversationId, markRead]);
+
+  // AI Icebreakers (Platinum, opt-in) — fetch once per conversation, only while
+  // it's genuinely empty (no meaningful messages yet). Fails silently: this is a
+  // passive suggestion, not a user-initiated action, so a free/non-opted-in user
+  // just sees the plain empty state, with no toast or upgrade prompt.
+  useEffect(() => {
+    if (loading || !conversationId || messages.length > 0) return;
+    if (icebreakersFetchedForRef.current === conversationId) return;
+    icebreakersFetchedForRef.current = conversationId;
+    let active = true;
+    getIcebreakers(conversationId)
+      .then((res) => {
+        if (active) setIcebreakers(Array.isArray(res.suggestions) ? res.suggestions.slice(0, 3) : []);
+      })
+      .catch(() => {
+        if (active) setIcebreakers([]);
+      });
+    return () => { active = false; };
+  }, [loading, conversationId, messages.length]);
 
   // Client-side disappearing-messages enforcement: the backend already excludes
   // expired messages from listMessages, but a message that ages past the window
@@ -1783,27 +1920,24 @@ export default function Chat() {
       });
       return;
     }
-    const key = process.env.EXPO_PUBLIC_GOOGLE_TRANSLATE_API_KEY;
-    if (!key) {
-      alertError('Translation unavailable', 'Set EXPO_PUBLIC_GOOGLE_TRANSLATE_API_KEY to enable translation.');
-      return;
-    }
-    if (!item.content) return;
+    if (!item.content || translatingIds[item.id]) return;
+    setTranslatingIds((prev) => ({ ...prev, [item.id]: true }));
     try {
-      const res = await fetch(
-        `https://translation.googleapis.com/language/translate/v2?key=${key}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ q: item.content, target: 'en' }),
-        },
-      );
-      const json = await res.json();
-      const translated = json?.data?.translations?.[0]?.translatedText;
-      if (translated) setTranslations((prev) => ({ ...prev, [item.id]: translated as string }));
-      else alertError('Could not translate', 'Please try again.');
-    } catch {
-      alertError('Could not translate', 'Please try again.');
+      const res = await translateMessage(conversationId, item.id);
+      setTranslations((prev) => ({ ...prev, [item.id]: res.text }));
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.status === 403 && (err.code === 'plan_required' || err.code === 'interaction_limit_reached')) {
+        setUpgradeOpen(true);
+      } else {
+        alertError('Could not translate', err.message ?? 'Please try again.');
+      }
+    } finally {
+      setTranslatingIds((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
     }
   };
 
@@ -1970,7 +2104,9 @@ export default function Chat() {
       }
       await postMessage({
         type: 'photo',
-        content: `📁 ${album.title}`,
+        // '📁 albumId|ownerId|title' — same convention ShareAlbumSheet uses so
+        // this renders as a tappable album card instead of a plain photo bubble.
+        content: `📁 ${album.id}|${me?.id ?? ''}|${album.title}`,
         mediaUrls: paths,
       });
     } catch (e) {
@@ -2100,6 +2236,7 @@ export default function Chat() {
           onReact={onReact}
           onReactionLongPress={setReactionDetailsFor}
           onImagePress={openMediaViewer}
+          onAlbumPress={openAlbum}
           onVideoPress={openMediaViewer}
           onViewOncePress={openViewOnce}
           onRetry={retryFailedMessage}
@@ -2396,6 +2533,10 @@ export default function Chat() {
                 <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
                   This is the beginning of your conversation.{'\n'}Say hello! 👋
                 </Text>
+                <AiIcebreakers
+                  suggestions={icebreakers}
+                  onSelect={(text) => composerRef.current?.insertText(text)}
+                />
               </View>
             }
             keyboardShouldPersistTaps="handled"
@@ -2479,6 +2620,8 @@ export default function Chat() {
           onOpenTemplates={openTemplatePicker}
           uploadProgress={uploadProgress != null ? Math.round(uploadProgress * 100) : null}
           placeholder="Say something…"
+          replySuggestionsMessageCount={messages.length}
+          replySuggestionsLastFromMe={messages[messages.length - 1]?.senderId === me?.id}
         />
         ) : null}
       </KeyboardAvoidingView>
@@ -2858,6 +3001,7 @@ const styles = StyleSheet.create({
   multiBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
   multiBadgeText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '700' },
   albumCaption: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
+  albumBadge: { position: 'absolute', top: 8, left: 8, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
   photoCaption: { fontSize: FontSize.md, fontFamily: FontFamily.regular, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 2, maxWidth: 260 },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, marginHorizontal: 4 },
   metaInBubble: { alignSelf: 'flex-end', marginTop: 1, marginHorizontal: 0, marginLeft: 10 },

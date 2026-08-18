@@ -15,7 +15,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
-import { createAlbum, uploadAlbumPhoto, ApiError } from '../../src/services/api';
+import { AlbumPrivacyPicker } from '../../src/components/AlbumPrivacyPicker';
+import { createAlbum, uploadAlbumPhoto, addAlbumPhoto, ApiError } from '../../src/services/api';
+import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
+import { uploadToR2 } from '../../src/utils/uploadToR2';
+import type { AlbumPrivacy } from '../../src/types/api';
 
 export default function CreateAlbum() {
   const router = useRouter();
@@ -23,6 +27,7 @@ export default function CreateAlbum() {
   const { alertConfig, hideAlert, showAlert, alertError } = useAlert();
 
   const [title, setTitle] = useState('');
+  const [privacy, setPrivacy] = useState<AlbumPrivacy>('chats_only');
   const [preview, setPreview] = useState<string | null>(null);
   const [selectedCount, setSelectedCount] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -53,10 +58,16 @@ export default function CreateAlbum() {
     setSelectedCount(assets.length);
     setBusy(true);
     try {
-      const album = await createAlbum(title.trim() || 'My Album');
-      // Upload every selected photo in order into the new album.
+      const album = await createAlbum(title.trim() || 'My Album', privacy);
+      // Upload every selected item in order into the new album.
       for (const asset of assets) {
-        await uploadAlbumPhoto(album.id, asset.uri);
+        if (asset.type === 'video') {
+          const thumbnailUrl = (await generateAndUploadVideoThumbnail(asset.uri)) ?? undefined;
+          const url = await uploadToR2(asset.uri, 'video', 'video/mp4');
+          await addAlbumPhoto(album.id, url, { type: 'video', thumbnailUrl });
+        } else {
+          await uploadAlbumPhoto(album.id, asset.uri);
+        }
       }
       router.replace({ pathname: '/albums/edit', params: { id: album.id, title: album.title } });
     } catch (e) {
@@ -131,6 +142,11 @@ export default function CreateAlbum() {
         </View>
       </View>
 
+      <View style={styles.privacySection}>
+        <Text style={[styles.privacyLabel, { color: theme.textTertiary }]}>Who can see this album</Text>
+        <AlbumPrivacyPicker value={privacy} onChange={setPrivacy} />
+      </View>
+
       <View style={styles.sources}>
         <SourceBtn icon="camera" label="Take Photo" onPress={() => pickAndCreate('camera')} />
         <SourceBtn icon="images" label="Photo Library" onPress={() => pickAndCreate('photo')} />
@@ -169,7 +185,9 @@ const styles = StyleSheet.create({
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   nameInput: { flex: 1, fontSize: 22, fontFamily: DisplayFont.regular, borderBottomWidth: 1, paddingBottom: 8 },
   hint: { fontSize: 14, fontFamily: FontFamily.regular, marginTop: 12 },
-  sources: { paddingHorizontal: 20, marginTop: 40, gap: 14 },
+  privacySection: { paddingHorizontal: 20, marginTop: 32 },
+  privacyLabel: { fontSize: 13, fontFamily: FontFamily.semibold, fontWeight: '600', marginBottom: 10 },
+  sources: { paddingHorizontal: 20, marginTop: 24, gap: 14 },
   sourceBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 52, borderRadius: 999, borderWidth: 1 },
   sourceLabel: { fontSize: 16, fontFamily: DisplayFont.semibold, fontWeight: '600' },
   whatBtn: { marginTop: 'auto', alignItems: 'center', paddingVertical: 24 },

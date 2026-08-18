@@ -17,6 +17,7 @@ import type {
   Photo,
   AlbumSummary,
   AlbumPhoto,
+  AlbumPrivacy,
   Block,
   Plan,
   BillingCycle,
@@ -127,6 +128,54 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+/**
+ * Multipart/form-data sibling of `request()` — same auth header, same one-shot
+ * 401 refresh, same ApiError shape. Needed because a few backend routes take a
+ * real file part via multer (`/me/voice-clip`, `/me/video-clip`) rather than a
+ * JSON body or a presigned R2 PUT. Never sets Content-Type by hand: fetch has
+ * to append the multipart boundary itself.
+ *
+ * Media uploads are far slower than a JSON round-trip, so this deliberately
+ * does NOT apply REQUEST_TIMEOUT_MS (same reasoning as the raw R2 PUTs).
+ */
+async function requestMultipart<T>(
+  method: string,
+  path: string,
+  form: FormData,
+  opts?: { isRetry?: boolean }
+): Promise<T> {
+  const token = await getAccessToken();
+
+  const headers: Record<string, string> = { 'X-Request-ID': generateRequestId() };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE_URL}${path}`, { method, headers, body: form });
+
+  if (res.status === 401 && !opts?.isRetry) {
+    const newToken = await refreshAccessToken();
+    if (newToken) return requestMultipart<T>(method, path, form, { isRetry: true });
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}) as Record<string, unknown>);
+    throw Object.assign(new Error((err.message as string) ?? res.statusText), {
+      status: res.status,
+      code: err.error as string | undefined,
+      data: err,
+    }) as ApiError;
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+/**
+ * React Native's FormData accepts this `{ uri, name, type }` shape where the DOM
+ * expects a File/Blob. Typed explicitly so the cast at each call site is honest
+ * about what it's doing rather than being an `any`.
+ */
+type RNFilePart = { uri: string; name: string; type: string };
+
 /* ─────────────────────────────── Auth ─────────────────────────────── */
 
 export interface FirebaseLoginResponse {
@@ -190,6 +239,7 @@ export interface UpdateProfileBody {
   rightNowStatus?: string | null;
   rightNowCategory?: string | null;
   rightNowExpiresAt?: string | null;
+  rightNowHosting?: boolean;
   // ── Availability toggles ──
   groupsAvailable?: boolean;
   audioCallAvailable?: boolean;
@@ -346,10 +396,57 @@ export const updatePrompt = (promptId: string, answer: string) =>
   request<ProfilePromptDTO>('PATCH', `/api/v1/me/prompts/${promptId}`, { answer });
 export const deletePrompt = (promptId: string) =>
   request<void>('DELETE', `/api/v1/me/prompts/${promptId}`);
-export const uploadVoiceClip = (url: string) =>
-  request<{ voiceClipUrl: string }>('POST', '/api/profile/voice-clip', { url });
-export const uploadVideoClip = (url: string) =>
-  request<{ videoClipUrl: string }>('POST', '/api/profile/video-clip', { url });
+/**
+ * Voice / video profile intro upload (Premium+).
+ *
+ * These are multipart routes, not JSON and not presigned-PUT: the backend runs
+ * `multer.single('audio')` / `multer.single('video')` on
+ * `/api/v1/me/{voice,video}-clip` (backend/src/modules/profile/profile.routes.ts:48-66)
+ * and 400s on a missing file part.
+ *
+ * The MIME must land inside multer's `fileFilter` allowlist (media.controller.ts:13-14)
+ * or the request is rejected before the handler runs. We mirror that allowlist
+ * here so an unsupported pick fails instantly with a readable message instead of
+ * after a pointless multi-MB upload. iOS commonly reports `audio/x-m4a`, which
+ * is the same container the server calls `audio/m4a`, so it's normalized rather
+ * than rejected.
+ */
+const VOICE_CLIP_MIME: Record<string, { type: string; ext: string }> = {
+  'audio/mp4':   { type: 'audio/mp4',  ext: 'm4a' },
+  'audio/m4a':   { type: 'audio/m4a',  ext: 'm4a' },
+  'audio/x-m4a': { type: 'audio/m4a',  ext: 'm4a' },
+  'audio/webm':  { type: 'audio/webm', ext: 'webm' },
+};
+const VIDEO_CLIP_MIME: Record<string, { type: string; ext: string }> = {
+  'video/mp4':  { type: 'video/mp4',  ext: 'mp4' },
+  'video/webm': { type: 'video/webm', ext: 'webm' },
+};
+
+function unsupportedClip(message: string): ApiError {
+  return Object.assign(new Error(message), { status: 0, code: 'unsupported_media_type' }) as ApiError;
+}
+
+export function uploadVoiceClip(localUri: string, mimeType?: string) {
+  // No MIME from the picker is common on Android — assume the m4a the recorder
+  // produces rather than blocking the user on a missing header.
+  const picked = VOICE_CLIP_MIME[mimeType ?? 'audio/mp4'];
+  if (!picked) throw unsupportedClip('Voice intros must be an .m4a or .webm audio file.');
+
+  const part: RNFilePart = { uri: localUri, name: `voice-intro.${picked.ext}`, type: picked.type };
+  const form = new FormData();
+  form.append('audio', part as unknown as Blob);
+  return requestMultipart<{ voiceClipUrl: string }>('POST', '/api/v1/me/voice-clip', form);
+}
+
+export function uploadVideoClip(localUri: string, mimeType?: string) {
+  const picked = VIDEO_CLIP_MIME[mimeType ?? 'video/mp4'];
+  if (!picked) throw unsupportedClip('Video intros must be an .mp4 or .webm video file.');
+
+  const part: RNFilePart = { uri: localUri, name: `video-intro.${picked.ext}`, type: picked.type };
+  const form = new FormData();
+  form.append('video', part as unknown as Blob);
+  return requestMultipart<{ videoClipUrl: string; thumbnailUrl: string | null }>('POST', '/api/v1/me/video-clip', form);
+}
 
 /* ─────────────────────────────── Grid ─────────────────────────────── */
 
@@ -458,6 +555,40 @@ export const listMessages = (conversationId: string, query?: { before?: string; 
     { query: query as Record<string, unknown> | undefined }
   );
 
+/** Shared media / links / documents across a conversation's FULL history. */
+export interface ConversationMediaResponse {
+  media: Message[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+export const listConversationMedia = (
+  conversationId: string,
+  query?: { type?: 'image' | 'video' | 'voice' | 'link' | 'document'; before?: string; limit?: number },
+) =>
+  request<ConversationMediaResponse>(
+    'GET',
+    `/api/v1/conversations/${conversationId}/media`,
+    undefined,
+    { query: query as Record<string, unknown> | undefined }
+  );
+
+/** Full-history text search inside one conversation. */
+export interface SearchMessagesResponse {
+  messages: Message[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+export const searchConversationMessages = (
+  conversationId: string,
+  query: { q: string; before?: string; limit?: number },
+) =>
+  request<SearchMessagesResponse>(
+    'GET',
+    `/api/v1/conversations/${conversationId}/messages/search`,
+    undefined,
+    { query: query as unknown as Record<string, unknown> }
+  );
+
 export interface SendMessageBody {
   type: 'text' | 'photo' | 'video' | 'voice' | 'expiring_photo' | 'voice_note';
   content?: string;
@@ -548,6 +679,14 @@ export const pinChatMessage = (conversationId: string, messageId: string, isPinn
     'POST',
     `/api/v1/conversations/${conversationId}/messages/${messageId}/pin`,
     { isPinned }
+  );
+
+/** Translate a message's content server-side (Gold+; targetLang defaults to 'en'). */
+export const translateMessage = (conversationId: string, messageId: string, targetLang: string = 'en') =>
+  request<{ text: string; detectedSourceLang: string }>(
+    'POST',
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/translate`,
+    { targetLang }
   );
 
 /** Disappearing-messages window for a conversation (null = off). */
@@ -734,10 +873,10 @@ export const unshortlistUser = (userId: string) =>
 /* ────────────────────────────── Safety ────────────────────────────── */
 
 export const blockUser = (userId: string) =>
-  request<{ ok: boolean }>('POST', `/api/users/${userId}/block`);
+  request<{ ok: boolean }>('POST', `/api/v1/safety/users/${userId}/block`);
 
 export const unblockUser = (userId: string) =>
-  request<void>('DELETE', `/api/users/${userId}/block`);
+  request<void>('DELETE', `/api/v1/safety/users/${userId}/block`);
 
 export const listBlocks = () =>
   request<{ blocked: Block[] }>('GET', '/api/v1/safety/blocks');
@@ -745,7 +884,7 @@ export const listBlocks = () =>
 export const reportUser = (
   userId: string,
   body: { reason: ReportReason; details?: string; messageId?: string }
-) => request<{ ok: boolean }>('POST', `/api/users/${userId}/report`, body);
+) => request<{ ok: boolean }>('POST', `/api/v1/safety/users/${userId}/report`, body);
 
 /* ─────────────────────────── Verification ─────────────────────────── */
 
@@ -766,12 +905,14 @@ export const getVerificationStatus = () =>
 export const listAlbums = () =>
   request<{ albums: AlbumSummary[] }>('GET', '/api/albums');
 
-export const createAlbum = (title: string) =>
-  request<AlbumSummary>('POST', '/api/albums', { title });
+export const createAlbum = (title: string, privacy?: AlbumPrivacy) =>
+  request<AlbumSummary>('POST', '/api/albums', { title, privacy });
 
 export interface AlbumDetailResponse {
   id: string;
   title: string;
+  privacy?: AlbumPrivacy;
+  sharedCount?: number | null;
   coverPhoto: AlbumPhoto | null;
   photos: AlbumPhoto[];
   nextCursor: string | null;
@@ -784,14 +925,14 @@ export const getAlbum = (albumId: string, query?: { cursor?: string; limit?: num
 
 export const updateAlbum = (
   albumId: string,
-  body: { title?: string; coverPhotoId?: string | null; privacy?: 'everyone' | 'matches' | 'chats_only' | 'nobody' }
+  body: { title?: string; coverPhotoId?: string | null; privacy?: AlbumPrivacy }
 ) => request<AlbumSummary>('PATCH', `/api/albums/${albumId}`, body);
 
 export const deleteAlbum = (albumId: string) =>
   request<void>('DELETE', `/api/albums/${albumId}`);
 
-export const addAlbumPhoto = (albumId: string, url: string) =>
-  request<AlbumPhoto>('POST', `/api/albums/${albumId}/photos`, { url });
+export const addAlbumPhoto = (albumId: string, url: string, opts?: { type?: 'photo' | 'video'; thumbnailUrl?: string }) =>
+  request<AlbumPhoto>('POST', `/api/albums/${albumId}/photos`, { url, ...opts });
 
 /**
  * Upload a picked image into an album.
@@ -835,12 +976,15 @@ export interface SharedAlbum {
 }
 
 /**
- * GET /api/v1/discovery/albums/shared → albums others shared with me.
- * Tolerant: resolves to an empty list if the endpoint is unavailable so the
- * "Shared With Me" section degrades gracefully rather than erroring the screen.
+ * GET /api/albums/shared-with-me → albums other users have shared with me,
+ * derived from the Album model's privacy + mutual-conversation rule (the
+ * same authoritative model "My Albums" reads/writes — not the legacy
+ * PrivateAlbum grant system). Tolerant: resolves to an empty list if the
+ * endpoint is unavailable so the "Shared With Me" section degrades
+ * gracefully rather than erroring the screen.
  */
 export const getSharedAlbums = () =>
-  request<{ albums: SharedAlbum[] }>('GET', '/api/v1/discovery/albums/shared')
+  request<{ albums: SharedAlbum[] }>('GET', '/api/albums/shared-with-me')
     .catch(() => ({ albums: [] as SharedAlbum[] }));
 
 // ── Travel / city profiles (brief-specified; not in spec endpoints[]) ──
@@ -848,17 +992,19 @@ export const getSharedAlbums = () =>
 // no city-profile endpoints; wired here per the Phase 12 brief.
 export interface CityProfile {
   id: string;
-  city: string;
-  lat?: number;
-  lng?: number;
-  active: boolean;
+  cityName: string;
+  isActive: boolean;
+  visitingSoonBadge?: boolean;
+  createdAt?: string;
 }
-export const createCityProfile = (city: string, lat?: number, lng?: number) =>
-  request<CityProfile>('POST', '/api/city-profiles', { city, lat, lng });
+export const createCityProfile = (city: string, country: string) =>
+  request<CityProfile>('POST', '/api/v1/city-profiles', { city, country });
 export const activateCityProfile = (id: string) =>
-  request<{ ok: boolean }>('POST', `/api/city-profiles/${id}/activate`);
+  request<{ isActive: boolean }>('POST', `/api/v1/city-profiles/${id}/activate`);
 export const listCityProfiles = () =>
-  request<{ cityProfiles: CityProfile[] }>('GET', '/api/city-profiles');
+  request<{ profiles: CityProfile[] }>('GET', '/api/v1/city-profiles');
+export const deleteCityProfile = (id: string) =>
+  request<void>('DELETE', `/api/v1/city-profiles/${id}`);
 
 /* ────────────────────────────── Billing ───────────────────────────── */
 
@@ -939,8 +1085,46 @@ export const getActiveAddons = () =>
 
 /* ──────────────────────────────── AI ──────────────────────────────── */
 
+/** Shape actually returned by GET /api/v1/ai/top-10 (backend/src/modules/ai/ai.controller.ts:325-334) — a
+ * deliberately thin profile, not a full UserCard: no distance/activity/tribes/etc. */
+export interface DailyTop10Profile {
+  id: string;
+  firstName: string | null;
+  age: number | null;
+  isVerified: boolean;
+  plan: Plan | null;
+  profilePhoto: string | null;
+  compatibilityScore: number;
+  whyLabel: string | null;
+}
+
 export const getDailyTop10 = () =>
-  request<{ profiles: UserCard[]; refreshesAt: string }>('GET', '/api/ai/top-10');
+  request<{ profiles: DailyTop10Profile[]; refreshesAt: string }>('GET', '/api/v1/ai/top-10');
+
+export const getReplySuggestions = (conversationId: string) =>
+  request<{ suggestions: string[] }>('GET', '/api/v1/ai/reply-suggestions', undefined, {
+    query: { conversationId },
+  });
+
+export const getIcebreakers = (conversationId: string) =>
+  request<{ suggestions: string[]; count: number }>('GET', '/api/v1/ai/icebreakers', undefined, {
+    query: { conversationId },
+  });
+
+export const getCompatibility = (userId: string) =>
+  request<{ score: number; breakdown: string[] }>('GET', `/api/v1/ai/compatibility/${userId}`);
+
+export interface ProfileOptimizerSuggestion {
+  section: string;
+  issue: string;
+  recommendation: string;
+}
+
+export const getProfileOptimizer = () =>
+  request<{ profileScore: number; suggestions: ProfileOptimizerSuggestion[] }>(
+    'GET',
+    '/api/v1/ai/profile-optimizer'
+  );
 
 /* ─────────────────────── Dating Rooms (Groups) ─────────────────────── */
 
@@ -1104,6 +1288,53 @@ export const transferRoomOwnership = (roomId: string, userId: string) =>
 /** Creator only: permanently delete the group. */
 export const deleteRoom = (roomId: string) =>
   request<void>('DELETE', `/api/rooms/${roomId}`);
+
+/* ───────────────────────── Group (room) calling ─────────────────────── */
+// Extends the 1:1 Agora calling architecture (see "Calls" above) to Dating
+// Rooms. Membership-gated (requireRoomMember on the backend); everyone
+// shares one Agora channel/token per active room call.
+
+export interface RoomCallParticipantCard {
+  id: string;
+  name: string | null;
+  photo: string | null;
+}
+
+export interface RoomCallResponse {
+  id: string;
+  roomId: string;
+  type: CallType;
+  agoraChannelName: string;
+  agoraToken: string;
+  initiatorId: string;
+}
+
+/** Start a group call, or — if the room already has one live — join it instead. */
+export const initiateRoomCall = (roomId: string, type: CallType) =>
+  request<RoomCallResponse>('POST', `/api/rooms/${roomId}/calls`, { type });
+
+/** Explicitly join an already-active group call (e.g. from an incoming-call toast). */
+export const joinRoomCall = (roomId: string, callId: string) =>
+  request<RoomCallResponse>('POST', `/api/rooms/${roomId}/calls/${callId}/join`);
+
+export interface ActiveRoomCall {
+  id: string;
+  roomId: string;
+  type: CallType;
+  agoraChannelName: string;
+  agoraToken: string;
+  initiatorId: string;
+  startedAt: string;
+  participants: RoomCallParticipantCard[];
+}
+
+/** The room's currently-live call (for a screen that opens mid-call), or null. */
+export const getActiveRoomCall = (roomId: string) =>
+  request<{ call: ActiveRoomCall | null }>('GET', `/api/rooms/${roomId}/calls/active`);
+
+/** Leave a group call (auto-ends it once everyone has left), or — initiator only — end it for everyone. */
+export const updateRoomCall = (roomId: string, callId: string, action: 'leave' | 'end') =>
+  request<{ id: string; status: 'ongoing' | 'ended' }>('PATCH', `/api/rooms/${roomId}/calls/${callId}`, { action });
 
 /* ─────────────────────── Room invites (Group availability) ─────────────────────── */
 

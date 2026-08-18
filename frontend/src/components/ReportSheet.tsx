@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal, View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator } from 'react-native';
 import { useTheme } from '../theme';
 import { reportUser, ApiError } from '../services/api';
+import { showSuccess } from '../lib/toast';
 import { labelize } from '../lib/format';
 import type { ReportReason } from '../types/api';
 
@@ -41,6 +42,7 @@ export function ReportSheet({
       setDetails('');
       onReported?.();
       onClose();
+      showSuccess('Report submitted', 'Thanks for letting us know.');
     } catch (e) {
       setError((e as ApiError).message ?? 'Could not submit report');
     } finally {

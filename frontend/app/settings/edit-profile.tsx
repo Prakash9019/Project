@@ -13,11 +13,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../src/theme';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { FormSection, FieldLabel, TextField, ChipSelect } from '../../src/components/form';
+import { ProfileOptimizerSheet } from '../../src/components/ProfileOptimizerSheet';
 import { useAuthStore } from '../../src/store/authStore';
 import {
   updateProfile,
@@ -77,7 +79,9 @@ export default function EditProfile() {
 
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingClip, setUploadingClip] = useState<'voice' | 'video' | null>(null);
   const [primaryPhoto, setPrimaryPhoto] = useState<string | null>(null);
+  const [optimizerOpen, setOptimizerOpen] = useState(false);
 
   // Form fields
   const [firstName, setFirstName] = useState('');
@@ -164,18 +168,38 @@ export default function EditProfile() {
   };
 
   const pickClip = async (kind: 'voice' | 'video') => {
-    if (!canClips) return;
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: kind === 'video' ? ['videos'] : ['videos'],
-      quality: 0.7,
-    });
-    if (res.canceled || !res.assets[0]) return;
+    if (!canClips || uploadingClip) return;
+
+    // A voice intro is an audio file, which ImagePicker cannot browse — use the
+    // same DocumentPicker audio flow the chat composer uses. Video stays on
+    // ImagePicker so the user gets the camera-roll grid.
+    let uri: string;
+    let mimeType: string | undefined;
+    if (kind === 'video') {
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 0.7 });
+      if (res.canceled || !res.assets[0]) return;
+      uri = res.assets[0].uri;
+      mimeType = res.assets[0].mimeType;
+    } else {
+      const res = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
+      if (res.canceled || !res.assets?.[0]) return;
+      uri = res.assets[0].uri;
+      mimeType = res.assets[0].mimeType ?? undefined;
+    }
+
+    setUploadingClip(kind);
     try {
-      if (kind === 'video') await uploadVideoClip(res.assets[0].uri);
-      else await uploadVoiceClip(res.assets[0].uri);
+      if (kind === 'video') await uploadVideoClip(uri, mimeType);
+      else await uploadVoiceClip(uri, mimeType);
+      await refreshUser();
       alertSuccess('Uploaded', `Your ${kind} intro was uploaded.`);
-    } catch {
-      alertError('Upload failed', 'Please try again later.');
+    } catch (e) {
+      // Surface the backend's own reason (wrong format, over the plan's duration
+      // cap, plan required) instead of a blanket "try again" that hides it.
+      const err = e as ApiError;
+      alertError('Upload failed', err?.message ?? 'Please try again later.');
+    } finally {
+      setUploadingClip(null);
     }
   };
 
@@ -290,6 +314,18 @@ export default function EditProfile() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
+        <Pressable
+          style={[styles.optimizerBanner, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}
+          onPress={() => setOptimizerOpen(true)}
+        >
+          <Text style={styles.optimizerEmoji}>✨</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.optimizerTitle, { color: theme.textPrimary }]}>Improve Your Profile</Text>
+            <Text style={[styles.optimizerSub, { color: theme.textSecondary }]}>Get an AI profile score and suggestions</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={theme.textTertiary} />
+        </Pressable>
+
         <FormSection title="PHOTO">
           <Pressable style={[styles.photoBox, { backgroundColor: theme.inputBackground, borderColor: theme.border }]} onPress={pickPrimary} disabled={uploadingPhoto}>
             {primaryPhoto ? (
@@ -378,7 +414,10 @@ export default function EditProfile() {
             onPress={() => (canClips ? pickClip('voice') : router.push('/(tabs)/store'))}
           >
             <Ionicons name="mic" size={20} color={theme.brand} />
-            <Text style={[styles.clipText, { color: theme.textPrimary }]}>Add voice intro</Text>
+            <Text style={[styles.clipText, { color: theme.textPrimary }]}>
+              {uploadingClip === 'voice' ? 'Uploading…' : 'Add voice intro'}
+            </Text>
+            {uploadingClip === 'voice' && <ActivityIndicator size="small" color={theme.brand} />}
             {!canClips && <Ionicons name="lock-closed" size={14} color={theme.brand} />}
           </Pressable>
           <Pressable
@@ -386,7 +425,10 @@ export default function EditProfile() {
             onPress={() => (canClips ? pickClip('video') : router.push('/(tabs)/store'))}
           >
             <Ionicons name="videocam" size={20} color={theme.brand} />
-            <Text style={[styles.clipText, { color: theme.textPrimary }]}>Add video intro</Text>
+            <Text style={[styles.clipText, { color: theme.textPrimary }]}>
+              {uploadingClip === 'video' ? 'Uploading…' : 'Add video intro'}
+            </Text>
+            {uploadingClip === 'video' && <ActivityIndicator size="small" color={theme.brand} />}
             {!canClips && <Ionicons name="lock-closed" size={14} color={theme.brand} />}
           </Pressable>
         </FormSection>
@@ -413,6 +455,7 @@ export default function EditProfile() {
       </ScrollView>
 
       {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
+      <ProfileOptimizerSheet visible={optimizerOpen} onClose={() => setOptimizerOpen(false)} />
     </SafeAreaView>
   );
 }
@@ -423,6 +466,10 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1 },
   title: { fontSize: 18, fontWeight: '700' },
   done: { fontSize: 16, fontWeight: '700' },
+  optimizerBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 20 },
+  optimizerEmoji: { fontSize: 24 },
+  optimizerTitle: { fontSize: 15, fontWeight: '700' },
+  optimizerSub: { fontSize: 12, marginTop: 2 },
   photoBox: { height: 200, borderRadius: 16, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   photo: { width: '100%', height: '100%' },
   photoOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },

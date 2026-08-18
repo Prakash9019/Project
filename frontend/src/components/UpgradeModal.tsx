@@ -3,12 +3,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../theme';
 import { T } from './ui';
+import { PLANS } from '../lib/plans';
 
-const PLAN_ROWS = [
-  { plan: 'Premium', price: '₹399/mo', perk: 'Unlimited people · 400-char bio' },
-  { plan: 'Gold', price: '₹799/mo', perk: 'Incognito · Travel · Who viewed me' },
-  { plan: 'Platinum', price: '₹1499/mo', perk: 'AI features · 5× boost · everything' },
-];
+const PLAN_PERKS: Record<string, string> = {
+  premium: 'Unlimited people · 400-char bio',
+  gold: 'Incognito · Travel · Who viewed me',
+  platinum: 'AI features · 5× boost · everything',
+};
+
+const PLAN_ROWS = PLANS.filter((p) => p.plan !== 'free').map((p) => ({
+  plan: p.name,
+  price: `₹${p.priceInr.monthly}/mo`,
+  perk: PLAN_PERKS[p.plan] ?? p.perks.slice(0, 2).join(' · '),
+}));
 
 /**
  * Reusable upgrade prompt. Shown on 403 `interaction_limit_reached`,

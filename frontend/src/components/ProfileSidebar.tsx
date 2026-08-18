@@ -10,14 +10,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont } from '../theme';
 import { Avatar } from './Avatar';
 import { UpgradeModal } from './UpgradeModal';
 import { useAuthStore } from '../store/authStore';
 import { updateSettings } from '../services/api';
 import { planLabel, planBadgeColor, planAtLeast } from '../lib/format';
-import { showSuccess, toastApiError } from '../lib/toast';
+import { showSuccess, showError, toastApiError } from '../lib/toast';
 
 const SIDEBAR_WIDTH = 280;
 
@@ -74,9 +74,9 @@ export function ProfileSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: 
     { key: 'friends', label: 'Friends', icon: 'people-outline', onPress: () => go(() => showSuccess('Friends is coming soon', 'Coming soon')) },
     { key: 'edit', label: 'Edit Profile', icon: 'create-outline', onPress: () => go(() => router.push('/settings/edit-profile')) },
     { key: 'albums', label: 'My Albums', icon: 'images-outline', onPress: () => go(() => router.push('/albums')) },
-    { key: 'safety', label: 'Safety & Security', icon: 'shield-outline', onPress: () => go(() => router.push('/settings')) },
-    { key: 'privacy', label: 'Privacy Settings', icon: 'lock-closed-outline', onPress: () => go(() => router.push('/settings')) },
-    { key: 'help', label: 'Help Center', icon: 'help-circle-outline', onPress: () => go(() => Linking.openURL('https://help.nearme.app').catch(() => {})) },
+    { key: 'safety', label: 'Safety & Security', icon: 'shield-outline', onPress: () => go(() => router.push('/settings?section=safety' as Href)) },
+    { key: 'privacy', label: 'Privacy Settings', icon: 'lock-closed-outline', onPress: () => go(() => router.push('/settings?section=privacy' as Href)) },
+    { key: 'help', label: 'Help Center', icon: 'help-circle-outline', onPress: () => go(() => Linking.openURL('https://help.nearme.app').catch(() => showError("Couldn't open Help Center", 'No connection'))) },
     { key: 'settings', label: 'Settings', icon: 'settings-outline', onPress: () => go(() => router.push('/settings')) },
   ];
 

@@ -59,7 +59,11 @@ import {
   starMessage,
   unstarMessage,
   forwardRoomMessage,
+  initiateRoomCall,
+  joinRoomCall,
+  getActiveRoomCall,
 } from '../../src/services/api';
+import { isAgoraAvailable } from '../../src/services/agora';
 import {
   connectSocket,
   getSocket,
@@ -140,9 +144,10 @@ export default function RoomChat() {
   const router = useRouter();
   const me = useAuthStore((s) => s.user);
   const { alertConfig, hideAlert, showAlert } = useAlert();
-  const params = useLocalSearchParams<{ id: string; unread?: string }>();
+  const params = useLocalSearchParams<{ id: string; unread?: string; scrollTo?: string }>();
   const roomId = String(params.id);
   const initialUnread = params.unread ? parseInt(params.unread, 10) || 0 : 0;
+  const scrollToParamHandled = useRef(false);
 
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [messages, setMessages] = useState<RoomMessageCard[]>([]);
@@ -185,6 +190,18 @@ export default function RoomChat() {
   // transition. null when the tap couldn't be measured (falls back to a fade).
   const [thumbnailLayout, setThumbnailLayout] = useState<ThumbnailLayout | null>(null);
 
+  // Group calling: the room's currently-live call (if any), surfaced as a
+  // "Join call" banner. Seeded on open via getActiveRoomCall (late joiners)
+  // and kept live via room:call.invite / room:call.end sockets.
+  const [activeCall, setActiveCall] = useState<{
+    callId: string;
+    type: 'audio' | 'video';
+    agoraChannelName: string;
+    agoraToken: string;
+    initiatorId: string;
+    initiatorName: string;
+  } | null>(null);
+
   // Floating scroll-to-bottom pill (F26). The list is inverted (index 0 = newest
   // at the visual bottom), so "at bottom" is scroll offset ≈ 0.
   const [showScrollDown, setShowScrollDown] = useState(false);
@@ -226,6 +243,23 @@ export default function RoomChat() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Seed the "Join call" banner if the room already has a live call when this screen opens.
+  useEffect(() => {
+    getActiveRoomCall(roomId)
+      .then((res) => {
+        if (!res.call) return;
+        setActiveCall({
+          callId: res.call.id,
+          type: res.call.type,
+          agoraChannelName: res.call.agoraChannelName,
+          agoraToken: res.call.agoraToken,
+          initiatorId: res.call.initiatorId,
+          initiatorName: res.call.participants.find((p) => p.id === res.call!.initiatorId)?.name ?? 'Someone',
+        });
+      })
+      .catch(() => {});
+  }, [roomId]);
 
   // Load members for @mention autocomplete.
   useEffect(() => {
@@ -353,6 +387,32 @@ export default function RoomChat() {
         // Creator status is derived from the new creatorId; update my affordances.
         setRoom((prev) => (prev ? { ...prev, isCreator: p.newCreatorId === me?.id } : prev));
       };
+      const onCallInvite = (p: {
+        callId: string;
+        roomId: string;
+        initiatorId: string;
+        initiatorName: string | null;
+        initiatorPhoto: string | null;
+        type: 'audio' | 'video';
+        agoraChannelName: string;
+        agoraToken: string;
+      }) => {
+        if (p.roomId !== roomId) return;
+        // Only updates the in-room "Join call" banner — the incoming-call toast
+        // (ringtone + Accept/Decline) is dispatched app-wide from _layout.tsx so
+        // it fires the same way whether the user is in this room or elsewhere.
+        setActiveCall({
+          callId: p.callId,
+          type: p.type,
+          agoraChannelName: p.agoraChannelName,
+          agoraToken: p.agoraToken,
+          initiatorId: p.initiatorId,
+          initiatorName: p.initiatorName ?? 'Someone',
+        });
+      };
+      const onCallEnd = (p: { callId: string }) => {
+        setActiveCall((prev) => (prev?.callId === p.callId ? null : prev));
+      };
 
       socket.on('room:message', onMessage);
       socket.on('room:message_delivered', onDelivered);
@@ -366,6 +426,8 @@ export default function RoomChat() {
       socket.on('room:member_role_changed', onRoleChanged);
       socket.on('room:deleted', onRoomDeleted);
       socket.on('room:ownership_transferred', onOwnershipTransferred);
+      socket.on('room:call.invite', onCallInvite);
+      socket.on('room:call.end', onCallEnd);
 
       cleanupRef.current = () => {
         socket.off('room:message', onMessage);
@@ -376,6 +438,8 @@ export default function RoomChat() {
         socket.off('room:typing', onTyping);
         socket.off('room:info_updated', onInfoUpdated);
         socket.off('room:message_pinned', onPinned);
+        socket.off('room:call.invite', onCallInvite);
+        socket.off('room:call.end', onCallEnd);
         socket.off('room:member_removed', onMemberRemoved);
         socket.off('room:member_role_changed', onRoleChanged);
         socket.off('room:deleted', onRoomDeleted);
@@ -820,6 +884,60 @@ export default function RoomChat() {
 
   const openInfo = () => router.push(`/rooms/info?roomId=${roomId}` as Href);
 
+  // ── Group calling ──
+  const goToCallScreen = (call: {
+    callId: string;
+    type: 'audio' | 'video';
+    agoraChannelName: string;
+    agoraToken: string;
+    initiatorId: string;
+  }) => {
+    router.push({
+      pathname: '/call/[id]',
+      params: {
+        id: call.callId,
+        channel: call.agoraChannelName,
+        token: call.agoraToken,
+        type: call.type,
+        roomId,
+        roomName: room?.name ?? 'Group',
+        callId: call.callId,
+        initiatorId: call.initiatorId,
+      },
+    });
+  };
+
+  const startRoomCall = async (type: 'audio' | 'video') => {
+    if (activeCall) {
+      goToCallScreen(activeCall);
+      return;
+    }
+    if (!isAgoraAvailable) {
+      showError('Calls need the latest app build. Please update or reinstall the app.');
+      return;
+    }
+    try {
+      const res = await initiateRoomCall(roomId, type);
+      goToCallScreen({ ...res, callId: res.id });
+    } catch (e) {
+      toastApiError(e, 'Could not start call');
+    }
+  };
+
+  const joinActiveCall = async () => {
+    if (!activeCall) return;
+    if (!isAgoraAvailable) {
+      showError('Calls need the latest app build. Please update or reinstall the app.');
+      return;
+    }
+    try {
+      await joinRoomCall(roomId, activeCall.callId);
+    } catch {
+      /* the call may have just ended server-side — still let them try to join the channel */
+    }
+    goToCallScreen(activeCall);
+  };
+
   // ── Reply / swipe ──
   const onSwipeReply = useCallback((msg: RoomMessageCard) => {
     // Haptic already fired at the 60px threshold crossing (MessageBubble pan).
@@ -837,6 +955,15 @@ export default function RoomChat() {
     },
     [messages],
   );
+
+  // Deep link from Pinned Messages: jump to the target message once it's loaded.
+  useEffect(() => {
+    if (!params.scrollTo || scrollToParamHandled.current) return;
+    if (messages.some((m) => m.id === params.scrollTo)) {
+      scrollToParamHandled.current = true;
+      scrollToMessage(params.scrollTo);
+    }
+  }, [params.scrollTo, messages, scrollToMessage]);
 
   const scrollToBottom = useCallback(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -1100,8 +1227,28 @@ export default function RoomChat() {
           onOpenInfo={openInfo}
           onSearch={() => setSearchMode(true)}
           onMenu={() => setMenuOpen(true)}
+          onAudioCall={() => startRoomCall('audio')}
+          onVideoCall={() => startRoomCall('video')}
         />
       )}
+
+      {/* Active group call banner */}
+      {activeCall && !searchMode && !isSelecting ? (
+        <Pressable
+          onPress={joinActiveCall}
+          style={[styles.pinnedBanner, { backgroundColor: theme.surfaceElevated, borderLeftColor: theme.online }]}
+        >
+          <Ionicons name={activeCall.type === 'video' ? 'videocam' : 'call'} size={16} color={theme.online} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.pinnedLabel, { color: theme.online }]}>
+              {activeCall.type === 'video' ? 'Group video call' : 'Group audio call'} in progress
+            </Text>
+            <Text style={[styles.pinnedText, { color: theme.textSecondary }]} numberOfLines={1}>
+              Tap to join
+            </Text>
+          </View>
+        </Pressable>
+      ) : null}
 
       {/* Pinned banner */}
       {pinned && !searchMode && !isSelecting ? (

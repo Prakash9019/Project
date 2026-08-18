@@ -14,7 +14,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTheme, FontFamily, DisplayFont, FontSize, spacing } from '../../src/theme';
-import { listMessages } from '../../src/services/api';
+import { listConversationMedia } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 import { toastApiError } from '../../src/lib/toast';
 import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
@@ -65,24 +65,38 @@ export default function ChatMedia() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
 
+  // Which server-side media kinds back each tab. The classification below still
+  // runs, but now over the FULL conversation history rather than whatever
+  // happened to be in the last loaded page of messages.
+  const KINDS: Record<Tab, ('image' | 'video' | 'link' | 'document')[]> = useMemo(
+    () => ({ media: ['image', 'video'], links: ['link'], documents: ['document'] }),
+    [],
+  );
+
   const load = useCallback(async () => {
     if (!conversationId) return;
     setLoading(true);
     try {
-      const res = await listMessages(conversationId, { limit: 100 });
-      setMessages(res.messages);
+      const pages = await Promise.all(
+        KINDS[tab].map((type) => listConversationMedia(conversationId, { type, limit: 100 })),
+      );
+      // Merge the kinds behind one tab and keep the newest-first ordering.
+      const merged = pages
+        .flatMap((p) => p.media)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setMessages(merged);
     } catch (e) {
       toastApiError(e, 'Could not load media');
     } finally {
       setLoading(false);
     }
-  }, [conversationId]);
+  }, [conversationId, tab, KINDS]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Client-side classification (inbox has no dedicated media endpoint).
+  // Client-side classification of the server-filtered page.
   const media = useMemo<MediaEntry[]>(() => {
     const out: MediaEntry[] = [];
     messages.forEach((m) => {

@@ -1,14 +1,14 @@
 {
   "project": "NearMe",
-  "description": "Real-Time Proximity Social Discovery \u2014 no swipe, no match request. Open chat immediately. Audio/video calls enabled once the other party has replied at least once.",
+  "description": "Real-Time Proximity Social Discovery — no swipe, no match request. Open chat immediately. Audio/video calls enabled once the other party has replied at least once.",
   "specVersion": "v3.0",
   "baseUrl": "http://localhost:4000",
   "stack": {
     "language": "TypeScript",
-    "framework": "Express (v1) \u2192 NestJS (v2 migration)",
+    "framework": "Express (v1) → NestJS (v2 migration)",
     "database": "PostgreSQL",
     "orm": "Prisma",
-    "auth": "Passwordless: Firebase Phone OTP (SMS) + Firebase Google Sign-In + custom Email OTP (6-digit via Resend) \u2192 custom JWT",
+    "auth": "Passwordless: Firebase Phone OTP (SMS) + Firebase Google Sign-In + custom Email OTP (6-digit via Resend) → custom JWT",
     "realtime": "Socket.IO",
     "cache": "Redis (geo-spatial index, rate limits, presence)",
     "calling": "Agora SDK or 100ms",
@@ -17,10 +17,10 @@
     "pushNotifications": "Firebase Cloud Messaging",
     "payments": "Razorpay (India), Stripe (global)",
     "identityVerification": "DigiLocker (India), Stripe Identity (global)",
-    "storage": "Google Cloud Storage (GCS) \u2014 signed URLs for all media"
+    "storage": "Google Cloud Storage (GCS) — signed URLs for all media"
   },
   "coreMechanic": {
-    "summary": "No swipe. No match request. Person A taps a profile \u2192 chat opens immediately. Audio/video call buttons are VISIBLE immediately but DISABLED until Person B sends their first reply. Enforced server-side \u2014 no paid override, no bypass.",
+    "summary": "No swipe. No match request. Person A taps a profile → chat opens immediately. Audio/video call buttons are VISIBLE immediately but DISABLED until Person B sends their first reply. Enforced server-side — no paid override, no bypass.",
     "callEnableRule": "Calls are enabled once the non-initiating user has sent at least one message. Tracked via aHasReplied/bHasReplied on the Conversation model. Call buttons always visible in UI; only disabled before first reply. No paid override.",
     "freeInteractionCap": {
       "description": "Free users can interact with a maximum of 20 unique people (lifetime cap, not daily)",
@@ -32,7 +32,7 @@
       ],
       "doesNotCount": "subsequent messages or calls to already-interacted people",
       "paidUsers": "no interaction cap",
-      "tracking": "UserInteraction table \u2014 unique (actorId, targetId) pairs",
+      "tracking": "UserInteraction table — unique (actorId, targetId) pairs",
       "enforcement": "server-side on POST /api/v1/conversations/start and POST /api/v1/discovery/taps"
     },
     "callTimeLimits": {
@@ -241,11 +241,11 @@
   "orientationGridLogic": {
     "notes": "Grid visibility based on WHO THEY WANT TO SEE and WHO WANTS TO SEE THEM.",
     "rules": [
-      "Straight man \u2192 grids of women who want to see men",
-      "Gay man \u2192 grids of men who want to see men",
-      "Lesbian woman \u2192 grids of women who want to see women",
-      "Bisexual \u2192 all matching grids by default",
-      "Non-binary \u2192 chooses via whoCanDiscoverMe setting"
+      "Straight man → grids of women who want to see men",
+      "Gay man → grids of men who want to see men",
+      "Lesbian woman → grids of women who want to see women",
+      "Bisexual → all matching grids by default",
+      "Non-binary → chooses via whoCanDiscoverMe setting"
     ]
   },
   "safetySystem": {
@@ -258,7 +258,7 @@
       "aiTextModeration": true
     },
     "blockingSystem": {
-      "mutualVisibility": "Fully mutual \u2014 if A blocks B, B also cannot see A in any listing (grid, search, nearby, likes, matches, profile views, recommendations)",
+      "mutualVisibility": "Fully mutual — if A blocks B, B also cannot see A in any listing (grid, search, nearby, likes, matches, profile views, recommendations)",
       "conversationHiding": "Block immediately sets aIsHidden=bIsHidden=true on the conversation; conversation disappears from both users' inboxes. Messages preserved in DB for moderation. Visibility restores if block is removed.",
       "utility": "isBlocked(userAId, userBId) checks both directions. Every user-listing query must filter blocked users."
     },
@@ -288,9 +288,9 @@
       "custom_email_otp"
     ],
     "flow": {
-      "phone": "Firebase Phone Auth SMS \u2192 Firebase ID token (carries phone_number) \u2192 POST /api/v1/auth/firebase \u2192 NearMe JWT. Sets phoneVerified=true.",
-      "google": "Firebase Google Sign-In \u2192 Firebase ID token (carries email) \u2192 POST /api/v1/auth/firebase \u2192 NearMe JWT. Sets emailVerified per token.",
-      "email": "POST /api/v1/auth/email/send-otp \u2192 POST /api/v1/auth/email/verify-otp \u2192 NearMe JWT directly (no Firebase involved). Sets emailVerified=true."
+      "phone": "Firebase Phone Auth SMS → Firebase ID token (carries phone_number) → POST /api/v1/auth/firebase → NearMe JWT. Sets phoneVerified=true.",
+      "google": "Firebase Google Sign-In → Firebase ID token (carries email) → POST /api/v1/auth/firebase → NearMe JWT. Sets emailVerified per token.",
+      "email": "POST /api/v1/auth/email/send-otp → POST /api/v1/auth/email/verify-otp → NearMe JWT directly (no Firebase involved). Sets emailVerified=true."
     },
     "endpoints": {
       "firebaseLogin": "POST /api/v1/auth/firebase",
@@ -301,9 +301,9 @@
       "me": "GET /api/v1/auth/me"
     },
     "removed": [
-      "POST /api/v1/auth/request-otp \u2014 removed, replaced by Firebase",
-      "POST /api/v1/auth/verify-otp \u2014 removed, replaced by Firebase",
-      "POST /api/v1/verification/face \u2014 removed, face verification dropped"
+      "POST /api/v1/auth/request-otp — removed, replaced by Firebase",
+      "POST /api/v1/auth/verify-otp — removed, replaced by Firebase",
+      "POST /api/v1/verification/face — removed, face verification dropped"
     ],
     "verifiedGate": "bearer+verified = valid accessToken AND (phoneVerified=true OR emailVerified=true)",
     "notes": "isVerified = phoneVerified OR emailVerified (changed from AND with faceVerified, which is removed). Discovery (grid/explore) shows users with phoneVerified OR emailVerified."
@@ -386,7 +386,7 @@
       "method": "POST",
       "path": "/api/v1/auth/email/verify-otp",
       "auth": "none",
-      "summary": "Verify a 6-digit email code \u2192 issues NearMe JWT pair directly (no Firebase). Upserts user by email, sets emailVerified=true. Max 5 attempts per code.",
+      "summary": "Verify a 6-digit email code → issues NearMe JWT pair directly (no Firebase). Upserts user by email, sets emailVerified=true. Max 5 attempts per code.",
       "requestBody": {
         "required": [
           "email",
@@ -604,7 +604,7 @@
       "method": "POST",
       "path": "/api/v1/me/fcm-token",
       "auth": "bearer+verified",
-      "summary": "Register/refresh this device's FCM token for background push (20260718). Requires @react-native-firebase/messaging linked natively; server sends via firebase-admin using FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY (already configured for Firebase Auth). Push is only sent when the recipient has no live socket (RedisKeys.presence) \u2014 foreground is covered by in-app toasts.",
+      "summary": "Register/refresh this device's FCM token for background push (20260718). Requires @react-native-firebase/messaging linked natively; server sends via firebase-admin using FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY (already configured for Firebase Auth). Push is only sent when the recipient has no live socket (RedisKeys.presence) — foreground is covered by in-app toasts.",
       "requestBody": {
         "required": [
           "token"
@@ -773,7 +773,7 @@
         },
         {
           "name": "advancedFilters",
-          "notes": "JSON-encoded { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[]. Parsed and logged, but not yet enforced \u2014 the User model has no matching columns yet."
+          "notes": "JSON-encoded { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[]. Parsed and logged, but not yet enforced — the User model has no matching columns yet."
         }
       ],
       "responses": {
@@ -783,19 +783,19 @@
             "total": "number",
             "limit": "number",
             "offset": "number",
-            "radiusM": "number \u2014 the clamped radius actually used for this request",
-            "planLimit": "number | null \u2014 plan-gated total-profile cap applied (100 free / 600 premium / unlimited gold+platinum)"
+            "radiusM": "number — the clamped radius actually used for this request",
+            "planLimit": "number | null — plan-gated total-profile cap applied (100 free / 600 premium / unlimited gold+platinum)"
           }
         }
       },
-      "notes": "UserCard fields: profilePhoto, firstName, age, distance, distanceLabel, lastActiveAt (human-readable), isVerified, isOnline (boolean, false when hideActiveStatus is on), hasLocation (boolean \u2014 true when the candidate was found via the Redis geo index rather than the DB fallback pass; used by the client to decide whether a map marker can be placed, since exact lat/lng is never returned), height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked, boosted, rightNowStatus, rightNowCategory, rightNowActive. Ranking is a weighted score, not a plain sort: boosted/spotlight add-ons score by tier (boost_local +8,000,000 / boost_extended +9,000,000 / boost_city_wide +10,000,000 / mega_boost +11,000,000 / spotlight +12,000,000) > platinum (+5,000,000) > gold (+2,000,000) > premium (+1,000,000) > free (+0), plus up to 500,000 pts for distance (0m=max, 100km=0), up to 100,000 pts for profileCompletenessScore, up to 50,000 pts for historicalReplyRate \u2014 so Platinum candidates outrank lower tiers across every page, not just within one page. If Redis has no geo hit for the caller's radius (no location synced yet, sparse area), the endpoint falls back to a DB-only candidate pool instead of returning an empty grid; those cards have distanceLabel=null. Candidates with hideExactDistance=true (Gold+) show distanceLabel='Near you' instead of a real distance."
+      "notes": "UserCard fields: profilePhoto, firstName, age, distance, distanceLabel, lastActiveAt (human-readable), isVerified, isOnline (boolean, false when hideActiveStatus is on), hasLocation (boolean — true when the candidate was found via the Redis geo index rather than the DB fallback pass; used by the client to decide whether a map marker can be placed, since exact lat/lng is never returned), height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked, boosted, rightNowStatus, rightNowCategory, rightNowActive. Ranking is a weighted score, not a plain sort: boosted/spotlight add-ons score by tier (boost_local +8,000,000 / boost_extended +9,000,000 / boost_city_wide +10,000,000 / mega_boost +11,000,000 / spotlight +12,000,000) > platinum (+5,000,000) > gold (+2,000,000) > premium (+1,000,000) > free (+0), plus up to 500,000 pts for distance (0m=max, 100km=0), up to 100,000 pts for profileCompletenessScore, up to 50,000 pts for historicalReplyRate — so Platinum candidates outrank lower tiers across every page, not just within one page. If Redis has no geo hit for the caller's radius (no location synced yet, sparse area), the endpoint falls back to a DB-only candidate pool instead of returning an empty grid; those cards have distanceLabel=null. Candidates with hideExactDistance=true (Gold+) show distanceLabel='Near you' instead of a real distance."
     },
     {
       "id": "get-grid-spotlight",
       "method": "GET",
       "path": "/api/v1/grid/spotlight",
       "auth": "bearer+verified",
-      "summary": "Featured Nearby carousel \u2014 users with an active 'spotlight' add-on near the viewer.",
+      "summary": "Featured Nearby carousel — users with an active 'spotlight' add-on near the viewer.",
       "query": [
         {
           "name": "lat",
@@ -809,7 +809,7 @@
       "responses": {
         "200": {
           "schema": {
-            "users": "array<UserCard> \u2014 max 5, newest spotlight activation first"
+            "users": "array<UserCard> — max 5, newest spotlight activation first"
           }
         }
       },
@@ -820,11 +820,11 @@
       "method": "GET",
       "path": "/api/v1/discovery/right-now",
       "auth": "bearer+verified",
-      "summary": "Feed of nearby users with an active Right Now status. \u2264100km via Redis geo; honours blocks, 14-day inactivity, grid visibility, and the grid's orientation filter.",
+      "summary": "Feed of nearby users with an active Right Now status. ≤100km via Redis geo; honours blocks, 14-day inactivity, grid visibility, and the grid's orientation filter.",
       "responses": {
         "200": {
           "schema": {
-            "statuses": "array<UserCard & { rightNowStatus, rightNowCategory, rightNowExpiresAt }>",
+            "statuses": "array<UserCard & { rightNowStatus, rightNowCategory, rightNowExpiresAt, rightNowHosting }>",
             "total": "number"
           }
         }
@@ -858,7 +858,7 @@
             "audioCallEnabled": false,
             "videoCallEnabled": false
           },
-          "description": "New conversation \u2014 calls disabled until other party replies"
+          "description": "New conversation — calls disabled until other party replies"
         },
         "403": {
           "schema": {
@@ -937,7 +937,7 @@
           {
             "name": "caption",
             "type": "string",
-            "notes": "added 20260720; optional, max 1000 chars. Caption travels WITH an image message (type=photo) as one message \u2014 not a separate text message."
+            "notes": "added 20260720; optional, max 1000 chars. Caption travels WITH an image message (type=photo) as one message — not a separate text message."
           },
           {
             "name": "ciphertext",
@@ -1080,7 +1080,7 @@
           }
         }
       },
-      "notes": "403 calls_disabled if the callee has turned off audio/video calls (audioCallAvailable/videoCallAvailable=false) \u2014 checked after the reply-gate."
+      "notes": "403 calls_disabled if the callee has turned off audio/video calls (audioCallAvailable/videoCallAvailable=false) — checked after the reply-gate."
     },
     {
       "id": "calls-update",
@@ -1513,8 +1513,8 @@
             "plan": "string",
             "planExpiresAt": "iso8601",
             "ok": true,
-            "accessToken": "string? \u2014 fresh JWT issued so new plan entitlements apply immediately, without waiting for the old token to expire",
-            "refreshToken": "string? \u2014 paired with accessToken"
+            "accessToken": "string? — fresh JWT issued so new plan entitlements apply immediately, without waiting for the old token to expire",
+            "refreshToken": "string? — paired with accessToken"
           }
         }
       }
@@ -1541,17 +1541,17 @@
       "method": "DELETE",
       "path": "/api/v1/billing/subscriptions/current",
       "auth": "bearer+verified",
-      "summary": "Cancel at period end \u2014 plan stays active until the current billing period's expiresAt; no immediate downgrade or refund.",
+      "summary": "Cancel at period end — plan stays active until the current billing period's expiresAt; no immediate downgrade or refund.",
       "responses": {
         "200": {
           "schema": {
             "cancelledAt": "iso8601",
-            "effectiveAt": "iso8601 \u2014 plan reverts to free after this date"
+            "effectiveAt": "iso8601 — plan reverts to free after this date"
           }
         },
         "404": {
           "schema": {
-            "error": "not_found \u2014 no active subscription found"
+            "error": "not_found — no active subscription found"
           }
         }
       }
@@ -1856,7 +1856,7 @@
       "method": "GET",
       "path": "/api/rooms/:roomId/media",
       "auth": "bearer+verified+member",
-      "summary": "Shared media for the Group Info 'Media, Links & Documents' screen. Filters the room's non-deleted messages by kind: image (type='image' with mediaUrl), voice (type='voice' with mediaUrl), document (text message with mediaUrl and a \ud83d\udcc4 caption), link (text message whose content contains a URL \u2014 rare, external links are blocked at send time). Omitting type returns all messages with a mediaUrl. Each item is a RoomMessageCard (signed mediaUrl, sender UserCard). Cursor paginates by createdAt, newest first.",
+      "summary": "Shared media for the Group Info 'Media, Links & Documents' screen. Filters the room's non-deleted messages by kind: image (type='image' with mediaUrl), voice (type='voice' with mediaUrl), document (text message with mediaUrl and a 📄 caption), link (text message whose content contains a URL — rare, external links are blocked at send time). Omitting type returns all messages with a mediaUrl. Each item is a RoomMessageCard (signed mediaUrl, sender UserCard). Cursor paginates by createdAt, newest first.",
       "query": [
         {
           "name": "type",
@@ -1920,7 +1920,7 @@
             "name": "metadata",
             "type": "string",
             "nullable": true,
-            "notes": "added 20260725; opaque JSON blob (max 4000 chars), e.g. voice-note waveform amplitudes {amplitudes:number[]}. Never moderated/content-rule-checked and never rendered as message text (unlike content) \u2014 stored/returned verbatim, null when message isDeleted."
+            "notes": "added 20260725; opaque JSON blob (max 4000 chars), e.g. voice-note waveform amplitudes {amplitudes:number[]}. Never moderated/content-rule-checked and never rendered as message text (unlike content) — stored/returned verbatim, null when message isDeleted."
           }
         ]
       },
@@ -2086,7 +2086,7 @@
       "method": "DELETE",
       "path": "/api/rooms/:roomId/messages/:messageId/hide",
       "auth": "bearer+verified",
-      "summary": "\"Delete for me\" \u2014 hides a room message from the caller's own view only (RoomMessage.hiddenForUserIds). Any member. No socket broadcast (only the caller's view changes).",
+      "summary": "\"Delete for me\" — hides a room message from the caller's own view only (RoomMessage.hiddenForUserIds). Any member. No socket broadcast (only the caller's view changes).",
       "responses": {
         "204": {
           "schema": {}
@@ -2098,7 +2098,7 @@
       "method": "PATCH",
       "path": "/api/rooms/:roomId/messages/:messageId",
       "auth": "bearer+verified",
-      "summary": "Edit own room message \u2014 text only, within a 5-minute window, same content-rule + AI moderation gates as sendMessage. Emits room:message_edited to the room.",
+      "summary": "Edit own room message — text only, within a 5-minute window, same content-rule + AI moderation gates as sendMessage. Emits room:message_edited to the room.",
       "body": {
         "content": "string (1-2000 chars)"
       },
@@ -2335,12 +2335,12 @@
       "method": "GET",
       "path": "/api/v1/me/upload-url",
       "auth": "bearer+verified",
-      "summary": "Get a presigned R2 upload URL for direct client\u2192R2 upload (also aliased at /api/v1/me/photos/upload-url). Client PUTs bytes to uploadUrl with the matching Content-Type, then stores mediaUrl (or key) on the target record/message. No bytes pass through the API.",
+      "summary": "Get a presigned R2 upload URL for direct client→R2 upload (also aliased at /api/v1/me/photos/upload-url). Client PUTs bytes to uploadUrl with the matching Content-Type, then stores mediaUrl (or key) on the target record/message. No bytes pass through the API.",
       "query": [
         {
           "name": "type",
           "type": "'photo'|'album_photo'|'chat_photo'|'voice_clip'|'video_clip'|'video'|'document'|'audio'|'room_image'",
-          "notes": "default photo. Keys: photo\u2192profile-photos/{uid}, chat_photo\u2192chat-photos/{uid}, video\u2192video-clips/{uid}/*.mp4, document\u2192documents/{uid}/*.{ext}, audio\u2192audio/{uid}/*.m4a, room_image\u2192room-media/{roomId}/*.jpg"
+          "notes": "default photo. Keys: photo→profile-photos/{uid}, chat_photo→chat-photos/{uid}, video→video-clips/{uid}/*.mp4, document→documents/{uid}/*.{ext}, audio→audio/{uid}/*.m4a, room_image→room-media/{roomId}/*.jpg"
         },
         {
           "name": "contentType",
@@ -2352,7 +2352,7 @@
           "name": "ext",
           "type": "string",
           "nullable": true,
-          "notes": "file extension for type=document (sanitized, \u226410 chars)"
+          "notes": "file extension for type=document (sanitized, ≤10 chars)"
         },
         {
           "name": "roomId",
@@ -2532,7 +2532,7 @@
       "method": "DELETE",
       "path": "/api/v1/conversations/:conversationId/messages/:messageId",
       "auth": "bearer+verified",
-      "summary": "Delete for me \u2014 hides a message from the caller's side only (deletedByA/deletedByB). Delete-for-everyone uses the /unsend endpoint.",
+      "summary": "Delete for me — hides a message from the caller's side only (deletedByA/deletedByB). Delete-for-everyone uses the /unsend endpoint.",
       "responses": {
         "204": {}
       }
@@ -2605,7 +2605,7 @@
           "type": "string",
           "frontendVisible": false,
           "nullable": true,
-          "notes": "Optional \u2014 only set if user adds phone for 2FA; not used for auth"
+          "notes": "Optional — only set if user adds phone for 2FA; not used for auth"
         },
         {
           "name": "phoneVerified",
@@ -2722,7 +2722,7 @@
         {
           "name": "fantasyTags",
           "type": "array<string>",
-          "notes": "NEW (Change 5) \u2014 curated + free-form tags"
+          "notes": "NEW (Change 5) — curated + free-form tags"
         },
         {
           "name": "datingIntentions",
@@ -2769,7 +2769,7 @@
         {
           "name": "verifiedBadge",
           "type": "boolean",
-          "notes": "legacy blue tick \u2014 superseded by isVerified rule"
+          "notes": "legacy blue tick — superseded by isVerified rule"
         },
         {
           "name": "isCollegeVerified",
@@ -2903,34 +2903,34 @@
           "type": "timestamp",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 user restricted from interactions until this time (e.g. after report/penalty)"
+          "notes": "NEW (Phase 9) — user restricted from interactions until this time (e.g. after report/penalty)"
         },
         {
           "name": "isBanned",
           "type": "boolean",
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 account banned; prevents re-login. Also used as soft-delete flag on account deletion."
+          "notes": "NEW (Phase 9) — account banned; prevents re-login. Also used as soft-delete flag on account deletion."
         },
         {
           "name": "bannedAt",
           "type": "timestamp",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 timestamp when account was banned"
+          "notes": "NEW (Phase 9) — timestamp when account was banned"
         },
         {
           "name": "interactionPenaltyUntil",
           "type": "timestamp",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 interaction-rate penalty expires at this time"
+          "notes": "NEW (Phase 9) — interaction-rate penalty expires at this time"
         },
         {
           "name": "interactionPenaltyMultiplier",
           "type": "number",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "NEW (Phase 9) \u2014 multiplier applied to interaction cost during penalty window (default 1.0)"
+          "notes": "NEW (Phase 9) — multiplier applied to interaction cost during penalty window (default 1.0)"
         },
         {
           "name": "lastActiveAt",
@@ -2949,7 +2949,7 @@
           "type": "string",
           "nullable": true,
           "frontendVisible": false,
-          "notes": "Firebase UID \u2014 primary identity key for Firebase Auth users"
+          "notes": "Firebase UID — primary identity key for Firebase Auth users"
         },
         {
           "name": "email",
@@ -2965,22 +2965,22 @@
         {
           "name": "groupsAvailable",
           "type": "boolean",
-          "notes": "default false \u2014 availability toggle"
+          "notes": "default false — availability toggle"
         },
         {
           "name": "audioCallAvailable",
           "type": "boolean",
-          "notes": "default true \u2014 availability toggle"
+          "notes": "default true — availability toggle"
         },
         {
           "name": "videoCallAvailable",
           "type": "boolean",
-          "notes": "default true \u2014 availability toggle"
+          "notes": "default true — availability toggle"
         }
       ],
       "removed": [
-        "dailyNewChatCount \u2014 replaced by UserInteraction lifetime cap (Change 6)",
-        "dailyNewChatResetDate \u2014 no longer needed (Change 6)"
+        "dailyNewChatCount — replaced by UserInteraction lifetime cap (Change 6)",
+        "dailyNewChatResetDate — no longer needed (Change 6)"
       ]
     },
     {
@@ -3011,22 +3011,22 @@
         {
           "name": "aHasReplied",
           "type": "boolean",
-          "notes": "NEW (Change 2) \u2014 User A has sent at least one message. Call buttons enabled for B when this is true."
+          "notes": "NEW (Change 2) — User A has sent at least one message. Call buttons enabled for B when this is true."
         },
         {
           "name": "bHasReplied",
           "type": "boolean",
-          "notes": "NEW (Change 2) \u2014 User B has sent at least one message. Call buttons enabled for A when this is true."
+          "notes": "NEW (Change 2) — User B has sent at least one message. Call buttons enabled for A when this is true."
         },
         {
           "name": "aIsHidden",
           "type": "boolean",
-          "notes": "NEW (Change 1) \u2014 true when conversation hidden from User A's inbox (set by block). Messages preserved."
+          "notes": "NEW (Change 1) — true when conversation hidden from User A's inbox (set by block). Messages preserved."
         },
         {
           "name": "bIsHidden",
           "type": "boolean",
-          "notes": "NEW (Change 1) \u2014 true when conversation hidden from User B's inbox."
+          "notes": "NEW (Change 1) — true when conversation hidden from User B's inbox."
         },
         {
           "name": "aPinned",
@@ -3071,7 +3071,7 @@
         }
       ],
       "removed": [
-        "callUnlocked \u2014 replaced by aHasReplied/bHasReplied (Change 2)"
+        "callUnlocked — replaced by aHasReplied/bHasReplied (Change 2)"
       ]
     },
     {
@@ -3098,14 +3098,14 @@
       ],
       "indexes": [
         "UNIQUE(blockerId, blockedId)",
-        "INDEX(blockedId, blockerId) \u2014 reverse lookup for bidirectional checks (Change 1.2)"
+        "INDEX(blockedId, blockerId) — reverse lookup for bidirectional checks (Change 1.2)"
       ],
       "effects": "Block immediately hides conversation for both users (aIsHidden=bIsHidden=true). Both users excluded from each other's results in ALL user-listing queries."
     },
     {
       "name": "UserInteraction",
       "table": "user_interactions",
-      "notes": "NEW (Change 6) \u2014 tracks unique interactions for the free-tier lifetime cap of 20 unique people. Each (actorId, targetId) pair stored once regardless of how many messages/taps follow.",
+      "notes": "NEW (Change 6) — tracks unique interactions for the free-tier lifetime cap of 20 unique people. Each (actorId, targetId) pair stored once regardless of how many messages/taps follow.",
       "fields": [
         {
           "name": "id",
@@ -3139,7 +3139,7 @@
     {
       "name": "Album",
       "table": "albums",
-      "notes": "NEW (Change 7) \u2014 user photo albums. Separate from PrivateAlbum (legacy grant system). Plan limits enforced at app layer.",
+      "notes": "NEW (Change 7) — user photo albums. Separate from PrivateAlbum (legacy grant system). Plan limits enforced at app layer.",
       "fields": [
         {
           "name": "id",
@@ -3197,7 +3197,7 @@
     {
       "name": "AlbumPhoto",
       "table": "album_photos",
-      "notes": "NEW (Change 7) \u2014 photos within an Album. Signed GCS URLs, 15 min expiry. Validated: JPEG/PNG/WebP, max 10MB. Moderated via AWS Rekognition on upload.",
+      "notes": "NEW (Change 7) — photos within an Album. Signed GCS URLs, 15 min expiry. Validated: JPEG/PNG/WebP, max 10MB. Moderated via AWS Rekognition on upload.",
       "fields": [
         {
           "name": "id",
@@ -3210,7 +3210,7 @@
         {
           "name": "userId",
           "type": "uuid",
-          "notes": "owner \u2014 for fast ownership checks"
+          "notes": "owner — for fast ownership checks"
         },
         {
           "name": "photoUrl",
@@ -3371,7 +3371,7 @@
           "name": "replyTo",
           "type": "object",
           "nullable": true,
-          "notes": "denormalized quote in API responses only: { id, senderId, content, type, mediaUrl, thumbnailUrl, duration } (content truncated to 60 chars, 'message removed' if unsent) \u2014 not a stored column. added 20260726_video_and_duration: type/mediaUrl/thumbnailUrl/duration added so a quoted photo or video renders a real thumbnail without the client having to locate the original in its loaded page. mediaUrl/thumbnailUrl are SIGNED; both are null when the quoted message is unsent or is a view-once photo (never leak the one-shot image)."
+          "notes": "denormalized quote in API responses only: { id, senderId, content, type, mediaUrl, thumbnailUrl, duration } (content truncated to 60 chars, 'message removed' if unsent) — not a stored column. added 20260726_video_and_duration: type/mediaUrl/thumbnailUrl/duration added so a quoted photo or video renders a real thumbnail without the client having to locate the original in its loaded page. mediaUrl/thumbnailUrl are SIGNED; both are null when the quoted message is unsent or is a view-once photo (never leak the one-shot image)."
         },
         {
           "name": "reactions",
@@ -3582,7 +3582,7 @@
     {
       "name": "Photo",
       "table": "photos",
-      "notes": "Phase 9: added isPublished field. Profile photos \u2014 Change 3.2: single optional profile picture, no minimum. First public photo auto-set as primary.",
+      "notes": "Phase 9: added isPublished field. Profile photos — Change 3.2: single optional profile picture, no minimum. First public photo auto-set as primary.",
       "fields": [
         {
           "name": "id",
@@ -3611,7 +3611,7 @@
         {
           "name": "isPublished",
           "type": "boolean",
-          "notes": "NEW (Phase 9) \u2014 false = pending manual moderation review. Unpublished photos hidden from all public listings."
+          "notes": "NEW (Phase 9) — false = pending manual moderation review. Unpublished photos hidden from all public listings."
         },
         {
           "name": "albumId",
@@ -3975,7 +3975,7 @@
         {
           "name": "metadata",
           "type": "string|null",
-          "notes": "added 20260725; opaque JSON blob (e.g. voice-note {amplitudes:number[]}), null when isDeleted. Never rendered as text \u2014 display code must not fall back to this for previews/snippets."
+          "notes": "added 20260725; opaque JSON blob (e.g. voice-note {amplitudes:number[]}), null when isDeleted. Never rendered as text — display code must not fall back to this for previews/snippets."
         },
         {
           "name": "isPinned",
@@ -4215,7 +4215,7 @@
         "open_relationship",
         "prefer_not_to_say"
       ],
-      "notes": "NEW (Change 5) \u2014 distinct from legacy RelationshipType"
+      "notes": "NEW (Change 5) — distinct from legacy RelationshipType"
     },
     {
       "name": "LookingForOption",
@@ -4227,7 +4227,7 @@
         "casual",
         "friendship"
       ],
-      "notes": "NEW (Change 5) \u2014 lookingFor field values validated against these at app layer"
+      "notes": "NEW (Change 5) — lookingFor field values validated against these at app layer"
     },
     {
       "name": "WhereWeCanMeet",
@@ -4252,7 +4252,7 @@
         "complicated",
         "prefer_not_to_say"
       ],
-      "notes": "legacy \u2014 keep for existing profiles"
+      "notes": "legacy — keep for existing profiles"
     },
     {
       "name": "DatingIntention",
@@ -4405,7 +4405,7 @@
     {
       "name": "message.created",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "id": "uuid",
         "conversationId": "uuid",
@@ -4422,7 +4422,7 @@
     {
       "name": "message.read",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "readerId": "uuid"
@@ -4431,7 +4431,7 @@
     {
       "name": "message.unsend",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid"
@@ -4440,7 +4440,7 @@
     {
       "name": "message.deleted",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid"
@@ -4449,7 +4449,7 @@
     {
       "name": "message.viewed",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid",
@@ -4459,7 +4459,7 @@
     {
       "name": "message.edited",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid",
@@ -4481,7 +4481,7 @@
     {
       "name": "tap.received",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "tapId": "uuid",
         "senderId": "uuid",
@@ -4491,18 +4491,18 @@
     {
       "name": "call:invite",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid",
         "callerId": "uuid",
         "type": "audio|video"
       },
-      "notes": "LEGACY WebRTC \u2014 v2 uses Agora SDK"
+      "notes": "LEGACY WebRTC — v2 uses Agora SDK"
     },
     {
       "name": "call:answer",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid"
       },
@@ -4511,7 +4511,7 @@
     {
       "name": "call:decline",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid"
       }
@@ -4519,7 +4519,7 @@
     {
       "name": "call:end",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "callId": "uuid",
         "durationSec": "number|null"
@@ -4528,7 +4528,7 @@
     {
       "name": "location:update",
       "transport": "websocket",
-      "direction": "client\u2192server",
+      "direction": "client→server",
       "payload": {
         "lat": "number",
         "lng": "number"
@@ -4537,13 +4537,13 @@
     {
       "name": "heartbeat",
       "transport": "websocket",
-      "direction": "client\u2192server",
+      "direction": "client→server",
       "payload": {}
     },
     {
       "name": "boost.activated",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "boostId": "uuid",
         "boostType": "string",
@@ -4553,14 +4553,14 @@
     {
       "name": "room:message",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": "RoomMessageCard"
     },
     {
       "name": "room:typing",
       "transport": "websocket",
-      "direction": "client\u2194server",
+      "direction": "client↔server",
       "room": "room:{roomId}",
       "payload": {
         "userId": "uuid",
@@ -4571,7 +4571,7 @@
     {
       "name": "room:join",
       "transport": "websocket",
-      "direction": "client\u2192server",
+      "direction": "client→server",
       "payload": {
         "roomId": "uuid"
       }
@@ -4579,7 +4579,7 @@
     {
       "name": "room:leave",
       "transport": "websocket",
-      "direction": "client\u2192server",
+      "direction": "client→server",
       "payload": {
         "roomId": "uuid"
       }
@@ -4587,7 +4587,7 @@
     {
       "name": "room:member_joined",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "userId": "uuid",
@@ -4598,7 +4598,7 @@
     {
       "name": "room:member_left",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "userId": "uuid",
@@ -4608,7 +4608,7 @@
     {
       "name": "room:message_reaction",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "messageId": "uuid",
@@ -4621,7 +4621,7 @@
     {
       "name": "room:message_deleted",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "messageId": "uuid"
@@ -4630,7 +4630,7 @@
     {
       "name": "room:info_updated",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "name": "string",
@@ -4640,7 +4640,7 @@
     {
       "name": "room:message_pinned",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "messageId": "uuid",
@@ -4650,7 +4650,7 @@
     {
       "name": "room:member_removed",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "userId": "uuid"
@@ -4659,7 +4659,7 @@
     {
       "name": "room:member_role_changed",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "userId": "uuid",
@@ -4669,7 +4669,7 @@
     {
       "name": "message.status_update",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "payload": {
         "conversationId": "uuid",
         "messageId": "uuid",
@@ -4680,18 +4680,18 @@
     {
       "name": "room:message_delivered",
       "transport": "websocket",
-      "direction": "client\u2194server",
+      "direction": "client↔server",
       "room": "room:{roomId}",
       "payload": {
         "roomId": "uuid",
         "messageId": "uuid"
       },
-      "notes": "client\u2192server: a member reports it received a room message. server\u2192room: broadcast (only on a newly-recorded delivery) so the sender increments deliveredCount (double-grey)."
+      "notes": "client→server: a member reports it received a room message. server→room: broadcast (only on a newly-recorded delivery) so the sender increments deliveredCount (double-grey)."
     },
     {
       "name": "room:ownership_transferred",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "newCreatorId": "uuid"
@@ -4700,7 +4700,7 @@
     {
       "name": "room:deleted",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "room": "room:{roomId}",
       "payload": {
         "roomId": "uuid"
@@ -4709,7 +4709,7 @@
     {
       "name": "room_invite:received",
       "transport": "websocket",
-      "direction": "server\u2192client",
+      "direction": "server→client",
       "notes": "Emitted to user:{inviteeId} when someone sends them a room invite via invite-or-add.",
       "payload": {
         "inviteId": "uuid",
@@ -4774,7 +4774,7 @@
     },
     {
       "key": "AGORA_APP_CERTIFICATE",
-      "description": "Server-side only \u2014 NEVER expose to client",
+      "description": "Server-side only — NEVER expose to client",
       "required": true
     },
     {
@@ -4875,16 +4875,16 @@
     }
   ],
   "notes": [
-    "Socket.IO: connect with io(baseUrl, {auth:{token}}) \u2014 socket joins room user:<id> on connect.",
+    "Socket.IO: connect with io(baseUrl, {auth:{token}}) — socket joins room user:<id> on connect.",
     "Auth: Authorization: Bearer <accessToken>. Refresh on 401 via /auth/refresh.",
     "Error envelope: {error:string, message:string, requestId:string, details?:any}. Every request gets a unique requestId (UUID) echoed in X-Request-ID response header. Pass X-Request-ID in requests to correlate logs.",
-    "Fuzzy location: API NEVER returns lat/lng \u2014 only distanceLabel or 'Near you' for hideExactDistance users.",
-    "CRITICAL \u2014 Call gate (Change 2): calls enabled when the OTHER party has replied. aHasReplied = User A has sent a message; bHasReplied = User B has. Call buttons always visible; returns audioCallEnabled/videoCallEnabled=false until flag is true. No paid override.",
-    "CRITICAL \u2014 Blocking (Change 1): bidirectional \u2014 if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
-    "CRITICAL \u2014 Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
-    "CRITICAL \u2014 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
-    "CRITICAL \u2014 isVerified: computed = phoneVerified OR emailVerified (face verification removed 20260618). Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
-    "CRITICAL \u2014 Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
+    "Fuzzy location: API NEVER returns lat/lng — only distanceLabel or 'Near you' for hideExactDistance users.",
+    "CRITICAL — Call gate (Change 2): calls enabled when the OTHER party has replied. aHasReplied = User A has sent a message; bHasReplied = User B has. Call buttons always visible; returns audioCallEnabled/videoCallEnabled=false until flag is true. No paid override.",
+    "CRITICAL — Blocking (Change 1): bidirectional — if A blocks B, B cannot see A in ANY listing. isBlocked(a,b) utility covers both directions. Conversation aIsHidden=bIsHidden=true on block. Raw messages preserved for moderation.",
+    "CRITICAL — Free interaction cap (Change 6): 20 unique people lifetime. Counts first message OR first like to a new person. Subsequent interactions with same person do NOT count. Paid users: no cap.",
+    "CRITICAL — 14-day inactivity (Change 4): lastActiveAt < now-14d hides user from grid/discovery/nearby/recommendations. Enforced via DB query filter, not isOnGrid. isOnGrid=false is panic-hide only.",
+    "CRITICAL — isVerified: computed = phoneVerified OR emailVerified (face verification removed 20260618). Updated whenever either verification status changes. Returned on ALL user card/profile responses.",
+    "CRITICAL — Profile photo (Change 3.2): single optional profile picture. No minimum photo requirement for discovery eligibility.",
     "UserCard response fields (Change 5): profilePhoto, firstName, age, distance, lastActiveAt (human-readable), isVerified, height, weight, bodyType, skinTone, aboutMe, whereAreYouFrom, relationshipStatus, lookingFor, whereWeCanMeet, preferences, fantasyTags, tribes, tags, isShortlisted, isLiked.",
     "Albums (Change 7): /api/albums endpoints. Plan limits: free=1/10, premium=3/30, gold=5/50, platinum=unlimited/100. Photos: JPEG/PNG/WebP, max 10MB, AWS Rekognition moderated. Served as signed GCS URLs (15 min expiry). Block check on /api/v1/users/:userId/albums.",
     "Plan enforcement: check user.plan and user.planExpiresAt on every gated endpoint. Expired plan = free tier.",
@@ -4892,33 +4892,39 @@
     "Women safety defaults on signup: verifiedUsersOnlyFilter=true for users who specify gender=woman.",
     "Moderation: AWS Rekognition scans all uploaded photos/clips before publish. Required for all album photo uploads.",
     "AI features: use claude-sonnet-4-6 for icebreakers/reply suggestions/profile optimizer. All opt-in.",
-    "Health endpoints (no auth): GET /health \u2192 {status:'ok'}, GET /health/live \u2192 {status:'ok'}, GET /health/ready \u2192 checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
+    "Health endpoints (no auth): GET /health → {status:'ok'}, GET /health/live → {status:'ok'}, GET /health/ready → checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
     "Request logger: every response emits structured JSON {requestId, userId, method, path, statusCode, durationMs, plan} to stdout.",
     "Spec: /Users/suryprakash/Project/backend-spec.json (use frontend-from-spec skill to consume).",
     "Auth: Firebase Auth handles identity. Client gets Firebase ID token via Firebase SDK, exchanges at POST /api/v1/auth/firebase for NearMe JWT pair (accessToken + refreshToken).",
     "bearer+verified gate: valid accessToken AND (emailVerified=true OR phoneVerified=true). Google Sign-In users are always verified. Email+password users must verify their email first.",
-    "Right Now (IMPLEMENTED): User model adds rightNowStatus (varchar 120, nullable), rightNowCategory (text: drinks|coffee|workout|hangout|other, nullable), rightNowExpiresAt (timestamp, nullable). Set via PATCH /api/v1/me; clear with PATCH /api/v1/me { rightNowStatus:null, rightNowCategory:null, rightNowExpiresAt:null }. Migration: 20260617_right_now_fields.",
+    "Right Now (IMPLEMENTED): User model adds rightNowStatus (varchar 120, nullable), rightNowCategory (text: drinks|coffee|workout|hangout|other, nullable), rightNowExpiresAt (timestamp, nullable). Set via PATCH /api/v1/me; clear with PATCH /api/v1/me { rightNowStatus:null, rightNowCategory:null, rightNowExpiresAt:null }. Migration: 20260617_right_now_fields. rightNowHosting (boolean, default false, migration 20260809_right_now_hosting) marks the user as hosting; set alongside the other three via PATCH /api/v1/me and reset to false when clearing. Returned on Self and on each right-now feed card.",
     "UserCard (IMPLEMENTED): now includes rightNowStatus, rightNowCategory, and rightNowActive (= rightNowExpiresAt > now()). Status/category are nulled on the card once the status expires.",
-    "GET /api/v1/discovery/right-now (IMPLEMENTED, bearer+verified): feed of nearby users (\u2264100km via Redis geo) with rightNowExpiresAt > now(), isOnGrid=true, lastActiveAt > now()-14d, not blocked, same orientation filter as the grid. Returns { statuses: UserCard[] (each + rightNowStatus, rightNowCategory, rightNowExpiresAt), total }.",
+    "GET /api/v1/discovery/right-now (IMPLEMENTED, bearer+verified): feed of nearby users (≤100km via Redis geo) with rightNowExpiresAt > now(), isOnGrid=true, lastActiveAt > now()-14d, not blocked, same orientation filter as the grid. Returns { statuses: UserCard[] (each + rightNowStatus, rightNowCategory, rightNowExpiresAt, rightNowHosting), total }.",
     "GET /api/v1/discovery/views (IMPLEMENTED, Gold+/premiumFeature('viewed_me')): { views: [{ id, viewer: UserCard, viewedAt }] }. GET /api/v1/discovery/taps (IMPLEMENTED): { taps: [{ id, sender: UserCard, createdAt }] }. POST /api/v1/discovery/taps sends a tap. DELETE /api/v1/discovery/taps/:userId (IMPLEMENTED) removes a tap (un-fire); returns 204. Emits socket 'tap.received' { tapId, senderId, senderCard, createdAt } to the receiver on send.",
     "GET /api/v1/profile/users/:userId (getPublicProfile) (IMPLEMENTED): now returns isLiked (viewer has an active Tap on this user) and isShortlisted (viewer has a Favorite on this user) so the profile screen renders Fire/Star state consistently with the grid. Still upserts a ProfileView unless viewer is incognito or viewing self.",
     "GET /api/v1/me/photos/upload-url (IMPLEMENTED, alias of /api/v1/me/upload-url): { uploadUrl, gcsPath, expiresAt }. Client PUTs bytes to uploadUrl then POST /api/v1/me/photos { url, isPrimary } (url must be a fully-qualified URL).",
     "Self (GET /api/v1/auth/me) (IMPLEMENTED): now includes primaryPhotoUrl (published primary Photo.url, or null) and callLimits. callLimits = { audioMinutesUsed, audioMinutesLimit, videoMinutesUsed, videoMinutesLimit } for FREE plan only (base 5 audio / 2 video per day + active *_call_topup add-ons; resets at UTC midnight); null for paid plans (unlimited).",
-    "Grid query additions sent by the Filters screen (handle server-side on GET /api/v1/grid): gender (csv), relationshipIntent (csv), verifiedOnly (bool, Premium+), activeLast30Min (Premium+), activeLast5Min/recentlyJoined/highReplyRate (Gold+), radius (meters; free \u226425km, Gold+ \u2264100km), advancedFilters (JSON string of { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[], Premium+).",
+    "Grid query additions sent by the Filters screen (handle server-side on GET /api/v1/grid): gender (csv), relationshipIntent (csv), verifiedOnly (bool, Premium+), activeLast30Min (Premium+), activeLast5Min/recentlyJoined/highReplyRate (Gold+), radius (meters; free ≤25km, Gold+ ≤100km), advancedFilters (JSON string of { education?, occupation?, language?, religion?, drinking?, smoking?, relationshipGoal? } each string[], Premium+).",
     "Dating Rooms (Groups): brand-new module (migration 20260619_dating_rooms). Endpoints under /api/rooms (bearer+verified). Message/member endpoints require room membership (requireRoomMember -> 403 not_a_room_member). Messages run AI text moderation (adapters/moderation.classifyText) -> 451 message_flagged. Unread tracked in Redis rooms:lastread:{userId}:{roomId}. Socket channel room:{roomId}; sockets auto-join on connect for joined rooms. Username in room UI = firstName; phone/email/exact location never exposed.",
-    "callHistoryAccess: Premium DOES get call history access (callHistoryAccess=true), matching the PDF feature matrix \u2014 corrected from an earlier implementation gap where Premium was set to false.",
+    "callHistoryAccess: Premium DOES get call history access (callHistoryAccess=true), matching the PDF feature matrix — corrected from an earlier implementation gap where Premium was set to false.",
     "computeEffectiveLimits() is in backend/src/middleware/subscription.ts (not utils/subscription.ts). Returns EffectiveLimits object. Called by requireAuth middleware on every request (attaches to req.effectiveLimits) and also returned in GET /api/v1/auth/me response as effectiveLimits field.",
     "Message template endpoints are mounted on the conversations router: GET/POST /api/v1/conversations/templates, DELETE /api/v1/conversations/templates/:templateId",
-    "Self type = type alias for User. effectiveLimits and callLimits are on User. PublicProfile extends UserCard \u2014 does not include these fields.",
-    "Room privacy & invite links (migration 20260719_room_privacy_invite_code): Room gained isPrivate (bool) and inviteCode (unique string, generated for every room). POST /api/rooms createRoom accepts isPrivate (default false). Private groups: excluded from GET /api/rooms Discover (where isPrivate:false); POST /api/rooms/:roomId/join throws 403 private_room for non-members; invite-or-add (POST /api/rooms/:roomId/invite-or-add/:userId) and bulk add require admin/creator (assertRoomAdmin) \u2014 public groups keep the open member-add policy. Join via link: GET /api/rooms/by-code/:code (preview, no membership) and POST /api/rooms/by-code/:code/join (join; honours isVerifiedOnly; only self-serve way into a private group) \u2014 both registered before /:roomId. RoomCard now carries isPrivate; getRoomDetail returns inviteCode only to members (null otherwise). Frontend: create-group/details.tsx has a Public/Private selector; Group Info shows Share/Copy invite link; deep link nearme://rooms/join/<code> -> app/rooms/join/[code].tsx.",
-    "FCM push payloads (adapters/fcm.ts buildPushMessage) are typed: new_message, reaction, missed_call, room_message, room_member_join, room_member_left, room_mention. data carries {type, conversationId|roomId} for tap navigation. Push is presence-gated + mute-aware; room mentions (@firstName) push room_mention to the matched member."
+    "Self type = type alias for User. effectiveLimits and callLimits are on User. PublicProfile extends UserCard — does not include these fields.",
+    "Room privacy & invite links (migration 20260719_room_privacy_invite_code): Room gained isPrivate (bool) and inviteCode (unique string, generated for every room). POST /api/rooms createRoom accepts isPrivate (default false). Private groups: excluded from GET /api/rooms Discover (where isPrivate:false); POST /api/rooms/:roomId/join throws 403 private_room for non-members; invite-or-add (POST /api/rooms/:roomId/invite-or-add/:userId) and bulk add require admin/creator (assertRoomAdmin) — public groups keep the open member-add policy. Join via link: GET /api/rooms/by-code/:code (preview, no membership) and POST /api/rooms/by-code/:code/join (join; honours isVerifiedOnly; only self-serve way into a private group) — both registered before /:roomId. RoomCard now carries isPrivate; getRoomDetail returns inviteCode only to members (null otherwise). Frontend: create-group/details.tsx has a Public/Private selector; Group Info shows Share/Copy invite link; deep link nearme://rooms/join/<code> -> app/rooms/join/[code].tsx.",
+    "FCM push payloads (adapters/fcm.ts buildPushMessage) are typed: new_message, reaction, missed_call, room_message, room_member_join, room_member_left, room_mention. data carries {type, conversationId|roomId} for tap navigation. Push is presence-gated + mute-aware; room mentions (@firstName) push room_mention to the matched member.",
+    "Group (Dating Room) calling (migration 20260809_room_calls_notification_prefs): extends the 1:1 Call/Agora architecture to rooms instead of duplicating it. New models RoomCall (roomId, initiatorId, type: CallType, status: RoomCallStatus [ongoing|ended], agoraChannelName, agoraToken, startedAt/endedAt/endReason) and RoomCallParticipant (callId, userId, joinedAt, leftAt) — join table mirrors RoomMember. Endpoints (all requireRoomMember, membership is the only gate — rooms have no block-based call restriction, matching room chat): POST /api/rooms/:roomId/calls {type} creates a new call (broadcasts room:call.invite) or, if one is already ongoing in the room, joins it instead (broadcasts room:call.participant_joined) — idempotent start/join. POST /api/rooms/:roomId/calls/:callId/join explicitly joins an active call (for late joiners reacting to the invite). GET /api/rooms/:roomId/calls/active returns the room's live call + active participants, or {call:null}. PATCH /api/rooms/:roomId/calls/:callId {action:leave|end} — leave marks the caller's participant row left and auto-ends the call (room:call.end, endReason all_left) once no participants remain; end is initiator-only and force-ends for everyone (endReason ended_by_host). Agora channel (nearme-room-<roomId>-<ts>) and token (uid 0, wildcard-joinable) are generated once per call via the existing adapters/agora.ts helpers and shared by every participant. Signaling uses emitToRoom (room:<roomId> socket channel, already joined by every member on connect) instead of the 1:1 flow's per-user emitToUser — events: room:call.invite, room:call.participant_joined, room:call.participant_left, room:call.end. Frontend: call buttons in rooms/[id].tsx header; app/call/[id].tsx generalized to a multi-participant grid (video) / avatar list (audio) when launched with a roomId. Deferred: push notifications for offline room-call invites (online members only, via socket).",
+    "Notification preferences now persist server-side (migration 20260809_room_calls_notification_prefs), replacing the previous AsyncStorage-only Settings → Notifications screen. UserSettings gained notifyMessages, notifyPreview, notifySound, notifyVibrate, notifyReactions, notifyMissedCalls, notifyGroupMessages, notifyMemberActivity, notifyMentionsOnly (all boolean, same defaults as the old local DEFAULT_NOTIF_PREFS). Exposed via the existing PATCH /api/v1/me/settings (settingsSchema) and returned by the existing GET /api/v1/auth/me self payload (Self.settings) — no new endpoint. frontend/app/settings/notifications.tsx now loads initial state from me.settings (AsyncStorage kept only as an offline-first cache) and calls updateSettings() on every toggle, optimistic-UI with rollback + toast on failure.",
+    "Chat search + shared media are now server-side and cover a conversation's FULL history, replacing the client-side filter/scan that only ever saw the last loaded page. Two new endpoints on the conversations router (backend/src/modules/chat/chat.routes.ts): GET /api/v1/conversations/:conversationId/messages/search?q=&before=&limit= -> { messages: Message[], hasMore, nextCursor } (case-insensitive substring match on Message.content; excludes unsent/deleted-for-me messages and respects the disappearing-messages cutoff); and GET /api/v1/conversations/:conversationId/media?type=&before=&limit= -> { media: Message[], hasMore, nextCursor } where type is image|video|voice|link|document (view-once photos are always excluded). Both require conversation participation (404 otherwise) and reuse listMessages' serialization, so read receipts stay paid-tier gated. NOTE: /messages/search is registered BEFORE the /messages/:messageId routes so \"search\" is not parsed as a message id. Frontend: app/chat/media.tsx consumes the media endpoint (src/services/api.ts listConversationMedia); searchConversationMessages exists in the client but the in-chat search UI still filters loaded messages only — wiring it needs jump-to-arbitrary-message pagination.",
+    "Production hardening pass (2026-08-15). (1) Rate limiting: new backend/src/middleware/rateLimit.ts (Redis fixed-window, fail-open, keyed by user id when authenticated and by IP pre-auth) applied to POST /auth/firebase|/auth/dev-login|/auth/refresh|/auth/email/verify-otp (30/min per IP), POST /auth/email/send-otp (20/10min per IP), all /api/v1/ai/* (20/min per user), GET /me/upload-url + /me/photos/upload-url (60/min per user), POST /api/v1/city-profiles and the message translate endpoint (60/min per user). Set RATE_LIMIT_DISABLED=true to switch every bucket off. (2) Notification preferences are now enforced server-side in services/push.ts sendTypedPush via services/notificationPrefs.ts decidePush — notifyMessages/notifyReactions/notifyMissedCalls/notifyGroupMessages/notifyMemberActivity gate delivery per payload type, notifyMentionsOnly suppresses room_message but not room_mention, and notifyPreview replaces the body of content-bearing pushes with \"New message\". Mute checks stay at the call sites. (3) modules/common/premium.ts (a no-op passthrough that pretended to gate viewed_me/explore/for_you) was DELETED; those routes now use the new requireCapability(...) middleware in middleware/subscription.ts, which reads the real whoViewedMe / exploreAccess booleans from PLAN_LIMITS. (4) advancedFilters (education/occupation/language/religion/drinking/smoking/relationshipGoal) has no backing columns on User, so the Premium-gated Advanced section was REMOVED from app/filters.tsx and the client no longer sends the parameter; the query param is still accepted and ignored server-side.",
+    "Payment-stub safety (2026-08-15). adapters/stripe.ts is still a stub whose retrievePaymentIntent unconditionally returns status \"succeeded\", and adapters/razorpay.ts falls back to a stub whose verifySignature returns true when RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET are unset. Either path would have let an authenticated caller self-grant a paid plan via POST /api/v1/billing/subscriptions + /verify. Both stubs now throw when NODE_ENV=production, and utils/paymentProvider.detectProvider ignores a client-supplied paymentProvider:\"stripe\" and returns \"razorpay\" whenever stripeConfigured is false (which is hard-false in production until a real Stripe SDK client replaces the stub). Regression test: src/tests/rateLimit.test.ts. Also: adapters/payments.ts had zero consumers and was deleted; adapters/aiVerification.ts no longer auto-approves photo verification in production (it records the Verification as \"pending\" for human review instead of setting photoVerified).",
+    "Image moderation is NOT active (2026-08-15). services/imageModeration.ts never had a working AWS Rekognition call — callRekognition always threw, so every image resolved to \"allow\". The behaviour is now explicit: imageModerationConfigured is exported (hard-false until DetectModerationLabels is implemented), production logs an image_moderation_inactive warning at startup, and the unconfigured result is controlled by IMAGE_MODERATION_FALLBACK (\"allow\" default, or \"manual_review\" to accept uploads but leave them unpublished). A configured-but-failing provider now returns manual_review instead of allow. External setup required to activate: AWS account + IAM user with rekognition:DetectModerationLabels, AWS_REGION/AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, and an implementation of callRekognition()."
   ],
   "v1LaunchChecklist": {
     "mustShip": [
       "OTP registration (phone + email) and profile setup",
       "Nearby grid with orientation-aware filtering",
       "Open chat immediately on profile tap",
-      "Call unlock on first reply \u2014 server-side, no bypass",
+      "Call unlock on first reply — server-side, no bypass",
       "Audio call: 5 min/day free, unlimited paid",
       "Video call: 2 min/day free, unlimited paid",
       "Block, Mute, Report, Panic hide",

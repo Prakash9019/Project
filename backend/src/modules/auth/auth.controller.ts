@@ -89,5 +89,19 @@ export async function me(req: Request, res: Response): Promise<void> {
     user.plan,
     user.planExpiresAt ? Math.floor(user.planExpiresAt.getTime() / 1000) : null,
   );
-  res.status(200).json({ ...serializeSelf(await signUserPhotos(user)), callLimits, effectiveLimits });
+  // travelModeActive: whether the user has an activated city profile right now.
+  // The client uses this to suppress routine GPS location pushes — otherwise
+  // the periodic/on-focus real-location sync in updateLocation() immediately
+  // auto-deactivates travel mode (see profile.controller.ts "returning home"
+  // logic), undoing an activation within seconds of the user tapping Activate.
+  const activeCityProfile = await prisma.cityProfile.findFirst({
+    where: { userId: user.id, isActive: true },
+    select: { id: true },
+  });
+  res.status(200).json({
+    ...serializeSelf(await signUserPhotos(user)),
+    callLimits,
+    effectiveLimits,
+    travelModeActive: Boolean(activeCityProfile),
+  });
 }

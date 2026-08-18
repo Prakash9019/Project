@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { env } from '../../config/env';
-import { aiVerification } from '../../adapters/aiVerification';
+import { aiVerification, MANUAL_REVIEW_REASON } from '../../adapters/aiVerification';
 import { moderateImage } from '../../services/imageModeration';
 import { sendEmail } from '../../services/email';
 import { signUrl } from '../../utils/signUrl';
@@ -77,15 +77,20 @@ export async function submitPhotoVerification(req: Request, res: Response): Prom
   });
   const result = await aiVerification.verifyPhoto(mediaUrl, profilePhotos.map((p) => p.url));
 
+  // No automated decision (no vision provider wired) → park it for a human
+  // rather than recording a rejection the user can't act on.
+  const undecided = result.reason === MANUAL_REVIEW_REASON;
+  const status = result.approved ? 'approved' : undecided ? 'pending' : 'rejected';
+
   const verification = await prisma.verification.create({
     data: {
       userId,
       type: 'photo',
-      status: result.approved ? 'approved' : 'rejected',
+      status,
       mediaUrl,
       score: result.score,
       reason: result.reason,
-      reviewedAt: new Date(),
+      reviewedAt: undecided ? null : new Date(),
     },
   });
 

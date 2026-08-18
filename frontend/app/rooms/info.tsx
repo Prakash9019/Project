@@ -563,7 +563,10 @@ export default function RoomInfo() {
         </View>
 
         {/* Pinned */}
-        <Pressable style={[styles.row, { borderTopColor: theme.border }]} onPress={() => router.back()}>
+        <Pressable
+          style={[styles.row, { borderTopColor: theme.border }]}
+          onPress={() => router.push({ pathname: '/rooms/pinned', params: { roomId: id } })}
+        >
           <Ionicons name="pin-outline" size={22} color={theme.textSecondary} />
           <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Pinned Messages</Text>
           <Text style={[styles.rowValue, { color: theme.textTertiary }]}>{pinnedCount}</Text>

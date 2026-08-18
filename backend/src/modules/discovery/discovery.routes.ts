@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../middleware/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireVerifiedPhone } from '../../middleware/auth';
-import { premiumFeature } from '../common/premium';
+import { requireCapability } from '../../middleware/subscription';
 import * as c from './discovery.controller';
 
 const router = Router();
@@ -18,8 +18,8 @@ router.post('/taps', validate(c.tapSchema), asyncHandler(c.sendTap));
 router.get('/taps', asyncHandler(c.receivedTaps));
 router.delete('/taps/:userId', asyncHandler(c.removeTap));
 
-// Viewed me (premium)
-router.get('/views', premiumFeature('viewed_me'), asyncHandler(c.viewedMe));
+// Viewed me — Gold+ (`whoViewedMe` in PLAN_LIMITS), enforced server-side.
+router.get('/views', requireCapability('whoViewedMe'), asyncHandler(c.viewedMe));
 
 // Right Now feed (nearby users with an active status)
 router.get('/right-now', asyncHandler(c.rightNowFeed));

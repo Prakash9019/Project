@@ -10,28 +10,40 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import * as Linking from 'expo-linking';
 import { useTheme, FontFamily, DisplayFont } from '../theme';
 import { listConversations, sendMessage } from '../services/api';
 import { showSuccess, toastApiError } from '../lib/toast';
+import { useAuthStore } from '../store/authStore';
 import type { ConversationSummary } from '../types/api';
 
 /**
  * Share sheet for an album: pick a conversation to send it into, or copy a link.
- * The backend's private-album grant is the legacy flow; here we send a chat
- * message referencing the album (per Task 1 "send to chat" option).
+ * "Send to chat" sends a real `type: 'photo'` message carrying the album's
+ * cover as mediaUrls[0] and a structured '📁 albumId|ownerId|title' content
+ * string — the same convention chat/[id].tsx already parses for album bubbles
+ * (and the same "emoji-prefixed structured content" pattern used for
+ * documents/locations, since Message has no metadata/album fields to extend).
+ * The recipient's bubble renders a real album card and deep-links into the
+ * actual album, which still enforces privacy server-side on open.
  */
 export function ShareAlbumSheet({
   visible,
   onClose,
   albumId,
   albumTitle,
+  coverPhotoUrl,
 }: {
   visible: boolean;
   onClose: () => void;
   albumId: string;
   albumTitle: string;
+  /** The album's cover photo URL — required to send a real album card; falls back to a plain text share if absent. */
+  coverPhotoUrl?: string | null;
 }) {
   const { theme } = useTheme();
+  const me = useAuthStore((s) => s.user);
   const [convos, setConvos] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState<string | null>(null);
@@ -46,10 +58,19 @@ export function ShareAlbumSheet({
   }, [visible]);
 
   const shareTo = async (c: ConversationSummary) => {
-    if (sending) return;
+    if (sending || !me?.id) return;
     setSending(c.id);
     try {
-      await sendMessage(c.id, { type: 'text', content: `📸 Shared an album with you: "${albumTitle}"` });
+      const albumContent = `📁 ${albumId}|${me.id}|${albumTitle}`;
+      if (coverPhotoUrl) {
+        await sendMessage(c.id, { type: 'photo', mediaUrls: [coverPhotoUrl], content: albumContent });
+      } else {
+        // No cover photo — still send the structured pipe content as a plain
+        // text message. chat/[id].tsx recognizes '📁 id|ownerId|title' on
+        // `type: 'text'` too (mirroring the location-card convention) and
+        // renders a tappable album card without a thumbnail.
+        await sendMessage(c.id, { type: 'text', content: albumContent });
+      }
       showSuccess(`Shared with ${c.peer.firstName ?? 'them'}`, 'Album shared');
       onClose();
     } catch (e) {
@@ -59,9 +80,19 @@ export function ShareAlbumSheet({
     }
   };
 
-  const copyLink = () => {
-    showSuccess('Album link copied to clipboard', 'Link copied');
-    onClose();
+  const copyLink = async () => {
+    if (!me?.id) {
+      toastApiError(null, 'Could not generate album link');
+      return;
+    }
+    try {
+      const link = Linking.createURL(`albums/${albumId}`, { queryParams: { ownerId: me.id, title: albumTitle } });
+      await Clipboard.setStringAsync(link);
+      showSuccess('Album link copied to clipboard', 'Link copied');
+      onClose();
+    } catch (e) {
+      toastApiError(e, 'Could not copy link');
+    }
   };
 
   return (

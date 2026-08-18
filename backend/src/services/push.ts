@@ -8,6 +8,12 @@ import { prisma } from '../config/prisma';
 import { redis, RedisKeys } from '../config/redis';
 import { withTimeout } from '../utils/withTimeout';
 import { sendPushNotification, buildPushMessage, type PushPayload as TypedPushPayload } from '../adapters/fcm';
+import {
+  decidePush,
+  DEFAULT_NOTIFICATION_PREFS,
+  REDACTED_BODY,
+  type NotificationPrefs,
+} from './notificationPrefs';
 
 export interface PushPayload {
   title: string;
@@ -43,13 +49,40 @@ export async function sendPush(userId: string, payload: PushPayload): Promise<vo
   }
 }
 
+/** Load the recipient's notification preferences, falling back to the schema defaults. */
+async function loadPrefs(userId: string): Promise<NotificationPrefs> {
+  const settings = await prisma.userSettings.findUnique({
+    where: { userId },
+    select: {
+      notifyMessages: true,
+      notifyPreview: true,
+      notifyReactions: true,
+      notifyMissedCalls: true,
+      notifyGroupMessages: true,
+      notifyMemberActivity: true,
+      notifyMentionsOnly: true,
+    },
+  }).catch(() => null);
+  return settings ?? DEFAULT_NOTIFICATION_PREFS;
+}
+
 /**
  * Typed push: builds the correct title/body/data from a PushPayload, then sends
  * through the same presence-gated / credential-guarded path as sendPush. Never
  * throws — safe to fire-and-forget.
+ *
+ * This is the single funnel every push in the app goes through, so it is also
+ * where the recipient's Settings → Notifications preferences are enforced
+ * (see services/notificationPrefs.ts). Mute checks stay at the call sites.
  */
 export async function sendTypedPush(userId: string, payload: TypedPushPayload): Promise<void> {
-  return sendPush(userId, buildPushMessage(payload));
+  const decision = decidePush(payload, await loadPrefs(userId));
+  if (!decision.send) return;
+
+  const message = buildPushMessage(payload);
+  if (decision.hidePreview) message.body = REDACTED_BODY;
+
+  return sendPush(userId, message);
 }
 
 export type { TypedPushPayload };

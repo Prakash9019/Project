@@ -326,8 +326,10 @@ describe('Right Now feed', () => {
         rightNowStatus: 'Looking for coffee meetup',
         rightNowCategory: 'coffee',
         rightNowExpiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        rightNowHosting: true,
       });
     expect(patch.status).toBe(200);
+    expect(patch.body.rightNowHosting).toBe(true);
 
     // The feed resolves the viewer's own geo position, so both need geo entries.
     await addToGeo(poster.id);
@@ -341,6 +343,8 @@ describe('Right Now feed', () => {
     expect(feed.status).toBe(200);
     const ids = feed.body.statuses.map((s: any) => s.id);
     expect(ids).toContain(poster.id);
+    const card = feed.body.statuses.find((s: any) => s.id === poster.id);
+    expect(card.rightNowHosting).toBe(true);
   });
 
   it('expired Right Now status does not appear in feed', async () => {

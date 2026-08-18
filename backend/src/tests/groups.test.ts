@@ -203,6 +203,42 @@ describe('Room messaging', () => {
     // Newest first
     expect(res.body.messages[0].content).toBe('Message 5');
   });
+
+  it('free user cannot edit a room message (Gold+ only feature)', async () => {
+    const { token, roomId } = await createRoom('free');
+
+    const msg = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .set(authHeader(token))
+      .send({ type: 'text', content: 'original' });
+    const msgId = msg.body.id;
+
+    const editRes = await request(app)
+      .patch(`/api/rooms/${roomId}/messages/${msgId}`)
+      .set(authHeader(token))
+      .send({ content: 'nope' });
+
+    expect(editRes.status).toBe(403);
+    expect(editRes.body.error).toBe('plan_required');
+  });
+
+  it('Gold member can edit their own room message within the edit window', async () => {
+    const { token, roomId } = await createRoom('gold', Math.floor(Date.now() / 1000) + 86400);
+
+    const msg = await request(app)
+      .post(`/api/rooms/${roomId}/messages`)
+      .set(authHeader(token))
+      .send({ type: 'text', content: 'original' });
+    const msgId = msg.body.id;
+
+    const editRes = await request(app)
+      .patch(`/api/rooms/${roomId}/messages/${msgId}`)
+      .set(authHeader(token))
+      .send({ content: 'edited' });
+
+    expect(editRes.status).toBe(200);
+    expect(editRes.body.content).toBe('edited');
+  });
 });
 
 // ─── Admin permissions ───────────────────────────────────────────

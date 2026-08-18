@@ -139,11 +139,16 @@ export default function Inbox() {
     const ids = [...selectedIds];
     clearSelection();
     let planBlocked = false;
+    let limitMessage: string | null = null;
     try {
       await Promise.all(
         ids.map((id) =>
           pinConversation(id, true).catch((e) => {
-            if ((e as ApiError).code === 'plan_required') planBlocked = true;
+            const err = e as ApiError;
+            if (err.code === 'plan_required') planBlocked = true;
+            // Gold+ user already at their plan's pin cap — distinct from not
+            // having the feature at all, so show the message, not the paywall.
+            else if (err.code === 'pin_limit_reached') limitMessage = err.message ?? 'Pin limit reached';
           }),
         ),
       );
@@ -152,6 +157,7 @@ export default function Inbox() {
       if (viewArchived) await loadArchived();
     }
     if (planBlocked) setPinUpgradeOpen(true);
+    else if (limitMessage) showInfo(limitMessage, 'Pin limit');
   }, [selectedIds, clearSelection, fetchConversations, viewArchived, loadArchived]);
   const muteSelected = useCallback(() => {
     clearSelection();

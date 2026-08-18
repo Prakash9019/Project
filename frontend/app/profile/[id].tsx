@@ -16,8 +16,6 @@ import {
 import { RemoteImage } from '../../src/components/RemoteImage';
 import { Skeleton } from '../../src/components/Skeleton';
 import { Linking } from 'react-native';
-import { CustomAlert } from '../../src/components/CustomAlert';
-import { useAlert } from '../../src/hooks/useAlert';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, useFocusEffect, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, FontSize } from '../../src/theme';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
+import { AudioPlayer } from '../../src/components/chat/AudioPlayer';
 import {
   getPublicProfile,
   getUserAlbums,
@@ -38,6 +37,7 @@ import {
   shortlistUser,
   unshortlistUser,
   blockUser,
+  getCompatibility,
   ApiError,
   type UserRoomCard,
 } from '../../src/services/api';
@@ -69,17 +69,21 @@ export default function ProfileDetail() {
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
-  const { alertConfig, hideAlert, confirm, alertError } = useAlert();
   const me = useAuthStore((s) => s.user);
   const patchCard = useGridStore((s) => s.patchCard);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
 
   const [profile, setProfile] = useState<PublicProfile | null>(null);
+  const [voiceIntroExpanded, setVoiceIntroExpanded] = useState(false);
+  const [videoIntroOpen, setVideoIntroOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [liked, setLiked] = useState(false);
   const [shortlisted, setShortlisted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [blockConfirming, setBlockConfirming] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
@@ -96,12 +100,22 @@ export default function ProfileDetail() {
   const [viewerIndex, setViewerIndex] = useState(0);
   // Number of hero photos currently permitted to load (grows as the user swipes).
   const [visiblePhotos, setVisiblePhotos] = useState(INITIAL_PHOTOS);
+  const [heroIndex, setHeroIndex] = useState(0);
+
+  // AI Compatibility (Platinum, opt-in) — fetched independently of the profile
+  // itself so a slow/failed AI call never blocks or delays the profile render.
+  const [compatibility, setCompatibility] = useState<{ score: number; breakdown: string[] } | null>(null);
+  const [compatLoading, setCompatLoading] = useState(false);
+  const [compatLockedReason, setCompatLockedReason] = useState<'plan_required' | null>(null);
 
   useEffect(() => {
     hasLoadedRef.current = false;
     setNotFound(false);
     setDraft('');
     setVisiblePhotos(INITIAL_PHOTOS);
+    setHeroIndex(0);
+    setCompatibility(null);
+    setCompatLockedReason(null);
     // Instant paint from cache on a repeat visit, then revalidate silently.
     const cached = profileCache.get(peerId);
     if (cached) {
@@ -159,6 +173,29 @@ export default function ProfileDetail() {
       loadProfile();
     }, [loadProfile])
   );
+
+  // AI Compatibility (Platinum, opt-in) — independent of loadProfile so it never
+  // delays or blocks the profile itself. A 403 (not Platinum, or opted out) or any
+  // other failure just hides the section instead of showing a broken/empty card —
+  // except plan_required, which shows the existing upgrade pattern (UpgradeModal).
+  useEffect(() => {
+    if (!peerId || peerId === me?.id) return;
+    let active = true;
+    setCompatLoading(true);
+    getCompatibility(peerId)
+      .then((res) => {
+        if (active) setCompatibility(res);
+      })
+      .catch((e) => {
+        if (!active) return;
+        const err = e as ApiError;
+        setCompatLockedReason(err.status === 403 && err.code === 'plan_required' ? 'plan_required' : null);
+      })
+      .finally(() => {
+        if (active) setCompatLoading(false);
+      });
+    return () => { active = false; };
+  }, [peerId, me?.id]);
 
   // When opened from a chat, load shared media/links + mutual groups.
   useEffect(() => {
@@ -267,21 +304,37 @@ export default function ProfileDetail() {
     }
   };
 
-  const confirmBlock = () => {
+  const closeMenu = () => {
     setMenuOpen(false);
-    confirm(
-      `Block ${profile?.firstName ?? 'this person'}?`,
-      'They won’t be able to see you or message you. This is mutual.',
-      async () => {
-        try {
-          await blockUser(peerId);
-          router.back();
-        } catch {
-          alertError('Could not block', 'Please try again.');
-        }
-      },
-      { destructive: true, confirmLabel: 'Block', icon: 'ban', iconColor: theme.error },
-    );
+    setBlockConfirming(false);
+    setBlockError(null);
+  };
+
+  // Swaps the action-menu Modal's own content to a confirm step instead of
+  // closing it and presenting a second native <Modal> for the confirmation.
+  // Two native Modals transitioning (one closing, one opening) in the same
+  // tick race the modal host on Android — the incoming modal can render but
+  // never reliably receive touches, and a fixed setTimeout delay is not a
+  // real completion signal (a slow/loaded device can still lose the race).
+  // Reusing the single already-open Modal removes the race entirely.
+  const confirmBlock = () => setBlockConfirming(true);
+
+  const doBlock = async () => {
+    if (blocking) return;
+    setBlocking(true);
+    setBlockError(null);
+    try {
+      await blockUser(peerId);
+      closeMenu();
+      router.back();
+    } catch {
+      // Keep the sheet open and show the error inline (rather than closing
+      // this Modal and presenting a separate one) — same race this whole
+      // confirm step was restructured to avoid.
+      setBlockError('Could not block. Please try again.');
+    } finally {
+      setBlocking(false);
+    }
   };
 
   if (loading) {
@@ -365,6 +418,7 @@ export default function ProfileDetail() {
                 if (idx + 2 > visiblePhotos) {
                   setVisiblePhotos((n) => Math.min(gallery.length, Math.max(n, idx + 2)));
                 }
+                if (idx !== heroIndex) setHeroIndex(idx);
               }}
             >
               {gallery.map((uri, i) =>
@@ -392,6 +446,13 @@ export default function ProfileDetail() {
             style={styles.heroBottomScrim}
             pointerEvents="none"
           />
+          {gallery.length > 1 && (
+            <View style={styles.heroDots} pointerEvents="none">
+              {gallery.map((_, i) => (
+                <View key={i} style={i === heroIndex ? styles.heroDotActive : styles.heroDotInactive} />
+              ))}
+            </View>
+          )}
           <SafeAreaView edges={['top']} style={styles.heroBar}>
             <Pressable onPress={() => router.back()} hitSlop={12} style={styles.circleBtn}>
               <Ionicons name="arrow-back" size={22} color="#fff" />
@@ -467,6 +528,42 @@ export default function ProfileDetail() {
             </View>
           )}
 
+          {compatLoading || compatibility || compatLockedReason === 'plan_required' ? (
+            <Section label="COMPATIBILITY">
+              {compatLoading ? (
+                <View style={styles.compatLoadingRow}>
+                  <ActivityIndicator size="small" color={theme.brand} />
+                  <Text style={[styles.compatLoadingText, { color: theme.textSecondary }]}>
+                    Calculating compatibility…
+                  </Text>
+                </View>
+              ) : compatibility ? (
+                <View style={[styles.compatCard, { backgroundColor: theme.surface }]}>
+                  <Text style={[styles.compatScore, { color: theme.brand }]}>{compatibility.score}%</Text>
+                  {compatibility.breakdown.length > 0 ? (
+                    <View style={styles.compatBreakdown}>
+                      {compatibility.breakdown.map((line, i) => (
+                        <View key={i} style={styles.compatBreakdownRow}>
+                          <Ionicons name="checkmark-circle" size={16} color={theme.success} />
+                          <Text style={[styles.compatBreakdownText, { color: theme.textSecondary }]}>{line}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              ) : (
+                <Pressable
+                  style={[styles.compatLockedCard, { backgroundColor: theme.backgroundTertiary }]}
+                  onPress={() => setUpgradeOpen(true)}
+                >
+                  <Ionicons name="lock-closed" size={22} color={theme.textTertiary} />
+                  <Text style={[styles.compatLockedTitle, { color: theme.textPrimary }]}>See your compatibility</Text>
+                  <Text style={[styles.compatLockedSub, { color: theme.textSecondary }]}>Unlock with Platinum</Text>
+                </Pressable>
+              )}
+            </Section>
+          ) : null}
+
           {profile.bio ? (
             <Section label="BIO">
               <Text style={[styles.body, { color: theme.textSecondary }]}>{profile.bio}</Text>
@@ -538,9 +635,28 @@ export default function ProfileDetail() {
           {(profile.voiceClipUrl || profile.videoClipUrl) && (
             <Section label="INTRO">
               <View style={{ flexDirection: 'row', gap: 10 }}>
-                {profile.voiceClipUrl && <MediaPill theme={theme} icon="mic" label="Voice intro" />}
-                {profile.videoClipUrl && <MediaPill theme={theme} icon="videocam" label="Video intro" />}
+                {profile.voiceClipUrl && (
+                  <MediaPill
+                    theme={theme}
+                    icon="mic"
+                    label="Voice intro"
+                    onPress={() => setVoiceIntroExpanded((v) => !v)}
+                  />
+                )}
+                {profile.videoClipUrl && (
+                  <MediaPill
+                    theme={theme}
+                    icon="videocam"
+                    label="Video intro"
+                    onPress={() => setVideoIntroOpen(true)}
+                  />
+                )}
               </View>
+              {voiceIntroExpanded && profile.voiceClipUrl ? (
+                <View style={{ marginTop: 10 }}>
+                  <AudioPlayer mediaUrl={profile.voiceClipUrl} isOwn={false} />
+                </View>
+              ) : null}
             </Section>
           )}
 
@@ -726,25 +842,90 @@ export default function ProfileDetail() {
       </KeyboardAvoidingView>
 
       {/* Action menu */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <Pressable style={[styles.overlay, { backgroundColor: theme.overlay }]} onPress={() => setMenuOpen(false)}>
-          <View style={[styles.menu, { backgroundColor: theme.surface }]}>
-            <Pressable style={styles.menuItem} onPress={() => { setMenuOpen(false); setReportOpen(true); }}>
-              <Ionicons name="flag-outline" size={20} color={theme.textPrimary} />
-              <Text style={[styles.menuText, { color: theme.textPrimary }]}>Report</Text>
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
+        <Pressable style={[styles.overlay, { backgroundColor: theme.overlay }]} onPress={closeMenu}>
+          {blockConfirming ? (
+            <Pressable style={[styles.menu, styles.confirmCard, { backgroundColor: theme.surface }]} onPress={() => {}}>
+              <View style={[styles.confirmIconCircle, { backgroundColor: theme.error + '26' }]}>
+                <Ionicons name="ban" size={28} color={theme.error} />
+              </View>
+              <Text style={[styles.confirmTitle, { color: theme.textPrimary }]}>
+                Block {profile?.firstName ?? 'this person'}?
+              </Text>
+              <Text style={[styles.confirmMessage, { color: theme.textSecondary }]}>
+                They won’t be able to see you or message you. This is mutual.
+              </Text>
+              {blockError ? (
+                <Text style={[styles.confirmError, { color: theme.error }]}>{blockError}</Text>
+              ) : null}
+              <View style={styles.confirmButtons}>
+                <Pressable
+                  style={[styles.confirmBtn, { backgroundColor: theme.surfaceElevated }]}
+                  onPress={closeMenu}
+                  disabled={blocking}
+                >
+                  <Text style={[styles.confirmBtnText, { color: theme.textSecondary }]}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.confirmBtn, { backgroundColor: theme.error + '1A' }]}
+                  onPress={doBlock}
+                  disabled={blocking}
+                >
+                  {blocking ? (
+                    <ActivityIndicator size="small" color={theme.error} />
+                  ) : (
+                    <Text style={[styles.confirmBtnText, { color: theme.error }]}>Block</Text>
+                  )}
+                </Pressable>
+              </View>
             </Pressable>
-            <Pressable style={styles.menuItem} onPress={confirmBlock}>
-              <Ionicons name="ban-outline" size={20} color={theme.error} />
-              <Text style={[styles.menuText, { color: theme.error }]}>Block</Text>
-            </Pressable>
-          </View>
+          ) : (
+            <View style={[styles.menu, { backgroundColor: theme.surface }]}>
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  // Presenting a second native <Modal> (ReportSheet) in the same
+                  // tick this one is dismissing races the modal host on
+                  // iOS/Android — deferring keeps that one working. Block avoids
+                  // the race entirely by reusing this Modal instead (see
+                  // confirmBlock/doBlock above).
+                  setTimeout(() => setReportOpen(true), 300);
+                }}
+              >
+                <Ionicons name="flag-outline" size={20} color={theme.textPrimary} />
+                <Text style={[styles.menuText, { color: theme.textPrimary }]}>Report</Text>
+              </Pressable>
+              <Pressable style={styles.menuItem} onPress={confirmBlock}>
+                <Ionicons name="ban-outline" size={20} color={theme.error} />
+                <Text style={[styles.menuText, { color: theme.error }]}>Block</Text>
+              </Pressable>
+            </View>
+          )}
         </Pressable>
       </Modal>
 
       <ReportSheet visible={reportOpen} userId={peerId} onClose={() => setReportOpen(false)} />
       <UpgradeModal visible={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
 
-      {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
+      {profile?.videoClipUrl ? (
+        <MediaViewer
+          visible={videoIntroOpen}
+          images={
+            [
+              {
+                uri: profile.videoClipUrl,
+                senderId: peerId,
+                senderName: profile.firstName ?? 'Someone',
+                createdAt: new Date().toISOString(),
+                kind: 'video',
+              },
+            ] as MediaViewerImage[]
+          }
+          initialIndex={0}
+          onClose={() => setVideoIntroOpen(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -764,9 +945,19 @@ function Badge({ theme, icon, label }: { theme: any; icon: any; label: string })
     </View>
   );
 }
-function MediaPill({ theme, icon, label }: { theme: any; icon: any; label: string }) {
+function MediaPill({
+  theme,
+  icon,
+  label,
+  onPress,
+}: {
+  theme: any;
+  icon: any;
+  label: string;
+  onPress: () => void;
+}) {
   return (
-    <Pressable style={[styles.mediaPill, { backgroundColor: theme.surfaceElevated }]}>
+    <Pressable style={[styles.mediaPill, { backgroundColor: theme.surfaceElevated }]} onPress={onPress}>
       <Ionicons name={icon} size={18} color={theme.brand} />
       <Text style={[styles.mediaText, { color: theme.textPrimary }]}>{label}</Text>
       <Ionicons name="play" size={14} color={theme.textSecondary} />
@@ -783,6 +974,9 @@ const styles = StyleSheet.create({
   noPhoto: { alignItems: 'center', justifyContent: 'center' },
   heroTopScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
   heroBottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 140 },
+  heroDots: { position: 'absolute', bottom: 14, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  heroDotActive: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  heroDotInactive: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
   heroBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
   heroRight: { flexDirection: 'row', gap: 10 },
   circleBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
@@ -804,6 +998,16 @@ const styles = StyleSheet.create({
   statPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   statText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
   sectionLabel: { fontSize: FontSize.sm, fontFamily: DisplayFont.bold, fontWeight: '700', letterSpacing: 0.8, marginTop: 20 },
+  compatLoadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  compatLoadingText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
+  compatCard: { borderRadius: 16, padding: 16, marginTop: 8, alignItems: 'center' },
+  compatScore: { fontSize: FontSize.hero, fontFamily: DisplayFont.heavy, fontWeight: '800' },
+  compatBreakdown: { marginTop: 10, gap: 8, width: '100%' },
+  compatBreakdownRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  compatBreakdownText: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
+  compatLockedCard: { marginTop: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 4 },
+  compatLockedTitle: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700', marginTop: 4 },
+  compatLockedSub: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
   sharedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 },
   seeAll: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
   sharedStrip: { flexDirection: 'row', gap: 8, marginTop: 10 },
@@ -839,4 +1043,12 @@ const styles = StyleSheet.create({
   menu: { width: '100%', borderRadius: 16, overflow: 'hidden' },
   menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
   menuText: { fontSize: FontSize.lg, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  confirmCard: { alignItems: 'center', padding: 24 },
+  confirmIconCircle: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  confirmTitle: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, textAlign: 'center', marginTop: 12 },
+  confirmMessage: { fontSize: FontSize.md, fontFamily: FontFamily.regular, textAlign: 'center', marginTop: 8 },
+  confirmError: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, textAlign: 'center', marginTop: 8 },
+  confirmButtons: { flexDirection: 'row', width: '100%', gap: 8, marginTop: 20 },
+  confirmBtn: { flex: 1, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  confirmBtnText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
 });

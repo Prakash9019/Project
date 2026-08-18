@@ -84,6 +84,54 @@ describe('Message delivery status', () => {
     // A read message is necessarily delivered — deliveredAt is backfilled too.
     expect(dbMsg?.deliveredAt).not.toBeNull();
   });
+
+  it('free-plan sender does not see readAt in the API response (paid read-receipt perk)', async () => {
+    const userA = await createTestUser({ plan: 'free' });
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id, 'free');
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const msg = await sendMessage(tokenA, convId, 'Hello!');
+
+    await request(app)
+      .post(`/api/v1/conversations/${convId}/read`)
+      .set(authHeader(tokenB));
+
+    // DB row genuinely has readAt set...
+    const dbMsg = await prisma.message.findUnique({ where: { id: msg.id } });
+    expect(dbMsg?.readAt).not.toBeNull();
+
+    // ...but the free-plan sender's message list must not expose it.
+    const listRes = await request(app)
+      .get(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA));
+    expect(listRes.status).toBe(200);
+    const apiMsg = listRes.body.messages.find((m: { id: string }) => m.id === msg.id);
+    expect(apiMsg.readAt).toBeNull();
+  });
+
+  it('Gold-plan sender does see readAt in the API response', async () => {
+    const goldExpiry = Math.floor(Date.now() / 1000) + 86400;
+    const userA = await createTestUser({ plan: 'gold' });
+    const userB = await createTestUser();
+    const tokenA = createTestToken(userA.id, 'gold', goldExpiry);
+    const tokenB = createTestToken(userB.id);
+
+    const convId = await startConversation(tokenA, userB.id);
+    const msg = await sendMessage(tokenA, convId, 'Hello!');
+
+    await request(app)
+      .post(`/api/v1/conversations/${convId}/read`)
+      .set(authHeader(tokenB));
+
+    const listRes = await request(app)
+      .get(`/api/v1/conversations/${convId}/messages`)
+      .set(authHeader(tokenA));
+    expect(listRes.status).toBe(200);
+    const apiMsg = listRes.body.messages.find((m: { id: string }) => m.id === msg.id);
+    expect(apiMsg.readAt).not.toBeNull();
+  });
 });
 
 // ─── Message unsend ──────────────────────────────────────────────

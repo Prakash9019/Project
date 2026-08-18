@@ -2,6 +2,11 @@ import { beforeAll, afterAll } from 'vitest';
 import { prisma } from '../config/prisma';
 import { redis } from '../config/redis';
 
+// The suite fires hundreds of requests from a single "IP" in a few seconds,
+// which would trip the production rate limits. rateLimit.test.ts re-enables
+// them locally to assert the limiter actually works.
+process.env.RATE_LIMIT_DISABLED = 'true';
+
 // Confirm we are talking to the TEST database, not production
 beforeAll(async () => {
   const dbUrl = process.env.DATABASE_URL ?? '';

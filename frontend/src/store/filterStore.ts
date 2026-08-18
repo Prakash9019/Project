@@ -77,7 +77,6 @@ function countActive(f: Filters): number {
   if (f.activeLast30Min) n++;
   if (f.highReplyRate) n++;
   if (f.recentlyJoined) n++;
-  if (f.advancedFilters && Object.values(f.advancedFilters).some((v) => v && v.length)) n++;
   return n;
 }
 
@@ -115,10 +114,6 @@ export const useFilterStore = create<FilterState>((set, get) => ({
 
   toQuery: () => {
     const f = get().filters;
-    const adv =
-      f.advancedFilters && Object.values(f.advancedFilters).some((v) => v && v.length)
-        ? JSON.stringify(f.advancedFilters)
-        : undefined;
     return {
       onlineOnly: f.onlineOnly,
       ageMin: f.ageMin,
@@ -138,7 +133,11 @@ export const useFilterStore = create<FilterState>((set, get) => ({
       activeLast30Min: f.activeLast30Min || undefined,
       highReplyRate: f.highReplyRate || undefined,
       recentlyJoined: f.recentlyJoined || undefined,
-      advancedFilters: adv,
+      // advancedFilters intentionally not sent: education/occupation/language/
+      // religion/drinking/smoking/relationshipGoal have no columns on the User
+      // model, so the server logs and ignores them. The UI for them is hidden
+      // (app/filters.tsx) until the product data model exists.
+      advancedFilters: undefined,
     };
   },
 }));

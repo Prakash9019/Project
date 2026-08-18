@@ -16,7 +16,7 @@ import Animated, {
   interpolate,
 } from 'react-native-reanimated';
 import { useTheme, FontFamily, DisplayFont, type AppTheme } from '../../theme';
-import { updateCall } from '../../services/api';
+import { updateCall, joinRoomCall } from '../../services/api';
 
 /* ─────────────────────────── Prop types ─────────────────────────── */
 
@@ -49,6 +49,17 @@ export interface RoomMessageToastProps {
   roomName: string;
   senderName: string;
   messagePreview: string;
+}
+export interface RoomCallToastProps {
+  callId: string;
+  roomId: string;
+  roomName: string;
+  initiatorId: string;
+  initiatorName: string;
+  initiatorPhoto: string | null;
+  type: 'audio' | 'video';
+  agoraChannelName: string;
+  agoraToken: string;
 }
 
 /* ─────────────────────────── Shared shell ─────────────────────────── */
@@ -292,6 +303,90 @@ function CallToast({ props }: ToastConfigParams<CallToastProps>) {
   );
 }
 
+function RoomCallToast({ props }: ToastConfigParams<RoomCallToastProps>) {
+  const { theme } = useTheme();
+  const router = useRouter();
+
+  // Same unmissable-ringtone treatment as the 1:1 CallToast, but no "missed"
+  // status to report — a room call keeps running for other members even if
+  // this device never answers, so timing out just dismisses the toast.
+  useEffect(() => {
+    Vibration.vibrate([0, 700, 1000], true);
+    const player = createAudioPlayer(ringtoneAsset);
+    player.loop = true;
+    setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'duckOthers' })
+      .catch(() => {})
+      .finally(() => player.play());
+    const t = setTimeout(() => Toast.hide(), 30000);
+    return () => {
+      clearTimeout(t);
+      Vibration.cancel();
+      player.remove();
+    };
+  }, [props.callId]);
+
+  const accept = () => {
+    Vibration.cancel();
+    Toast.hide();
+    joinRoomCall(props.roomId, props.callId).catch(() => {});
+    router.push({
+      pathname: '/call/[id]',
+      params: {
+        id: props.callId,
+        channel: props.agoraChannelName,
+        token: props.agoraToken,
+        type: props.type,
+        roomId: props.roomId,
+        roomName: props.roomName,
+        callId: props.callId,
+        initiatorId: props.initiatorId,
+      },
+    });
+  };
+
+  const decline = () => {
+    Vibration.cancel();
+    Toast.hide();
+  };
+
+  return (
+    <LinearGradient
+      colors={[theme.background, theme.surface]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={[styles.callCard, { borderColor: theme.border }]}
+    >
+      <View style={styles.callAvatarWrap}>
+        <PulseRing size={56} color={theme.online} />
+        <Avatar uri={props.initiatorPhoto} size={48} theme={theme} />
+      </View>
+      <View style={styles.body}>
+        <Text style={[styles.callName, { color: theme.textPrimary }]} numberOfLines={1}>
+          {props.initiatorName} started a call in {props.roomName}
+        </Text>
+        <View style={styles.callTypeRow}>
+          <Ionicons
+            name={props.type === 'video' ? 'videocam' : 'call'}
+            size={13}
+            color={theme.textSecondary}
+          />
+          <Text style={[styles.callType, { color: theme.textSecondary }]}>
+            {props.type === 'video' ? 'Group Video Call' : 'Group Audio Call'}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.callActions}>
+        <Pressable style={[styles.callBtn, { backgroundColor: theme.error }]} onPress={decline}>
+          <Ionicons name="call" size={20} color={theme.textInverse} style={styles.declineIcon} />
+        </Pressable>
+        <Pressable style={[styles.callBtn, { backgroundColor: theme.online }]} onPress={accept}>
+          <Ionicons name="call" size={20} color={theme.textInverse} />
+        </Pressable>
+      </View>
+    </LinearGradient>
+  );
+}
+
 /* ─────────────────────────── Type 4: room_message ─────────────────────────── */
 
 function RoomMessageToast({ props, onPress }: ToastConfigParams<RoomMessageToastProps>) {
@@ -370,6 +465,7 @@ export const ToastConfig: ToastConfigType = {
   message: (p) => <MessageToast {...(p as ToastConfigParams<MessageToastProps>)} />,
   tap_received: (p) => <TapToast {...(p as ToastConfigParams<TapToastProps>)} />,
   call_incoming: (p) => <CallToast {...(p as ToastConfigParams<CallToastProps>)} />,
+  room_call_incoming: (p) => <RoomCallToast {...(p as ToastConfigParams<RoomCallToastProps>)} />,
   room_message: (p) => <RoomMessageToast {...(p as ToastConfigParams<RoomMessageToastProps>)} />,
   success: (p) => <SuccessToast {...p} />,
   error: (p) => <ErrorToast {...p} />,

@@ -48,6 +48,7 @@ import {
   showTapToast,
   showCallToast,
   showRoomMessageToast,
+  showRoomCallToast,
 } from '../src/lib/toast';
 import { loadNotificationPrefs, type NotificationPreferences } from './settings/notifications';
 import type { UserCard, RoomMessageCard } from '../src/types/api';
@@ -73,6 +74,7 @@ function RootStack() {
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
   const authedUserId = useAuthStore((s) => s.user?.id);
+  const refreshUser = useAuthStore((s) => s.refreshUser);
   const navContainerRef = useNavigationContainerRef();
   const appState = useRef(AppState.currentState);
 
@@ -82,6 +84,20 @@ function RootStack() {
     setNavigationRef(navContainerRef);
     return () => setNavigationRef(null);
   }, [navContainerRef]);
+
+  // Bootstrap the session ONCE at the true app root, not just on the splash
+  // screen (`app/index.tsx`). When the app is cold-started from a deep link
+  // (e.g. an album share link — Linking.createURL('albums/:id', ...)),
+  // expo-router's linking config resolves the initial route directly to the
+  // deep-linked screen (e.g. `/albums/[id]`) and `index.tsx` never mounts, so
+  // its `refreshUser()` call — the only place that populated `useAuthStore`
+  // — never ran. Every screen that reads `me`/`authedUserId` (album
+  // ownership checks, the socket connection below, FCM registration) was
+  // left with a null user for the lifetime of that session. Running it here
+  // guarantees `me` hydrates on every cold start, deep-link or not.
+  useEffect(() => {
+    refreshUser().catch(() => {});
+  }, [refreshUser]);
 
   useEffect(() => {
     // When a token refresh fails, clear session and bounce to onboarding.
@@ -246,6 +262,32 @@ function RootStack() {
         });
       };
 
+      const onRoomCallInvite = (p: {
+        callId: string;
+        roomId: string;
+        initiatorId: string;
+        initiatorName?: string | null;
+        initiatorPhoto?: string | null;
+        type: 'audio' | 'video';
+        agoraChannelName: string;
+        agoraToken: string;
+      }) => {
+        if (p.initiatorId === authedUserId) return; // don't ring the person who just started the call
+        const prefs = notifPrefs.current;
+        if (prefs && !prefs.missedCalls) return;
+        showRoomCallToast({
+          callId: p.callId,
+          roomId: p.roomId,
+          roomName: useGroupsStore.getState().roomName(p.roomId),
+          initiatorId: p.initiatorId,
+          initiatorName: p.initiatorName ?? 'Someone',
+          initiatorPhoto: p.initiatorPhoto ?? null,
+          type: p.type,
+          agoraChannelName: p.agoraChannelName,
+          agoraToken: p.agoraToken,
+        });
+      };
+
       const onRoomMessage = (msg: RoomMessageCard) => {
         if (msg.senderId === authedUserId) return;
         const prefs = notifPrefs.current;
@@ -267,11 +309,13 @@ function RootStack() {
       socket.on('message.created', onMessage);
       socket.on('tap.received', onTap);
       socket.on('call:invite', onCallInvite);
+      socket.on('room:call.invite', onRoomCallInvite);
       socket.on('room:message', onRoomMessage);
       cleanup = () => {
         socket.off('message.created', onMessage);
         socket.off('tap.received', onTap);
         socket.off('call:invite', onCallInvite);
+        socket.off('room:call.invite', onRoomCallInvite);
         socket.off('room:message', onRoomMessage);
       };
     })();
@@ -317,6 +361,7 @@ function RootStack() {
           <Stack.Screen name="rooms/members" options={{ presentation: 'modal' }} />
           <Stack.Screen name="rooms/info" />
           <Stack.Screen name="rooms/media" />
+          <Stack.Screen name="rooms/pinned" />
           <Stack.Screen name="rooms/join/[code]" options={{ presentation: 'modal' }} />
           <Stack.Screen name="create-group/members" />
           <Stack.Screen name="create-group/details" />

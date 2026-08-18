@@ -89,6 +89,7 @@ export function serializeSelf(user: UserWithRelations) {
     rightNowStatus: user.rightNowStatus ?? null,
     rightNowCategory: user.rightNowCategory ?? null,
     rightNowExpiresAt: user.rightNowExpiresAt ?? null,
+    rightNowHosting: user.rightNowHosting ?? false,
     plan: user.plan,
     tier: user.tier,
     planExpiresAt: user.planExpiresAt,
@@ -228,6 +229,16 @@ export function serializeSettings(s: UserWithRelations) {
     activeLast30MinFilter: s.activeLast30MinFilter,
     recentlyJoinedFilter: s.recentlyJoinedFilter,
     highReplyRateFilter: s.highReplyRateFilter,
+    // notifications
+    notifyMessages: s.notifyMessages,
+    notifyPreview: s.notifyPreview,
+    notifySound: s.notifySound,
+    notifyVibrate: s.notifyVibrate,
+    notifyReactions: s.notifyReactions,
+    notifyMissedCalls: s.notifyMissedCalls,
+    notifyGroupMessages: s.notifyGroupMessages,
+    notifyMemberActivity: s.notifyMemberActivity,
+    notifyMentionsOnly: s.notifyMentionsOnly,
   };
 }
 

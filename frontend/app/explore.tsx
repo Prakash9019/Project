@@ -9,7 +9,8 @@ import { UpgradeModal } from '../src/components/UpgradeModal';
 import { CustomAlert } from '../src/components/CustomAlert';
 import { useAlert } from '../src/hooks/useAlert';
 import { planAtLeast } from '../src/lib/format';
-import { createCityProfile, activateCityProfile, listCityProfiles, CityProfile, ApiError } from '../src/services/api';
+import { createCityProfile, activateCityProfile, deleteCityProfile, listCityProfiles, CityProfile, ApiError } from '../src/services/api';
+import { toastApiError } from '../src/lib/toast';
 
 /** Explore / Travel mode — browse another city's grid. Gated to Gold+. */
 export default function Explore() {
@@ -17,9 +18,11 @@ export default function Explore() {
   const { theme } = useTheme();
   const plan = useAuthStore((s) => s.user?.plan ?? 'free');
   const canTravel = planAtLeast(plan, 'gold');
-  const { alertConfig, hideAlert, alertSuccess, alertError } = useAlert();
+  const refreshUser = useAuthStore((s) => s.refreshUser);
+  const { alertConfig, hideAlert, alertSuccess, alertError, deleteConfirm } = useAlert();
 
   const [city, setCity] = useState('');
+  const [country, setCountry] = useState('');
   const [profiles, setProfiles] = useState<CityProfile[]>([]);
   const [loading, setLoading] = useState(canTravel);
   const [busy, setBusy] = useState(false);
@@ -28,18 +31,19 @@ export default function Explore() {
   useEffect(() => {
     if (!canTravel) return;
     listCityProfiles()
-      .then((r) => setProfiles(r.cityProfiles))
-      .catch(() => {})
+      .then((r) => setProfiles(r.profiles))
+      .catch((e) => toastApiError(e, 'Could not load city profiles'))
       .finally(() => setLoading(false));
   }, [canTravel]);
 
   const addCity = async () => {
-    if (!city.trim() || busy) return;
+    if (!city.trim() || !country.trim() || busy) return;
     setBusy(true);
     try {
-      const cp = await createCityProfile(city.trim());
+      const cp = await createCityProfile(city.trim(), country.trim());
       setProfiles((p) => [cp, ...p.filter((x) => x.id !== cp.id)]);
       setCity('');
+      setCountry('');
     } catch (e) {
       alertError('Could not add city', (e as ApiError).message ?? 'Try again.');
     } finally {
@@ -50,17 +54,33 @@ export default function Explore() {
   const activate = async (cp: CityProfile) => {
     try {
       await activateCityProfile(cp.id);
-      setProfiles((p) => p.map((x) => ({ ...x, active: x.id === cp.id })));
+      setProfiles((p) => p.map((x) => ({ ...x, isActive: x.id === cp.id })));
+      // Refresh the cached user so `me.travelModeActive` flips to true — Browse
+      // reads this flag to stop pushing real GPS updates, which would otherwise
+      // silently auto-deactivate travel mode on the very next location sync.
+      refreshUser();
       // Navigate to the grid once the user acknowledges — same destination as before,
       // just after the confirmation is seen (an in-screen dialog can't outlive navigation).
       alertSuccess(
         'Travel mode on',
-        `You're now visible in ${cp.city} with a "Visiting Soon" badge.`,
+        `You're now visible in ${cp.cityName} with a "Visiting Soon" badge.`,
         () => router.push('/(tabs)'),
       );
     } catch (e) {
       alertError('Could not activate', (e as ApiError).message ?? 'Try again.');
     }
+  };
+
+  const remove = (cp: CityProfile) => {
+    deleteConfirm(cp.cityName, async () => {
+      try {
+        await deleteCityProfile(cp.id);
+        setProfiles((p) => p.filter((x) => x.id !== cp.id));
+        if (cp.isActive) refreshUser();
+      } catch (e) {
+        alertError('Could not remove city', (e as ApiError).message ?? 'Try again.');
+      }
+    });
   };
 
   return (
@@ -96,7 +116,14 @@ export default function Explore() {
             <TextInput
               value={city}
               onChangeText={setCity}
-              placeholder="Search a city"
+              placeholder="City"
+              placeholderTextColor={theme.textTertiary}
+              style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.textPrimary }]}
+            />
+            <TextInput
+              value={country}
+              onChangeText={setCountry}
+              placeholder="Country"
               placeholderTextColor={theme.textTertiary}
               style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.textPrimary }]}
               onSubmitEditing={addCity}
@@ -117,8 +144,8 @@ export default function Explore() {
               renderItem={({ item }) => (
                 <View style={[styles.cityRow, { backgroundColor: theme.surface }]}>
                   <Ionicons name="location" size={20} color={theme.brand} />
-                  <Text style={[styles.cityName, { color: theme.textPrimary }]}>{item.city}</Text>
-                  {item.active ? (
+                  <Text style={[styles.cityName, { color: theme.textPrimary }]}>{item.cityName}</Text>
+                  {item.isActive ? (
                     <View style={styles.activeTag}>
                       <Text style={[styles.activeText, { color: theme.success }]}>Active</Text>
                     </View>
@@ -127,6 +154,9 @@ export default function Explore() {
                       <Text style={[styles.activateText, { color: theme.brand }]}>Activate</Text>
                     </Pressable>
                   )}
+                  <Pressable onPress={() => remove(item)} hitSlop={10}>
+                    <Ionicons name="trash-outline" size={18} color={theme.textTertiary} />
+                  </Pressable>
                 </View>
               )}
             />

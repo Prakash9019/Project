@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { asyncHandler } from '../../middleware/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireVerifiedPhone } from '../../middleware/auth';
+import { requirePlan } from '../../middleware/subscription';
 import { requireRoomMember } from './requireRoomMember';
 import * as c from './rooms.controller';
+import * as calls from './roomCalls.controller';
 import {
   listRoomsQuerySchema,
   listJoinedQuerySchema,
@@ -117,6 +119,7 @@ router.post(
 router.patch(
   '/:roomId/messages/:messageId',
   requireRoomMember,
+  requirePlan('gold', 'platinum'),
   validate(editMessageSchema),
   asyncHandler(c.editMessage),
 );
@@ -144,5 +147,21 @@ router.patch('/:roomId/members/:userId', validate(updateMemberRoleSchema), async
 // Room-level actions
 router.post('/:roomId/mute', asyncHandler(c.muteRoom));
 router.post('/:roomId/report', validate(reportRoomSchema), asyncHandler(c.reportRoom));
+
+// Group audio/video calling — require membership, mirrors 1:1 calling (calls.routes.ts)
+router.get('/:roomId/calls/active', requireRoomMember, asyncHandler(calls.getActiveRoomCall));
+router.post(
+  '/:roomId/calls',
+  requireRoomMember,
+  validate(calls.initiateRoomCallSchema),
+  asyncHandler(calls.initiateRoomCall),
+);
+router.post('/:roomId/calls/:callId/join', requireRoomMember, asyncHandler(calls.joinRoomCall));
+router.patch(
+  '/:roomId/calls/:callId',
+  requireRoomMember,
+  validate(calls.updateRoomCallSchema),
+  asyncHandler(calls.updateRoomCall),
+);
 
 export default router;

@@ -6,22 +6,41 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "environment": "development"
     },
     "preview": {
       "distribution": "internal",
+      "environment": "preview",
       "android": {
         "buildType": "apk"
       },
       "ios": {
         "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://project-wrqp.onrender.com",
+        "EXPO_PUBLIC_AGORA_APP_ID": "e1072084e50c42ac8bc9265c733825a3",
+        "EXPO_PUBLIC_RAZORPAY_KEY_ID": "rzp_test_T529bCGw4KolLE",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "1078544839352-mf52pft228kgg5k2rrbrq6kelc2n464q.apps.googleusercontent.com"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://project-wrqp.onrender.com",
+        "EXPO_PUBLIC_AGORA_APP_ID": "e1072084e50c42ac8bc9265c733825a3",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "1078544839352-mf52pft228kgg5k2rrbrq6kelc2n464q.apps.googleusercontent.com"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    }
   }
 }

@@ -7,7 +7,6 @@ import {
   FlatList,
   useWindowDimensions,
   ActivityIndicator,
-  Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,7 +17,10 @@ import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { ShareAlbumSheet } from '../../src/components/ShareAlbumSheet';
-import { getAlbum, getUserAlbum, uploadAlbumPhoto, ApiError } from '../../src/services/api';
+import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
+import { getAlbum, getUserAlbum, uploadAlbumPhoto, addAlbumPhoto, ApiError } from '../../src/services/api';
+import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
+import { uploadToR2 } from '../../src/utils/uploadToR2';
 import { useAuthStore } from '../../src/store/authStore';
 import type { AlbumPhoto } from '../../src/types/api';
 
@@ -34,17 +36,22 @@ export default function AlbumDetail() {
   const isOwnAlbum = !ownerId || ownerId === me?.id;
 
   const [photos, setPhotos] = useState<AlbumPhoto[]>([]);
+  const [cover, setCover] = useState<AlbumPhoto | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [viewer, setViewer] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
 
   const load = useCallback(async () => {
+    setLocked(false);
     try {
       const res = isOwnAlbum ? await getAlbum(id) : await getUserAlbum(ownerId!, id);
       setPhotos(res.photos);
-    } catch {
-      /* surfaced via empty state */
+      setCover(res.coverPhoto);
+    } catch (e) {
+      if ((e as ApiError).status === 403) setLocked(true);
+      /* other failures surfaced via empty state */
     } finally {
       setLoading(false);
     }
@@ -56,7 +63,7 @@ export default function AlbumDetail() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ['images', 'videos'],
       quality: 0.8,
       allowsMultipleSelection: true,
       orderedSelection: true,
@@ -64,10 +71,17 @@ export default function AlbumDetail() {
     if (res.canceled || res.assets.length === 0) return;
     setUploading(true);
     try {
-      // Upload each selected photo in order, appending as each completes.
+      // Upload each selected item in order, appending as each completes.
       for (const asset of res.assets) {
-        const photo = await uploadAlbumPhoto(id, asset.uri);
-        setPhotos((p) => [...p, photo]);
+        if (asset.type === 'video') {
+          const thumbnailUrl = (await generateAndUploadVideoThumbnail(asset.uri)) ?? undefined;
+          const url = await uploadToR2(asset.uri, 'video', 'video/mp4');
+          const photo = await addAlbumPhoto(id, url, { type: 'video', thumbnailUrl });
+          setPhotos((p) => [...p, photo]);
+        } else {
+          const photo = await uploadAlbumPhoto(id, asset.uri);
+          setPhotos((p) => [...p, photo]);
+        }
       }
     } catch (e) {
       const err = e as ApiError;
@@ -101,6 +115,11 @@ export default function AlbumDetail() {
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={theme.brand} /></View>
+      ) : locked ? (
+        <View style={styles.center}>
+          <Ionicons name="lock-closed-outline" size={48} color={theme.textTertiary} />
+          <Text style={[styles.emptyBody, { color: theme.textSecondary }]}>Start a conversation to unlock this album.</Text>
+        </View>
       ) : (
         <FlatList
           data={photos}
@@ -124,24 +143,48 @@ export default function AlbumDetail() {
               </Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <Pressable style={{ width: tile, height: tile }} onPress={() => setViewer(item.url)}>
-              <Image source={{ uri: item.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-            </Pressable>
-          )}
+          renderItem={({ item, index }) => {
+            const isVideo = item.type === 'video';
+            return (
+              <Pressable style={{ width: tile, height: tile }} onPress={() => setViewerIndex(index)}>
+                {isVideo && !item.thumbnailUrl ? (
+                  <View style={[StyleSheet.absoluteFill, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
+                    <Ionicons name="videocam" size={26} color={theme.textTertiary} />
+                  </View>
+                ) : (
+                  <Image source={{ uri: item.thumbnailUrl ?? item.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                )}
+                {isVideo && (
+                  <View style={styles.playBadge}>
+                    <Ionicons name="play" size={13} color="#fff" />
+                  </View>
+                )}
+              </Pressable>
+            );
+          }}
         />
       )}
 
-      <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
-        <Pressable style={styles.viewerRoot} onPress={() => setViewer(null)}>
-          {viewer && <Image source={{ uri: viewer }} style={styles.viewerImg} contentFit="contain" />}
-          <Pressable style={styles.viewerClose} onPress={() => setViewer(null)} hitSlop={12}>
-            <Ionicons name="close" size={28} color="#fff" />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <MediaViewer
+        visible={viewerIndex !== null}
+        images={photos.map((p): MediaViewerImage => ({
+          uri: p.url,
+          senderId: '',
+          senderName: title ?? 'Album',
+          createdAt: p.createdAt,
+          kind: p.type === 'video' ? 'video' : 'image',
+        }))}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
 
-      <ShareAlbumSheet visible={shareOpen} onClose={() => setShareOpen(false)} albumId={id} albumTitle={title ?? 'Album'} />
+      <ShareAlbumSheet
+        visible={shareOpen}
+        onClose={() => setShareOpen(false)}
+        albumId={id}
+        albumTitle={title ?? 'Album'}
+        coverPhotoUrl={cover?.url ?? null}
+      />
 
       {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
@@ -157,7 +200,5 @@ const styles = StyleSheet.create({
   addRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 48, borderRadius: 12, marginHorizontal: 12, marginBottom: 10 },
   addText: { fontSize: 15, fontFamily: FontFamily.semibold, fontWeight: '600' },
   emptyBody: { fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center' },
-  viewerRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center' },
-  viewerImg: { width: '100%', height: '80%' },
-  viewerClose: { position: 'absolute', top: 54, right: 20 },
+  playBadge: { position: 'absolute', bottom: 6, left: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
 });

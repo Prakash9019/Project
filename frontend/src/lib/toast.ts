@@ -7,6 +7,7 @@ import type {
   TapToastProps,
   CallToastProps,
   RoomMessageToastProps,
+  RoomCallToastProps,
 } from '../components/notifications/ToastConfig';
 
 /* ─────────────────────── Generic status toasts ─────────────────────── */
@@ -68,6 +69,13 @@ export function showCallToast(params: CallToastProps) {
   if (isViewing('call/[id]')) return;
   Toast.hide();
   Toast.show({ type: 'call_incoming', autoHide: false, props: params });
+}
+
+/** Incoming group (room) call — same unmissable treatment as 1:1, minus "missed" tracking. */
+export function showRoomCallToast(params: RoomCallToastProps) {
+  if (isViewing('call/[id]') || isViewing('rooms/[id]', params.roomId)) return;
+  Toast.hide();
+  Toast.show({ type: 'room_call_incoming', autoHide: false, props: params });
 }
 
 /** New group (room) message. Tapping opens the room. */

@@ -123,8 +123,6 @@ export default function Filters() {
     recentlyJoined: !!stored.recentlyJoined,
     highReplyRate: !!stored.highReplyRate,
   });
-  const [advanced, setAdvanced] = useState<AdvancedFilters>(stored.advancedFilters ?? {});
-
   const toggleIn = (arr: string[], v: string) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 
   const onApply = () => {
@@ -146,7 +144,8 @@ export default function Filters() {
       activeLast5Min: isGold && activity.activeLast5Min ? true : undefined,
       recentlyJoined: isGold && activity.recentlyJoined ? true : undefined,
       highReplyRate: isGold && activity.highReplyRate ? true : undefined,
-      advancedFilters: isPremium && Object.values(advanced).some((v) => v?.length) ? advanced : undefined,
+      // advancedFilters deliberately omitted — no backing columns exist yet.
+      advancedFilters: undefined,
     };
     apply(f);
     router.back();
@@ -311,34 +310,14 @@ export default function Filters() {
           />
         </Section>
 
-        {/* ADVANCED (Premium+) */}
-        <Section title="ADVANCED" locked={!isPremium}>
-          {!isPremium ? (
-            <Pressable style={[styles.advLocked, { backgroundColor: theme.surfaceElevated }]} onPress={() => setUpgradeFor('premium')}>
-              <Ionicons name="lock-closed" size={18} color={theme.brand} />
-              <Text style={[styles.advLockedText, { color: theme.textSecondary }]}>
-                Education, occupation, language, religion and lifestyle filters require Premium.
-              </Text>
-            </Pressable>
-          ) : (
-            ADV.map((a) => (
-              <View key={String(a.key)} style={{ marginBottom: 14 }}>
-                <Text style={[styles.subLabel, { color: theme.textPrimary }]}>{a.label}</Text>
-                <Chips
-                  options={a.options}
-                  selected={advanced[a.key] ?? []}
-                  onToggle={(v) =>
-                    setAdvanced((prev) => ({
-                      ...prev,
-                      [a.key]: toggleIn(prev[a.key] ?? [], v),
-                    }))
-                  }
-                  format={(s) => s}
-                />
-              </View>
-            ))
-          )}
-        </Section>
+        {/* ADVANCED — intentionally not rendered.
+            Education / occupation / language / religion / drinking / smoking /
+            relationshipGoal have no columns on the Prisma User model, are never
+            collected in onboarding or edit-profile, and grid.service.ts logs and
+            ignores them. Showing them behind the Premium paywall sold a filter
+            that silently did nothing. The UI stays out until the product data
+            model exists; the `ADV` catalog and AdvancedFilters type are kept so
+            wiring them up later is a one-line change here. */}
       </ScrollView>
 
       <View style={[styles.footer, { borderTopColor: theme.border }]}>

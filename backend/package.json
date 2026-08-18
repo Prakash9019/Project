@@ -18,7 +18,8 @@
     "test:coverage": "dotenv -e .env.test -- vitest run --coverage",
     "test:db:up": "docker compose -f docker-compose.test.yml up -d",
     "test:db:down": "docker compose -f docker-compose.test.yml down",
-    "test:db:setup": "npm run test:db:up && sleep 2 && dotenv -e .env.test -- npx prisma migrate deploy"
+    "test:db:setup": "npm run test:db:up && sleep 2 && dotenv -e .env.test -- npx prisma migrate deploy",
+    "eval:moderation": "dotenv -e .env -- ts-node --transpile-only src/evals/runModerationEval.ts"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

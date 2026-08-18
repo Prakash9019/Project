@@ -125,6 +125,11 @@ enum CallStatus {
   ongoing
 }
 
+enum RoomCallStatus {
+  ongoing
+  ended
+}
+
 enum VerificationType {
   photo
   face
@@ -356,6 +361,7 @@ model User {
   rightNowStatus    String?   @db.VarChar(120)
   rightNowCategory  String?   // drinks | coffee | workout | hangout | other
   rightNowExpiresAt DateTime? // status auto-clears once now() passes this
+  rightNowHosting   Boolean   @default(false) // "Hosting" toggle on the Right Now create sheet
 
   // ── v3 Phase 6: Safety enforcement fields ──
   restrictedUntil             DateTime?
@@ -397,6 +403,9 @@ model User {
 
   callsPlaced   Call[] @relation("Caller")
   callsReceived Call[] @relation("Callee")
+
+  roomCallsInitiated  RoomCall[]            @relation("RoomCallInitiator")
+  roomCallParticipations RoomCallParticipant[]
 
   blocksMade     Block[]  @relation("Blocker")
   blocksAgainst  Block[]  @relation("Blocked")
@@ -488,6 +497,17 @@ model UserSettings {
   activeLast30MinFilter Boolean @default(false)
 
   customDistanceKm Float?
+
+  // Notification preferences (Settings → Notifications)
+  notifyMessages       Boolean @default(true)
+  notifyPreview        Boolean @default(true)
+  notifySound          Boolean @default(true)
+  notifyVibrate        Boolean @default(true)
+  notifyReactions      Boolean @default(true)
+  notifyMissedCalls    Boolean @default(true)
+  notifyGroupMessages  Boolean @default(true)
+  notifyMemberActivity Boolean @default(true)
+  notifyMentionsOnly   Boolean @default(false)
 
   updatedAt DateTime @updatedAt
 
@@ -667,6 +687,45 @@ model Call {
   @@map("calls")
 }
 
+// Group (Dating Room) audio/video calls — extends the 1:1 Call/Agora
+// architecture to N participants via a Room instead of a Conversation.
+// One RoomCall = one active Agora channel for the room; RoomCallParticipant
+// rows track who has joined/left (mirrors RoomMember's membership pattern).
+model RoomCall {
+  id          String         @id @default(uuid())
+  roomId      String
+  initiatorId String
+  type        CallType
+  status      RoomCallStatus @default(ongoing)
+
+  agoraChannelName String
+  agoraToken       String
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  endReason String?
+
+  room         Room                  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  initiator    User                  @relation("RoomCallInitiator", fields: [initiatorId], references: [id], onDelete: Cascade)
+  participants RoomCallParticipant[]
+
+  @@index([roomId, status])
+}
+
+model RoomCallParticipant {
+  id       String    @id @default(uuid())
+  callId   String
+  userId   String
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+
+  call RoomCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, userId])
+  @@index([callId])
+}
+
 model SavedPhrase {
   id        String   @id @default(uuid())
   userId    String
@@ -782,6 +841,10 @@ model AlbumPhoto {
   albumId   String
   userId    String
   photoUrl  String
+  // 'photo' | 'video' — validated at app layer. Video items store a
+  // client-generated poster frame in thumbnailUrl (backend never decodes media).
+  type         String  @default("photo")
+  thumbnailUrl String?
   order     Int      @default(0)
   createdAt DateTime @default(now())
 
@@ -1102,6 +1165,7 @@ model Room {
   reports         RoomReport[]
   mutes           RoomMute[]
   invites         RoomInvite[]
+  calls           RoomCall[]
   creator         User?         @relation(fields: [creatorId], references: [id])
 
   @@index([category, isActive])

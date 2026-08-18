@@ -28,13 +28,15 @@ import { useInterestStore } from '../../src/store/interestStore';
 import { Avatar } from '../../src/components/Avatar';
 import { ProfileSidebar } from '../../src/components/ProfileSidebar';
 import { UserCardTile } from '../../src/components/UserCardTile';
+import { RemoteImage } from '../../src/components/RemoteImage';
+import { PressableScale } from '../../src/components/ui/PressableScale';
 import { GridSkeleton } from '../../src/components/Skeleton';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { ViewsList } from '../../src/components/interest/ViewsList';
 import { TapsList } from '../../src/components/interest/TapsList';
 import { planAtLeast } from '../../src/lib/format';
 import { markInterestSeen, hasUnreadInterest } from '../../src/utils/interestUnread';
-import { updateLocation, getSpotlight, GridQuery } from '../../src/services/api';
+import { updateLocation, getSpotlight, getDailyTop10, ApiError, GridQuery, type DailyTop10Profile } from '../../src/services/api';
 import { emitLocationUpdate } from '../../src/services/socket';
 import { showError } from '../../src/lib/toast';
 import type { UserCard } from '../../src/types/api';
@@ -73,6 +75,62 @@ const GridRow = memo(function GridRow({
         <UserCardTile key={card.id} card={card} size={tile} onPress={() => onOpen(card)} />
       ))}
     </View>
+  );
+});
+
+/**
+ * AI Top 10 tile — mirrors UserCardTile's visual language (photo, name/age,
+ * verified tick) but binds to the thin profile shape the AI endpoint actually
+ * returns (no distance/tribes/etc.), plus the compatibility score + "why" label.
+ */
+const Top10Tile = memo(function Top10Tile({
+  item,
+  size,
+  theme,
+  onPress,
+}: {
+  item: DailyTop10Profile;
+  size: number;
+  theme: any;
+  onPress: () => void;
+}) {
+  return (
+    <PressableScale
+      style={[styles.top10Tile, { width: size, height: size, backgroundColor: theme.backgroundTertiary }]}
+      onPress={onPress}
+    >
+      {item.profilePhoto ? (
+        <RemoteImage
+          source={{ uri: item.profilePhoto }}
+          stableId={item.id}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          transition={120}
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, styles.noPhoto, { backgroundColor: theme.backgroundTertiary }]}>
+          <Ionicons name="person" size={size * 0.3} color={theme.textTertiary} />
+        </View>
+      )}
+      <LinearGradient colors={theme.scrim} style={styles.top10Shade} />
+      <View style={[styles.top10ScoreBadge, { backgroundColor: theme.brand }]}>
+        <Text style={styles.top10ScoreText}>{item.compatibilityScore}%</Text>
+      </View>
+      <View style={styles.top10Bottom}>
+        <View style={styles.top10NameRow}>
+          <Text numberOfLines={1} style={styles.top10Name}>
+            {item.firstName ?? 'Someone'}
+            {item.age ? `, ${item.age}` : ''}
+          </Text>
+          {item.isVerified && <Ionicons name="checkmark-circle" size={12} color={theme.info} style={{ marginLeft: 3 }} />}
+        </View>
+        {item.whyLabel ? (
+          <Text numberOfLines={2} style={styles.top10Why}>
+            {item.whyLabel}
+          </Text>
+        ) : null}
+      </View>
+    </PressableScale>
   );
 });
 
@@ -134,6 +192,12 @@ export default function Browse() {
   const [hasUnread, setHasUnread] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [spotlightUsers, setSpotlightUsers] = useState<UserCard[]>([]);
+  // AI Daily Top 10 (Platinum, opt-in) — fetched once; the backend itself caches
+  // for 24h (Redis), so there's no reason to refetch on every focus/interval.
+  const [top10, setTop10] = useState<DailyTop10Profile[] | null>(null);
+  const [top10Loading, setTop10Loading] = useState(false);
+  const [top10LockedReason, setTop10LockedReason] = useState<'plan_required' | null>(null);
+  const top10FetchedRef = useRef(false);
   // A filter-triggered refetch is in flight — dims the current grid and shows a
   // thin progress bar instead of wiping to a skeleton (F44).
   const [isFiltering, setIsFiltering] = useState(false);
@@ -203,14 +267,20 @@ export default function Browse() {
         });
         const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setCoords(c);
-        syncLocation(c.lat, c.lng);
+        // While Travel Mode is active, don't push real GPS to the server: the
+        // backend auto-deactivates the active city profile on any real location
+        // update ("returning home" logic in updateLocation), which would silently
+        // undo Activate within seconds of the routine focus/interval GPS sync below.
+        if (!me?.travelModeActive) {
+          syncLocation(c.lat, c.lng);
+        }
         await fetchGrid({ ...c, ...query }, refreshingFlag);
         lastRefresh.current = Date.now();
       } catch {
         setPermDenied(true);
       }
     },
-    [fetchGrid, query, exploreLocation, syncLocation]
+    [fetchGrid, query, exploreLocation, syncLocation, me?.travelModeActive]
   );
 
   // Hydrate cached grid immediately for instant content / offline support.
@@ -265,6 +335,23 @@ export default function Browse() {
       .catch(() => setSpotlightUsers([]));
   }, [coords]);
 
+  // AI Daily Top 10 — fetched once per app session (not once per focus/render):
+  // any 403 (not Platinum, or opted out) or other failure just hides the section
+  // instead of showing a broken/empty carousel, except plan_required, which shows
+  // the existing upgrade pattern (UpgradeModal, already used elsewhere on this screen).
+  useEffect(() => {
+    if (!me?.id || top10FetchedRef.current) return;
+    top10FetchedRef.current = true;
+    setTop10Loading(true);
+    getDailyTop10()
+      .then((res) => setTop10(Array.isArray(res.profiles) ? res.profiles : []))
+      .catch((e) => {
+        const err = e as ApiError;
+        setTop10LockedReason(err.status === 403 && err.code === 'plan_required' ? 'plan_required' : null);
+      })
+      .finally(() => setTop10Loading(false));
+  }, [me?.id]);
+
   // Keep interest data fresh so the unread indicator is accurate — on mount,
   // when the plan changes, and whenever the Browse screen regains focus.
   useEffect(() => {
@@ -297,6 +384,13 @@ export default function Browse() {
   const openProfile = useCallback(
     (card: UserCard) => {
       router.push({ pathname: '/profile/[id]', params: { id: card.id } });
+    },
+    [router]
+  );
+
+  const openProfileById = useCallback(
+    (id: string) => {
+      router.push({ pathname: '/profile/[id]', params: { id } });
     },
     [router]
   );
@@ -337,6 +431,12 @@ export default function Browse() {
               <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
             </View>
           )}
+        </Pressable>
+        <Pressable
+          style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]}
+          onPress={() => router.push('/explore')}
+        >
+          <Ionicons name="airplane-outline" size={18} color={me?.travelModeActive ? theme.brand : theme.textPrimary} />
         </Pressable>
       </View>
 
@@ -472,27 +572,62 @@ export default function Browse() {
           contentContainerStyle={{ paddingBottom: 16 }}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            spotlightUsers.length > 0 ? (
-              <View style={styles.spotlightSection}>
-                <Text style={[styles.spotlightTitle, { color: theme.textPrimary }]}>Featured Nearby</Text>
-                <FlatList
-                  data={spotlightUsers}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  keyExtractor={(c) => c.id}
-                  contentContainerStyle={{ paddingHorizontal: PAD, gap: GAP }}
-                  renderItem={({ item }) => (
-                    <View style={{ width: tile }}>
-                      <UserCardTile card={item} size={tile} onPress={() => openProfile(item)} />
-                      <View style={[styles.featuredBadge, { backgroundColor: theme.brand }]}>
-                        <Ionicons name="star" size={10} color="#fff" />
-                        <Text style={styles.featuredBadgeText}>Featured</Text>
+            <>
+              {top10Loading || (top10 && top10.length > 0) || top10LockedReason === 'plan_required' ? (
+                <View style={styles.top10Section}>
+                  <Text style={[styles.top10Title, { color: theme.textPrimary }]}>✨ AI Top 10 Today</Text>
+                  <Text style={[styles.top10Subtitle, { color: theme.textSecondary }]}>
+                    People we think you may connect with
+                  </Text>
+                  {top10Loading ? (
+                    <ActivityIndicator color={theme.brand} style={{ marginVertical: 16, marginLeft: PAD }} />
+                  ) : top10 && top10.length > 0 ? (
+                    <FlatList
+                      data={top10}
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      keyExtractor={(p) => p.id}
+                      contentContainerStyle={{ paddingHorizontal: PAD, gap: GAP }}
+                      renderItem={({ item }) => (
+                        <Top10Tile item={item} size={tile} theme={theme} onPress={() => openProfileById(item.id)} />
+                      )}
+                    />
+                  ) : top10LockedReason === 'plan_required' ? (
+                    <Pressable
+                      style={[styles.top10LockedCard, { backgroundColor: theme.surfaceElevated }]}
+                      onPress={() => setUpgradeOpen(true)}
+                    >
+                      <Ionicons name="lock-closed" size={18} color={theme.textTertiary} />
+                      <Text style={[styles.top10LockedText, { color: theme.textPrimary }]}>
+                        Unlock AI Top 10 with Platinum
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {spotlightUsers.length > 0 ? (
+                <View style={styles.spotlightSection}>
+                  <Text style={[styles.spotlightTitle, { color: theme.textPrimary }]}>Featured Nearby</Text>
+                  <FlatList
+                    data={spotlightUsers}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    keyExtractor={(c) => c.id}
+                    contentContainerStyle={{ paddingHorizontal: PAD, gap: GAP }}
+                    renderItem={({ item }) => (
+                      <View style={{ width: tile }}>
+                        <UserCardTile card={item} size={tile} onPress={() => openProfile(item)} />
+                        <View style={[styles.featuredBadge, { backgroundColor: theme.brand }]}>
+                          <Ionicons name="star" size={10} color="#fff" />
+                          <Text style={styles.featuredBadgeText}>Featured</Text>
+                        </View>
                       </View>
-                    </View>
-                  )}
-                />
-              </View>
-            ) : null
+                    )}
+                  />
+                </View>
+              ) : null}
+            </>
           }
           refreshControl={
             <RefreshControl
@@ -565,4 +700,18 @@ const styles = StyleSheet.create({
   spotlightTitle: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700', paddingHorizontal: PAD, marginBottom: 8 },
   featuredBadge: { position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },
   featuredBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.bold, fontWeight: '700' },
+  top10Section: { marginBottom: 12 },
+  top10Title: { fontSize: 15, fontFamily: DisplayFont.bold, fontWeight: '700', paddingHorizontal: PAD, marginBottom: 2 },
+  top10Subtitle: { fontSize: 12, fontFamily: FontFamily.regular, paddingHorizontal: PAD, marginBottom: 8 },
+  top10Tile: { overflow: 'hidden', borderRadius: 16 },
+  noPhoto: { alignItems: 'center', justifyContent: 'center' },
+  top10Shade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '70%' },
+  top10ScoreBadge: { position: 'absolute', top: 7, right: 7, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 },
+  top10ScoreText: { color: '#000', fontSize: 11, fontFamily: FontFamily.bold, fontWeight: '700' },
+  top10Bottom: { position: 'absolute', left: 8, right: 8, bottom: 8 },
+  top10NameRow: { flexDirection: 'row', alignItems: 'center' },
+  top10Name: { color: '#fff', fontSize: 14, fontFamily: DisplayFont.bold, fontWeight: '700', flexShrink: 1, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 5 },
+  top10Why: { color: '#F2E6DC', fontSize: 10, fontFamily: FontFamily.medium, marginTop: 2, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 3 },
+  top10LockedCard: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: PAD, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16 },
+  top10LockedText: { fontSize: 13, fontFamily: FontFamily.semibold, fontWeight: '600' },
 });

@@ -3,6 +3,7 @@ import { asyncHandler } from '../../middleware/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireVerifiedPhone } from '../../middleware/auth';
 import { requirePlan } from '../../middleware/subscription';
+import { externalApiLimiter } from '../../middleware/rateLimit';
 import * as c from './chat.controller';
 
 const router = Router();
@@ -23,6 +24,10 @@ router.post('/templates', validate(c.templateSchema), asyncHandler(c.createTempl
 router.delete('/templates/:templateId', asyncHandler(c.deleteTemplate));
 
 // Per-conversation
+// NOTE: /messages/search must be registered BEFORE /messages/:messageId routes
+// so "search" is never swallowed as a message id.
+router.get('/:conversationId/messages/search', validate(c.searchMessagesQuerySchema, 'query'), asyncHandler(c.searchMessages));
+router.get('/:conversationId/media', validate(c.conversationMediaQuerySchema, 'query'), asyncHandler(c.listConversationMedia));
 router.get('/:conversationId/messages', validate(c.listMessagesQuerySchema, 'query'), asyncHandler(c.listMessages));
 router.post('/:conversationId/messages', validate(c.sendMessageSchema), asyncHandler(c.sendMessage));
 router.post('/:conversationId/read', asyncHandler(c.markRead));
@@ -53,6 +58,7 @@ router.delete('/:conversationId/messages/:messageId', asyncHandler(c.deleteMessa
 router.post('/:conversationId/messages/:messageId/view', asyncHandler(c.consumeExpiringPhoto));
 router.post(
   '/:conversationId/messages/:messageId/translate',
+  externalApiLimiter,
   validate(c.translateSchema),
   asyncHandler(c.translateMessage),
 );

@@ -104,7 +104,13 @@ export function AttachmentSheet({
                         return;
                       }
                       onClose();
-                      onPick(o.kind);
+                      // Defer the pick callback until this Modal has finished its close
+                      // animation. Presenting a second native <Modal> (e.g. LocationPicker,
+                      // ImagePreview) in the same tick that this one is dismissing races the
+                      // native modal host on iOS/Android — the incoming modal can render but
+                      // never receive touches. Same fix as confirmBlock/ReportSheet in
+                      // app/profile/[id].tsx.
+                      setTimeout(() => onPick(o.kind), 300);
                     }}
                     style={styles.option}
                   >

@@ -18,7 +18,9 @@ const BLOCKLIST_PATTERNS = [
   // Extend with project-specific patterns here
 ];
 
-function ruleBasedClassify(text: string): ModerationResult {
+// Exported for the Claude-vs-Gemini moderation eval harness (src/evals/) —
+// not used by CompositeModerationAdapter's control flow, which is unchanged.
+export function ruleBasedClassify(text: string): ModerationResult {
   for (const pattern of BLOCKLIST_PATTERNS) {
     if (pattern.test(text)) {
       return { offensive: true, categories: ['rule_match'], score: 0.95 };
@@ -29,7 +31,9 @@ function ruleBasedClassify(text: string): ModerationResult {
 
 // ── Claude Haiku option A: fetch-based, no SDK required ──────────────────────
 
-async function claudeHaikuClassify(text: string): Promise<ModerationResult> {
+// Exported for the moderation eval harness (src/evals/runModerationEval.ts) so
+// it reuses this exact call instead of duplicating the Claude fetch logic.
+export async function claudeHaikuClassify(text: string): Promise<ModerationResult> {
   const apiKey = env.anthropic.apiKey;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 

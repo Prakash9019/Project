@@ -209,6 +209,7 @@ export async function rightNowFeed(req: Request, res: Response): Promise<void> {
     rightNowStatus: u.rightNowStatus,
     rightNowCategory: u.rightNowCategory,
     rightNowExpiresAt: u.rightNowExpiresAt,
+    rightNowHosting: u.rightNowHosting,
     rightNowJoinedAt: u.updatedAt,
     distanceMeters: distanceById.get(u.id) ?? null,
   })));

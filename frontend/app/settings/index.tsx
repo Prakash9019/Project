@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, type Href } from 'expo-router';
+import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { UpgradeModal } from '../../src/components/UpgradeModal';
 import { CustomAlert } from '../../src/components/CustomAlert';
@@ -20,6 +20,7 @@ import { Avatar } from '../../src/components/Avatar';
 import { AnimatedSwitch } from '../../src/components/ui/AnimatedSwitch';
 import { useAuthStore } from '../../src/store/authStore';
 import { updateSettings, updateProfile, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
+import { saveAndShareExport } from '../../src/utils/exportData';
 import { planAtLeast } from '../../src/lib/format';
 import type { Plan, UserSettings, AiOptInFeatures } from '../../src/types/api';
 
@@ -28,6 +29,9 @@ type AiKey = keyof AiOptInFeatures;
 
 export default function Settings() {
   const router = useRouter();
+  const { section } = useLocalSearchParams<{ section?: string }>();
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionY = useRef<Record<string, number>>({});
   const { theme, isDark, toggleTheme } = useTheme();
   const user = useAuthStore((s) => s.user);
   const refreshUser = useAuthStore((s) => s.refreshUser);
@@ -40,6 +44,7 @@ export default function Settings() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletePhrase, setDeletePhrase] = useState('');
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Local toggle state seeded from the loaded user.
   const [toggles, setToggles] = useState<UserSettings>({});
@@ -124,11 +129,16 @@ export default function Settings() {
   };
 
   const onExport = async () => {
+    if (exporting) return;
+    setExporting(true);
     try {
-      await exportMyData();
-      alertSuccess('Export started', 'Your data export has been requested. You’ll be notified when it’s ready.');
+      const data = await exportMyData();
+      await saveAndShareExport(data);
+      alertSuccess('Your data export is ready', 'Choose where to save or send the file.');
     } catch {
       alertError('Export failed', 'Please try again later.');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -198,12 +208,32 @@ export default function Settings() {
     );
   };
 
-  const Group = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <View style={styles.group}>
+  const Group = ({ title, children, anchor }: { title: string; children: React.ReactNode; anchor?: string }) => (
+    <View
+      style={styles.group}
+      onLayout={anchor ? (e) => { sectionY.current[anchor] = e.nativeEvent.layout.y; } : undefined}
+    >
       <Text style={[styles.groupTitle, { color: theme.textTertiary }]}>{title}</Text>
       <View style={[styles.groupCard, { backgroundColor: theme.surface }]}>{children}</View>
     </View>
   );
+
+  useEffect(() => {
+    if (!section || !user) return;
+    // Group layouts land asynchronously after the native layout pass; retry briefly.
+    let attempts = 0;
+    const id = setInterval(() => {
+      attempts += 1;
+      const y = sectionY.current[section];
+      if (y != null) {
+        scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+        clearInterval(id);
+      } else if (attempts > 10) {
+        clearInterval(id);
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, [section, user]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
@@ -222,7 +252,7 @@ export default function Settings() {
           <ActivityIndicator color={theme.brand} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 40 }}>
           {/* Profile header */}
           <Pressable style={[styles.profile, { borderBottomColor: theme.border }]} onPress={() => router.push('/settings/edit-profile')}>
             <Avatar uri={user.primaryPhotoUrl} size={60} editable />
@@ -256,14 +286,14 @@ export default function Settings() {
             <AvailRow label="Accept Video Calls" subtitle="Allow others to video call you" availKey="videoCallAvailable" />
           </Group>
 
-          <Group title="PRIVACY (GOLD+)">
+          <Group title="PRIVACY (GOLD+)" anchor="privacy">
             <Toggle label="Incognito mode" settingKey="incognito" requiredPlan="gold" />
             <Toggle label="Hide active status" settingKey="hideActiveStatus" requiredPlan="gold" />
             <Toggle label="Hide last seen" settingKey="hideLastSeen" requiredPlan="gold" />
             <Toggle label="Hide exact distance" settingKey="hideExactDistance" requiredPlan="gold" />
           </Group>
 
-          <Group title="SAFETY">
+          <Group title="SAFETY" anchor="safety">
             <Toggle label="Block offensive language" settingKey="blockOffensiveLanguage" />
             <Toggle label="Require profile completeness to message" settingKey="requireProfileCompletenessToMessage" />
             <Toggle label="Discreet mode" settingKey="disceetMode" />
@@ -299,9 +329,15 @@ export default function Settings() {
           </Group>
 
           <Group title="ACCOUNT">
-            <Pressable style={styles.actionRow} onPress={onExport}>
-              <Ionicons name="download-outline" size={20} color={theme.textPrimary} />
-              <Text style={[styles.actionText, { color: theme.textPrimary }]}>Export my data</Text>
+            <Pressable style={styles.actionRow} onPress={onExport} disabled={exporting}>
+              {exporting ? (
+                <ActivityIndicator size="small" color={theme.textPrimary} />
+              ) : (
+                <Ionicons name="download-outline" size={20} color={theme.textPrimary} />
+              )}
+              <Text style={[styles.actionText, { color: theme.textPrimary }]}>
+                {exporting ? 'Exporting…' : 'Export my data'}
+              </Text>
             </Pressable>
             <Pressable style={styles.actionRow} onPress={() => setDeleteOpen(true)}>
               <Ionicons name="trash-outline" size={20} color={theme.error} />

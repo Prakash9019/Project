@@ -179,6 +179,10 @@ export interface User {
   callLimits?: CallLimits | null;
   /** Effective plan limits/perks (GET /auth/me), computed server-side from plan + planExpiresAt. */
   effectiveLimits: EffectiveLimits;
+  /** True while a Travel Mode city profile is activated (GET /auth/me only). Used to
+   *  suppress routine real-GPS location pushes, which would otherwise auto-deactivate
+   *  travel mode ("returning home" logic in updateLocation). */
+  travelModeActive?: boolean;
   name: string | null;
   firstName: string | null;
   age: number | null;
@@ -232,10 +236,13 @@ export interface User {
   audioCallAvailable: boolean;
   videoCallAvailable: boolean;
   aiOptInFeatures: AiOptInFeatures | null;
+  /** Nested UserSettings row (GET /auth/me) — currently only reliable source for fields not also flattened above, e.g. notification preferences. */
+  settings?: UserSettings | null;
   // ── Right Now (frontend spec addition; see backend-spec __frontendSpecAdditions) ──
   rightNowStatus?: string | null;
   rightNowCategory?: RightNowCategory | null;
   rightNowExpiresAt?: string | null;
+  rightNowHosting?: boolean;
   lastActiveAt: string;
   createdAt: string;
   updatedAt: string;
@@ -259,6 +266,16 @@ export interface UserSettings {
   disceetMode?: boolean;
   showOrientationPublicly?: boolean;
   aiOptInFeatures?: AiOptInFeatures;
+  // Notification preferences (Settings → Notifications) — server-persisted.
+  notifyMessages?: boolean;
+  notifyPreview?: boolean;
+  notifySound?: boolean;
+  notifyVibrate?: boolean;
+  notifyReactions?: boolean;
+  notifyMissedCalls?: boolean;
+  notifyGroupMessages?: boolean;
+  notifyMemberActivity?: boolean;
+  notifyMentionsOnly?: boolean;
 }
 
 /** Card returned in the discovery grid (UserCard fields, Change 5). */
@@ -309,6 +326,8 @@ export interface RightNowCard extends UserCard {
   rightNowStatus: string | null;
   rightNowCategory: RightNowCategory | null;
   rightNowExpiresAt: string | null;
+  /** Explicit "Hosting" flag set on the create sheet (falls back to text heuristic when absent). */
+  rightNowHosting?: boolean;
   /** When they posted their current status (server: user.updatedAt). */
   rightNowJoinedAt?: string | null;
   /** Raw distance in metres for client-side sorting. */
@@ -512,17 +531,22 @@ export interface AlbumSummary {
   coverPhoto: AlbumPhoto | null;
   photoCount: number;
   privacy?: AlbumPrivacy;
+  /** Number of people with access under the current privacy setting; null for 'everyone' (unbounded). */
+  sharedCount?: number | null;
   /** Only present on GET /api/v1/users/:userId/albums (viewing someone else's albums). */
   locked?: boolean;
 }
 
-/** A photo within an album. */
+/** A photo (or video) within an album. */
 export interface AlbumPhoto {
   id: string;
   /** Signed R2 URL (15 min expiry). Backend serializes this field as `url`. */
   url: string;
   /** Raw R2 object key — present on own-album detail responses for sharing in chat. */
   path?: string;
+  type?: 'photo' | 'video';
+  /** Poster frame for a video item — client-generated before upload. */
+  thumbnailUrl?: string | null;
   order: number;
   createdAt: string;
 }

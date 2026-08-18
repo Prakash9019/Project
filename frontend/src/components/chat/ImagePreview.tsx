@@ -58,7 +58,17 @@ export function ImagePreview({
     });
   };
 
-  if (!visible) return null;
+  // NOTE: do NOT early-return `null` here when `!visible`. That would tear the
+  // <Modal> out of the tree the instant the parent flips `visible` to false
+  // (see ChatComposer's `handlePreviewSend`, which calls `setPreviewUris(null)`
+  // synchronously before awaiting the upload) instead of letting RN's `Modal`
+  // play its own native dismiss transition off the `visible` prop. On iOS this
+  // abrupt unmount races the tail end of the camera→picker native modal
+  // handoff (the same "a modal can't present/dismiss while another is still
+  // transitioning" constraint documented in app/chat/[id].tsx's `openForward`)
+  // and can leave the app in a stuck/blank state that looks like a reload,
+  // with the composer's caption UI gone. `Modal` itself is a no-op host view
+  // when `visible` is false, so staying mounted costs nothing.
   const current = items[index];
 
   return (

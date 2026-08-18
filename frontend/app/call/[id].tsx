@@ -5,7 +5,8 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../src/theme';
-import { updateCall } from '../../src/services/api';
+import { updateCall, updateRoomCall } from '../../src/services/api';
+import type { RoomCallParticipantCard } from '../../src/services/api';
 import { connectSocket } from '../../src/services/socket';
 import { useAuthStore } from '../../src/store/authStore';
 import {
@@ -31,11 +32,28 @@ export default function CallScreen() {
     type?: string;
     peerName?: string;
     peerPhoto?: string;
+    // Present only for a Dating Room group call — switches this screen into
+    // multi-participant mode instead of the 1:1 peer view.
+    roomId?: string;
+    roomName?: string;
+    callId?: string;
+    initiatorId?: string;
+    // JSON-encoded RoomCallParticipantCard[] — initial roster for the audio-mode avatar row.
+    participants?: string;
   }>();
   const isVideo = params.type === 'video';
+  const isGroup = !!params.roomId && !!params.callId;
 
   const [joined, setJoined] = useState(false);
-  const [remoteUid, setRemoteUid] = useState<number | null>(null);
+  // 1:1 calls track a single remote peer; group calls track every connected uid.
+  const [remoteUids, setRemoteUids] = useState<number[]>([]);
+  const [participants, setParticipants] = useState<RoomCallParticipantCard[]>(() => {
+    try {
+      return params.participants ? (JSON.parse(params.participants) as RoomCallParticipantCard[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [muted, setMutedState] = useState(false);
   const [cameraOn, setCameraOn] = useState(isVideo);
   const [speakerOn, setSpeakerOn] = useState(isVideo);
@@ -50,13 +68,15 @@ export default function CallScreen() {
 
   const missingConfig = !params.token || !params.channel;
 
-  // Agora engine lifecycle. Re-runs on retry (attempt).
+  // Agora engine lifecycle. Re-runs on retry (attempt). Works unchanged for
+  // group calls — Agora hands us one onUserJoined/onUserOffline per remote uid
+  // regardless of how many participants share the channel.
   useEffect(() => {
     if (!isAgoraAvailable || missingConfig) return;
     const engine = createCallEngine(isVideo, {
       onJoinSuccess: () => setJoined(true),
-      onUserJoined: (uid) => setRemoteUid(uid),
-      onUserOffline: () => setRemoteUid(null),
+      onUserJoined: (uid) => setRemoteUids((prev) => (prev.includes(uid) ? prev : [...prev, uid])),
+      onUserOffline: (uid) => setRemoteUids((prev) => prev.filter((u) => u !== uid)),
     });
     if (engine) {
       joinChannel(params.token!, params.channel!, isVideo);
@@ -94,8 +114,9 @@ export default function CallScreen() {
     return () => clearInterval(t);
   }, [joined]);
 
-  // Free-tier countdown derived from authStore callLimits (null for paid plans).
-  const callLimits = me?.callLimits ?? null;
+  // Free-tier countdown derived from authStore callLimits — 1:1 calls only;
+  // group calls have no per-minute free-tier cap.
+  const callLimits = !isGroup ? (me?.callLimits ?? null) : null;
   const remainingMinutes = callLimits
     ? isVideo
       ? callLimits.videoMinutesLimit - callLimits.videoMinutesUsed
@@ -113,28 +134,55 @@ export default function CallScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remainingSec, joined, limitReached]);
 
-  // Server-side end (e.g. free-tier time limit reached).
+  // Server-side end: 1:1 free-tier time limit, or a group call ended by its host / everyone left.
   useEffect(() => {
     let cleanup = () => {};
     (async () => {
       const socket = await connectSocket();
       if (!socket) return;
-      const onEnd = (p: any) => {
-        if (p.callId && p.callId !== params.id) return;
-        if (p.endReason === 'time_limit_reached') setLimitReached(true);
-        finish('normal', false);
-      };
-      socket.on('call:end', onEnd);
-      cleanup = () => socket.off('call:end', onEnd);
+      if (isGroup) {
+        const onRoomEnd = (p: any) => {
+          if (p.callId && p.callId !== params.callId) return;
+          finish('normal', false);
+        };
+        const onJoined = (p: any) => {
+          if (p.callId !== params.callId || !p.participant) return;
+          setParticipants((prev) => (prev.some((x) => x.id === p.participant.id) ? prev : [...prev, p.participant]));
+        };
+        const onLeft = (p: any) => {
+          if (p.callId !== params.callId) return;
+          setParticipants((prev) => prev.filter((x) => x.id !== p.userId));
+        };
+        socket.on('room:call.end', onRoomEnd);
+        socket.on('room:call.participant_joined', onJoined);
+        socket.on('room:call.participant_left', onLeft);
+        cleanup = () => {
+          socket.off('room:call.end', onRoomEnd);
+          socket.off('room:call.participant_joined', onJoined);
+          socket.off('room:call.participant_left', onLeft);
+        };
+      } else {
+        const onEnd = (p: any) => {
+          if (p.callId && p.callId !== params.id) return;
+          if (p.endReason === 'time_limit_reached') setLimitReached(true);
+          finish('normal', false);
+        };
+        socket.on('call:end', onEnd);
+        cleanup = () => socket.off('call:end', onEnd);
+      }
     })();
     return () => cleanup();
-  }, [params.id]);
+  }, [params.id, params.callId, isGroup]);
 
   const finish = async (endReason: 'normal' | 'error' = 'normal', goBack = true) => {
     if (ended.current) return;
     ended.current = true;
     try {
-      await updateCall(params.id, 'ended', endReason);
+      if (isGroup) {
+        await updateRoomCall(params.roomId!, params.callId!, 'leave');
+      } else {
+        await updateCall(params.id, 'ended', endReason);
+      }
     } catch {
       /* ignore */
     }
@@ -142,12 +190,25 @@ export default function CallScreen() {
     if (goBack && !limitReached) router.back();
   };
 
+  /** Group-call host action: end the call for every participant, not just leave it. */
+  const endForEveryone = async () => {
+    if (ended.current || !isGroup) return;
+    ended.current = true;
+    try {
+      await updateRoomCall(params.roomId!, params.callId!, 'end');
+    } catch {
+      /* ignore */
+    }
+    leaveAndDestroy();
+    router.back();
+  };
+
   // Retry a failed connection: tear down, reset state, re-run the join effect.
   const retryConnect = () => {
     leaveAndDestroy();
     setConnectError(false);
     setJoined(false);
-    setRemoteUid(null);
+    setRemoteUids([]);
     setElapsed(0);
     setAttempt((a) => a + 1);
   };
@@ -180,11 +241,53 @@ export default function CallScreen() {
     setSpeaker(next);
   };
 
+  const title = isGroup ? (params.roomName || 'Group Call') : (params.peerName || 'Calling…');
+  const statusText = limitReached
+    ? 'Daily call limit reached'
+    : connectError
+      ? 'Call failed to connect'
+      : !isAgoraAvailable
+        ? 'Calls unavailable on this device'
+        : joined
+          ? isGroup
+            ? `${remoteUids.length + 1} in call · ${fmt(elapsed)}`
+            : (remoteUids.length > 0 ? fmt(elapsed) : 'Ringing…')
+          : 'Connecting…';
+
   return (
     <View style={[styles.root, { backgroundColor: '#000' }]}>
-      {/* Remote video fills the screen for video calls */}
-      {isVideo && isAgoraAvailable && RtcSurfaceView && remoteUid != null ? (
-        <RtcSurfaceView style={StyleSheet.absoluteFill} canvas={{ uid: remoteUid }} />
+      {/* Remote video: single full-screen peer for 1:1, a grid of tiles for group calls */}
+      {isVideo && isAgoraAvailable && RtcSurfaceView && !isGroup && remoteUids[0] != null ? (
+        <RtcSurfaceView style={StyleSheet.absoluteFill} canvas={{ uid: remoteUids[0] }} />
+      ) : isVideo && isAgoraAvailable && RtcSurfaceView && isGroup && remoteUids.length > 0 ? (
+        <View style={[StyleSheet.absoluteFill, styles.videoGrid]}>
+          {remoteUids.map((uid) => (
+            <View key={uid} style={[styles.videoTile, { width: remoteUids.length > 1 ? '50%' : '100%' }]}>
+              <RtcSurfaceView style={StyleSheet.absoluteFill} canvas={{ uid }} />
+            </View>
+          ))}
+        </View>
+      ) : isGroup ? (
+        <View style={[StyleSheet.absoluteFill, styles.center, styles.avatarRow]}>
+          {participants.length === 0 ? (
+            <View style={[styles.avatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="people" size={64} color={theme.textTertiary} />
+            </View>
+          ) : (
+            participants.slice(0, 6).map((p) => (
+              <View key={p.id} style={styles.avatarSlot}>
+                {p.photo ? (
+                  <Image source={{ uri: p.photo }} style={styles.smallAvatar} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                ) : (
+                  <View style={[styles.smallAvatar, { backgroundColor: theme.backgroundTertiary, alignItems: 'center', justifyContent: 'center' }]}>
+                    <Ionicons name="person" size={28} color={theme.textTertiary} />
+                  </View>
+                )}
+                {p.name ? <Text style={styles.avatarLabel} numberOfLines={1}>{p.name}</Text> : null}
+              </View>
+            ))
+          )}
+        </View>
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.center]}>
           {params.peerPhoto ? (
@@ -205,18 +308,8 @@ export default function CallScreen() {
       )}
 
       <View style={styles.topInfo}>
-        <Text style={styles.peerName}>{params.peerName || 'Calling…'}</Text>
-        <Text style={styles.status}>
-          {limitReached
-            ? 'Daily call limit reached'
-            : connectError
-              ? 'Call failed to connect'
-              : !isAgoraAvailable
-                ? 'Calls unavailable on this device'
-                : joined
-                  ? (remoteUid != null ? fmt(elapsed) : 'Ringing…')
-                  : 'Connecting…'}
-        </Text>
+        <Text style={styles.peerName}>{title}</Text>
+        <Text style={styles.status}>{statusText}</Text>
         {remainingSec != null && !limitReached && (
           <Text style={styles.freeNote}>{fmt(remainingSec)} remaining</Text>
         )}
@@ -271,6 +364,13 @@ export default function CallScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* Group-call host control: end for everyone, not just leave. */}
+      {isGroup && !limitReached && !connectError && me?.id && me.id === params.initiatorId && (
+        <Pressable style={styles.endForAllRow} onPress={endForEveryone} hitSlop={8}>
+          <Text style={styles.endForAllText}>End call for everyone</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -297,6 +397,12 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center' },
   avatar: { width: 130, height: 130, borderRadius: 65 },
+  avatarRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 20, paddingHorizontal: 24 },
+  avatarSlot: { alignItems: 'center', width: 80 },
+  smallAvatar: { width: 72, height: 72, borderRadius: 36 },
+  avatarLabel: { color: '#ddd', fontSize: 12, marginTop: 6, maxWidth: 80, textAlign: 'center' },
+  videoGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  videoTile: { height: '50%', backgroundColor: '#111', borderWidth: 0.5, borderColor: '#000' },
   localPreview: { position: 'absolute', top: 60, right: 16, width: 110, height: 160, borderRadius: 12, overflow: 'hidden', backgroundColor: '#222' },
   topInfo: { position: 'absolute', top: 80, left: 0, right: 0, alignItems: 'center', gap: 6 },
   peerName: { color: '#fff', fontSize: 26, fontWeight: '800' },
@@ -304,6 +410,8 @@ const styles = StyleSheet.create({
   freeNote: { color: '#aaa', fontSize: 12, marginTop: 4 },
   controls: { position: 'absolute', bottom: 50, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 18 },
   control: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center' },
+  endForAllRow: { position: 'absolute', bottom: 12, left: 0, right: 0, alignItems: 'center' },
+  endForAllText: { color: '#888', fontSize: 13 },
   limitCard: { position: 'absolute', bottom: 60, left: 24, right: 24, backgroundColor: '#1A1A1A', borderRadius: 16, padding: 20, alignItems: 'center' },
   limitTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   limitBody: { color: '#bbb', fontSize: 14, marginTop: 6 },

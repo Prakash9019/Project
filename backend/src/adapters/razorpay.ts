@@ -50,12 +50,29 @@ class RazorpayLiveClient implements RazorpayClient {
   }
 }
 
+/**
+ * Local-dev stub. `verifySignature` accepts ANY signature, so selecting it in
+ * production would let any authenticated caller activate a paid plan for free.
+ * It therefore refuses to run when NODE_ENV=production — a misconfigured
+ * deployment fails loudly at checkout instead of silently giving plans away.
+ */
 class RazorpayStubClient implements RazorpayClient {
+  private assertNotProd(): void {
+    if (env.isProd) {
+      throw new Error(
+        'Razorpay is not configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing). ' +
+        'Refusing to use the development stub in production.',
+      );
+    }
+  }
+
   async createOrder(amountInr: number, receipt: string): Promise<RazorpayOrder> {
+    this.assertNotProd();
     return { id: `order_stub_${randomUUID().slice(0, 8)}`, amount: amountInr * 100, currency: 'INR', receipt };
   }
 
   verifySignature(_orderId: string, _paymentId: string, _signature: string): boolean {
+    this.assertNotProd();
     return true;
   }
 }

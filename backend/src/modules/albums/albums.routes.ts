@@ -10,6 +10,8 @@ router.use(requireAuth, requireVerifiedPhone);
 // Own album management
 router.get('/', asyncHandler(c.listAlbums));
 router.post('/', validate(c.createAlbumSchema), asyncHandler(c.createAlbum));
+// Must be registered before /:albumId so it isn't swallowed as an album id.
+router.get('/shared-with-me', asyncHandler(c.sharedWithMe));
 router.get('/:albumId', asyncHandler(c.getAlbum));
 router.patch('/:albumId', validate(c.updateAlbumSchema), asyncHandler(c.updateAlbum));
 router.delete('/:albumId', asyncHandler(c.deleteAlbum));

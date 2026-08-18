@@ -61,6 +61,7 @@ export function LocationPicker({
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -76,6 +77,7 @@ export function LocationPicker({
     setQuery('');
     setResults([]);
     setBusy(false);
+    setLocationError(null);
   };
 
   const close = () => {
@@ -90,10 +92,11 @@ export function LocationPicker({
 
   const sendCurrent = async () => {
     setBusy(true);
+    setLocationError(null);
     try {
       const perm = await Location.requestForegroundPermissionsAsync();
       if (!perm.granted) {
-        showError('Location permission needed');
+        setLocationError('Location permission needed. Enable it in Settings and try again.');
         setBusy(false);
         return;
       }
@@ -102,8 +105,15 @@ export function LocationPicker({
       const label = await labelFor(latitude, longitude);
       send(latitude, longitude, label);
     } catch (e) {
+      // Toast.show() renders at the root layout, outside this Modal's native
+      // window — on Android/iOS a Modal is a separate window layer, so a root
+      // toast can't paint above it and silently never appears while the sheet
+      // stays open. Show the error inline instead (same pattern as
+      // ReportSheet) so failures are visible without closing the sheet.
       const timedOut = e instanceof Error && e.message === 'Location timed out';
-      showError(timedOut ? 'Location timed out. Try again with a clear sky view.' : 'Could not get your location');
+      setLocationError(
+        timedOut ? 'Location timed out. Try again with a clear sky view.' : 'Could not get your location',
+      );
       setBusy(false);
     }
   };
@@ -196,6 +206,9 @@ export function LocationPicker({
 
         {/* Current location */}
         <Row icon="navigate" iconColor={theme.success} label="Send Current Location" onPress={sendCurrent} busy={busy} theme={theme} />
+        {locationError ? (
+          <Text style={[styles.errorText, { color: theme.error }]}>{locationError}</Text>
+        ) : null}
 
         {/* Search */}
         <Row
@@ -304,6 +317,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
   iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   rowLabel: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  errorText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginTop: -4, marginBottom: spacing.sm },
   soonPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
   soonText: { fontSize: 11, fontFamily: FontFamily.semibold },
   liveDurations: { flexDirection: 'row', gap: 8, paddingLeft: 52, paddingBottom: spacing.sm },

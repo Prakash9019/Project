@@ -57,6 +57,7 @@ export const updateProfileSchema = z.object({
   rightNowStatus:     z.string().max(120).nullable().optional(),
   rightNowCategory:   z.enum(['drinks','coffee','workout','hangout','other']).nullable().optional(),
   rightNowExpiresAt:  z.string().datetime().nullable().optional(),
+  rightNowHosting:    z.boolean().optional(),
   // Availability toggles (Settings → Availability).
   groupsAvailable:    z.boolean().optional(),
   audioCallAvailable: z.boolean().optional(),
@@ -91,6 +92,16 @@ export const settingsSchema = z.object({
   pauseIncomingMessages: z.boolean().optional(),
   requireProfileCompletenessToMessage: z.boolean().optional(),
   verifiedUsersOnlyFilter: z.boolean().optional(),
+  // Notification preferences (Settings → Notifications)
+  notifyMessages:       z.boolean().optional(),
+  notifyPreview:        z.boolean().optional(),
+  notifySound:          z.boolean().optional(),
+  notifyVibrate:        z.boolean().optional(),
+  notifyReactions:      z.boolean().optional(),
+  notifyMissedCalls:    z.boolean().optional(),
+  notifyGroupMessages:  z.boolean().optional(),
+  notifyMemberActivity: z.boolean().optional(),
+  notifyMentionsOnly:   z.boolean().optional(),
 });
 
 export const locationSchema = z.object({

@@ -12,12 +12,17 @@ export function RoomHeader({
   onOpenInfo,
   onSearch,
   onMenu,
+  onAudioCall,
+  onVideoCall,
 }: {
   room: RoomDetail | null;
   onBack: () => void;
   onOpenInfo: () => void;
   onSearch: () => void;
   onMenu: () => void;
+  /** Omit to hide the call buttons entirely (e.g. calls unavailable on this build). */
+  onAudioCall?: () => void;
+  onVideoCall?: () => void;
 }) {
   const { theme } = useTheme();
   const meta = room ? categoryMeta(theme, room.category) : null;
@@ -69,6 +74,16 @@ export function RoomHeader({
       </Pressable>
 
       <View style={styles.actions}>
+        {onAudioCall ? (
+          <Pressable onPress={onAudioCall} hitSlop={10}>
+            <Ionicons name="call-outline" size={21} color={theme.textPrimary} />
+          </Pressable>
+        ) : null}
+        {onVideoCall ? (
+          <Pressable onPress={onVideoCall} hitSlop={10}>
+            <Ionicons name="videocam-outline" size={22} color={theme.textPrimary} />
+          </Pressable>
+        ) : null}
         <Pressable onPress={onSearch} hitSlop={10}>
           <Ionicons name="search" size={22} color={theme.textPrimary} />
         </Pressable>

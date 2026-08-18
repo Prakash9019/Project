@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { redis, RedisKeys } from '../../config/redis';
 import { env } from '../../config/env';
@@ -352,9 +353,23 @@ export async function listMessages(conversationId: string, before: Date | undefi
   // Determine which side the viewer is on so per-side "delete for me" flags apply.
   const convo = await prisma.conversation.findUnique({
     where: { id: conversationId },
-    select: { userAId: true, disappearingMessages: true },
+    select: { userAId: true, userBId: true, disappearingMessages: true },
   });
   const isA = convo?.userAId === viewerId;
+
+  // Read receipts (readAt) are a paid perk for the SENDER of the message — mirrors
+  // the message.read socket gate in markRead(). Look up both participants' plans
+  // once per page rather than per message.
+  const participantIds = [convo?.userAId, convo?.userBId].filter((id): id is string => !!id);
+  const participants = participantIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: participantIds } },
+        select: { id: true, plan: true, planExpiresAt: true },
+      })
+    : [];
+  const senderCanSeeReadReceipts = new Map(
+    participants.map((u) => [u.id, isPaidPlan(u.plan, u.planExpiresAt)]),
+  );
 
   // Disappearing-messages cutoff (filter only — no destructive delete).
   const cutoff = disappearingCutoff(convo?.disappearingMessages ?? null);
@@ -385,10 +400,170 @@ export async function listMessages(conversationId: string, before: Date | undefi
     slice.map(async (m) => ({
       ...(await serializeMessageForViewer(m, viewerId, reactionsByMsg.get(m.id))),
       isStarred: starredSet.has(m.id),
+      readAt: senderCanSeeReadReceipts.get(m.senderId) ? (m.readAt ?? null) : null,
     })),
   );
 
   return { messages, hasMore, nextCursor };
+}
+
+/**
+ * The viewer-specific scope every message listing shares: which side of the
+ * conversation the viewer is on (for per-side "delete for me"), the
+ * disappearing-messages cutoff, and which senders may see read receipts.
+ */
+async function viewerScope(conversationId: string, viewerId: string) {
+  const convo = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { userAId: true, userBId: true, disappearingMessages: true },
+  });
+  const participantIds = [convo?.userAId, convo?.userBId].filter((id): id is string => !!id);
+  const participants = participantIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: participantIds } },
+        select: { id: true, plan: true, planExpiresAt: true },
+      })
+    : [];
+
+  return {
+    isA: convo?.userAId === viewerId,
+    cutoff: disappearingCutoff(convo?.disappearingMessages ?? null),
+    senderCanSeeReadReceipts: new Map(
+      participants.map((u) => [u.id, isPaidPlan(u.plan, u.planExpiresAt)]),
+    ),
+  };
+}
+
+/** Serialize a page of raw messages exactly the way listMessages does. */
+async function serializePage(
+  slice: Awaited<ReturnType<typeof prisma.message.findMany>>,
+  viewerId: string,
+  senderCanSeeReadReceipts: Map<string, boolean>,
+) {
+  const reactionsByMsg = await reactionsByMessage(slice.map((m) => m.id), viewerId);
+  const starredRows = await prisma.starredMessage.findMany({
+    where: { userId: viewerId, messageId: { in: slice.map((m) => m.id) } },
+    select: { messageId: true },
+  });
+  const starredSet = new Set(starredRows.map((s) => s.messageId));
+
+  return Promise.all(
+    slice.map(async (m) => ({
+      ...(await serializeMessageForViewer(m, viewerId, reactionsByMsg.get(m.id))),
+      isStarred: starredSet.has(m.id),
+      readAt: senderCanSeeReadReceipts.get(m.senderId) ? (m.readAt ?? null) : null,
+    })),
+  );
+}
+
+/**
+ * Full-history text search within one conversation.
+ *
+ * Replaces the client-side filter over already-loaded messages, which could
+ * only ever match the most recent page. Case-insensitive substring match on
+ * `content` — deliberately not full-text search, since messages are short and
+ * the ([conversationId, createdAt]) index keeps the scan bounded per thread.
+ */
+export async function searchMessages(
+  conversationId: string,
+  viewerId: string,
+  query: string,
+  before: Date | undefined,
+  limit: number,
+) {
+  const { isA, cutoff, senderCanSeeReadReceipts } = await viewerScope(conversationId, viewerId);
+
+  const raw = await prisma.message.findMany({
+    where: {
+      conversationId,
+      deletedAt: null,
+      isUnsent: false,
+      ...(isA ? { deletedByA: false } : { deletedByB: false }),
+      ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
+      ...(before ? { createdAt: { lt: before } } : {}),
+      content: { contains: query, mode: 'insensitive' },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    include: { replyTo: true },
+  });
+
+  const hasMore = raw.length > limit;
+  const slice = hasMore ? raw.slice(0, limit) : raw;
+  const nextCursor = hasMore ? slice[slice.length - 1].createdAt.toISOString() : null;
+
+  return { messages: await serializePage(slice, viewerId, senderCanSeeReadReceipts), hasMore, nextCursor };
+}
+
+/**
+ * Shared media / links / documents across a conversation's FULL history.
+ * Mirrors rooms.service.listRoomMedia so the 1:1 and group media tabs behave
+ * identically, replacing the client-side scan of the last ~100 loaded messages.
+ */
+export async function listConversationMedia(
+  conversationId: string,
+  viewerId: string,
+  opts: { type?: 'image' | 'video' | 'voice' | 'link' | 'document'; before?: Date; limit: number },
+) {
+  const { isA, cutoff, senderCanSeeReadReceipts } = await viewerScope(conversationId, viewerId);
+
+  // 1:1 messages carry their attachment in `mediaUrls` (array); `mediaUrl` is
+  // the older single-value column still set on forwarded messages. A message
+  // counts as "has media" if either is populated.
+  const hasMedia: Prisma.MessageWhereInput = {
+    OR: [{ mediaUrls: { isEmpty: false } }, { mediaUrl: { not: null } }],
+  };
+
+  let kindFilter: Prisma.MessageWhereInput;
+  switch (opts.type) {
+    case 'image':
+      kindFilter = { type: 'photo', ...hasMedia };
+      break;
+    case 'video':
+      kindFilter = { type: 'video', ...hasMedia };
+      break;
+    case 'voice':
+      kindFilter = { type: { in: ['voice', 'voice_note'] }, ...hasMedia };
+      break;
+    case 'document':
+      kindFilter = { type: 'text', ...hasMedia };
+      break;
+    case 'link':
+      kindFilter = {
+        type: 'text',
+        OR: [{ content: { contains: 'http' } }, { content: { contains: 'www.' } }],
+      };
+      break;
+    default:
+      kindFilter = hasMedia;
+  }
+
+  const raw = await prisma.message.findMany({
+    where: {
+      AND: [
+        {
+          conversationId,
+          deletedAt: null,
+          isUnsent: false,
+          // View-once photos are consumed on view — never list them in a gallery.
+          viewOnce: false,
+          ...(isA ? { deletedByA: false } : { deletedByB: false }),
+          ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
+          ...(opts.before ? { createdAt: { lt: opts.before } } : {}),
+        },
+        kindFilter,
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: opts.limit + 1,
+    include: { replyTo: true },
+  });
+
+  const hasMore = raw.length > opts.limit;
+  const slice = hasMore ? raw.slice(0, opts.limit) : raw;
+  const nextCursor = hasMore ? slice[slice.length - 1].createdAt.toISOString() : null;
+
+  return { media: await serializePage(slice, viewerId, senderCanSeeReadReceipts), hasMore, nextCursor };
 }
 
 export async function sendMessage(

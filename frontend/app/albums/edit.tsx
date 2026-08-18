@@ -19,6 +19,8 @@ import { useTheme, FontFamily, DisplayFont } from '../../src/theme';
 import { CustomAlert } from '../../src/components/CustomAlert';
 import { useAlert } from '../../src/hooks/useAlert';
 import { ShareAlbumSheet } from '../../src/components/ShareAlbumSheet';
+import { AlbumPrivacyPicker } from '../../src/components/AlbumPrivacyPicker';
+import { MediaViewer, type MediaViewerImage } from '../../src/components/MediaViewer';
 import { relativeTime } from '../../src/lib/format';
 import { showSuccess, toastApiError } from '../../src/lib/toast';
 import {
@@ -26,11 +28,14 @@ import {
   updateAlbum,
   deleteAlbum,
   uploadAlbumPhoto,
+  addAlbumPhoto,
   removeAlbumPhoto,
   reorderAlbumPhotos,
   ApiError,
 } from '../../src/services/api';
-import type { AlbumPhoto } from '../../src/types/api';
+import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
+import { uploadToR2 } from '../../src/utils/uploadToR2';
+import type { AlbumPhoto, AlbumPrivacy } from '../../src/types/api';
 
 export default function EditAlbum() {
   const { id, title: initialTitle } = useLocalSearchParams<{ id: string; title?: string }>();
@@ -41,12 +46,14 @@ export default function EditAlbum() {
   const cell = (width - 6) / 3;
 
   const [title, setTitle] = useState(initialTitle ?? '');
+  const [privacy, setPrivacy] = useState<AlbumPrivacy>('chats_only');
+  const [sharedCount, setSharedCount] = useState<number | null>(null);
   const [photos, setPhotos] = useState<AlbumPhoto[]>([]);
   const [cover, setCover] = useState<AlbumPhoto | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [reorderPick, setReorderPick] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<string | null>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [coverPicker, setCoverPicker] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -58,6 +65,8 @@ export default function EditAlbum() {
       setPhotos(res.photos);
       setCover(res.coverPhoto);
       setTitle((t) => t || res.title);
+      if (res.privacy) setPrivacy(res.privacy);
+      setSharedCount(res.sharedCount ?? null);
     } catch {
       /* empty state */
     } finally {
@@ -77,11 +86,24 @@ export default function EditAlbum() {
     }
   };
 
+  const changePrivacy = async (next: AlbumPrivacy) => {
+    const prev = privacy;
+    setPrivacy(next);
+    try {
+      const updated = await updateAlbum(id, { privacy: next });
+      setSharedCount(updated.sharedCount ?? null);
+      showSuccess('Privacy updated');
+    } catch (e) {
+      setPrivacy(prev);
+      toastApiError(e, 'Could not update privacy');
+    }
+  };
+
   const addPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ['images', 'videos'],
       quality: 0.8,
       allowsMultipleSelection: true,
       orderedSelection: true,
@@ -89,10 +111,17 @@ export default function EditAlbum() {
     if (res.canceled || res.assets.length === 0) return;
     setUploading(true);
     try {
-      // Upload each selected photo in order, appending as each completes.
+      // Upload each selected item in order, appending as each completes.
       for (const asset of res.assets) {
-        const photo = await uploadAlbumPhoto(id, asset.uri);
-        setPhotos((p) => [...p, photo]);
+        if (asset.type === 'video') {
+          const thumbnailUrl = (await generateAndUploadVideoThumbnail(asset.uri)) ?? undefined;
+          const url = await uploadToR2(asset.uri, 'video', 'video/mp4');
+          const photo = await addAlbumPhoto(id, url, { type: 'video', thumbnailUrl });
+          setPhotos((p) => [...p, photo]);
+        } else {
+          const photo = await uploadAlbumPhoto(id, asset.uri);
+          setPhotos((p) => [...p, photo]);
+        }
       }
     } catch (e) {
       const err = e as ApiError;
@@ -132,7 +161,8 @@ export default function EditAlbum() {
       setReorderPick(null);
       return;
     }
-    setViewer(photo.url);
+    const index = photos.findIndex((p) => p.id === photo.id);
+    if (index >= 0) setViewerIndex(index);
   };
 
   const chooseCover = async (photo: AlbumPhoto) => {
@@ -211,9 +241,16 @@ export default function EditAlbum() {
               {lastUpdated ? <Text style={[styles.meta, { color: theme.textTertiary }]}>Last updated {relativeTime(lastUpdated)}</Text> : null}
               <Pressable style={[styles.sharedPill, { backgroundColor: theme.surfaceElevated }]} onPress={() => setShareOpen(true)}>
                 <Ionicons name="people" size={18} color={theme.textPrimary} />
-                <Text style={[styles.sharedText, { color: theme.textPrimary }]}>Shared with (0)</Text>
+                <Text style={[styles.sharedText, { color: theme.textPrimary }]}>
+                  {privacy === 'nobody' ? 'Private' : privacy === 'everyone' ? 'Visible to everyone' : `Shared with (${sharedCount ?? 0})`}
+                </Text>
               </Pressable>
             </View>
+          </View>
+
+          <View style={styles.privacySection}>
+            <Text style={[styles.nameLabel, { color: theme.textTertiary }]}>Who can see this album</Text>
+            <AlbumPrivacyPicker value={privacy} onChange={changePrivacy} />
           </View>
 
           <View style={styles.grid}>
@@ -222,6 +259,7 @@ export default function EditAlbum() {
             </Pressable>
             {photos.map((p) => {
               const picked = reorderPick === p.id;
+              const isVideo = p.type === 'video';
               return (
                 <Pressable
                   key={p.id}
@@ -229,7 +267,18 @@ export default function EditAlbum() {
                   onPress={() => onPhotoPress(p)}
                   onLongPress={() => setReorderPick(p.id)}
                 >
-                  <Image source={{ uri: p.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                  {isVideo && !p.thumbnailUrl ? (
+                    <View style={[StyleSheet.absoluteFill, styles.center, { backgroundColor: theme.backgroundTertiary }]}>
+                      <Ionicons name="videocam" size={28} color={theme.textTertiary} />
+                    </View>
+                  ) : (
+                    <Image source={{ uri: p.thumbnailUrl ?? p.url }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                  )}
+                  {isVideo && (
+                    <View style={styles.playBadge}>
+                      <Ionicons name="play" size={14} color="#fff" />
+                    </View>
+                  )}
                   <Pressable style={[styles.trashBtn, { backgroundColor: theme.overlay }]} hitSlop={6} onPress={() => removePhoto(p.id)}>
                     <Ionicons name="trash-outline" size={16} color="#fff" />
                   </Pressable>
@@ -254,7 +303,7 @@ export default function EditAlbum() {
           <Pressable style={[styles.pickerCard, { backgroundColor: theme.surface }]} onPress={() => {}}>
             <Text style={[styles.pickerTitle, { color: theme.textPrimary }]}>Choose cover photo</Text>
             <View style={styles.pickerGrid}>
-              {photos.map((p) => (
+              {photos.filter((p) => p.type !== 'video').map((p) => (
                 <Pressable key={p.id} onPress={() => chooseCover(p)} style={[styles.pickerCell, cover?.id === p.id && { borderWidth: 2, borderColor: theme.brand }]}>
                   <Image source={{ uri: p.url }} style={StyleSheet.absoluteFill} contentFit="cover" />
                 </Pressable>
@@ -264,17 +313,27 @@ export default function EditAlbum() {
         </Pressable>
       </Modal>
 
-      {/* Photo viewer */}
-      <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
-        <Pressable style={styles.viewerRoot} onPress={() => setViewer(null)}>
-          {viewer && <Image source={{ uri: viewer }} style={styles.viewerImg} contentFit="contain" />}
-          <Pressable style={styles.viewerClose} onPress={() => setViewer(null)} hitSlop={12}>
-            <Ionicons name="close" size={28} color="#fff" />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Photo / video viewer — MediaViewer handles playback for video items. */}
+      <MediaViewer
+        visible={viewerIndex !== null}
+        images={photos.map((p): MediaViewerImage => ({
+          uri: p.url,
+          senderId: '',
+          senderName: title,
+          createdAt: p.createdAt,
+          kind: p.type === 'video' ? 'video' : 'image',
+        }))}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
 
-      <ShareAlbumSheet visible={shareOpen} onClose={() => setShareOpen(false)} albumId={id} albumTitle={title} />
+      <ShareAlbumSheet
+        visible={shareOpen}
+        onClose={() => setShareOpen(false)}
+        albumId={id}
+        albumTitle={title}
+        coverPhotoUrl={cover?.url ?? null}
+      />
 
       {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
@@ -303,6 +362,9 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 28, paddingHorizontal: 0 },
   cellBox: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   trashBtn: { position: 'absolute', top: 6, right: 6, width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  playBadge: { position: 'absolute', bottom: 6, left: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  center: { alignItems: 'center', justifyContent: 'center' },
+  privacySection: { paddingHorizontal: 20, marginTop: 20 },
   caption: { fontSize: 14, fontFamily: FontFamily.regular, paddingHorizontal: 20, marginTop: 14 },
   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 32, paddingVertical: 12 },
   deleteText: { fontSize: 16, fontFamily: FontFamily.semibold, fontWeight: '600' },
@@ -311,7 +373,4 @@ const styles = StyleSheet.create({
   pickerTitle: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '700', marginBottom: 14 },
   pickerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   pickerCell: { width: 84, height: 84, borderRadius: 8, overflow: 'hidden' },
-  viewerRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center' },
-  viewerImg: { width: '100%', height: '80%' },
-  viewerClose: { position: 'absolute', top: 54, right: 20 },
 });

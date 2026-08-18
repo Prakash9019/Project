@@ -3,6 +3,7 @@ import { asyncHandler } from '../../middleware/asyncHandler';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireVerifiedPhone } from '../../middleware/auth';
 import { requirePlan } from '../../middleware/subscription';
+import { uploadLimiter } from '../../middleware/rateLimit';
 import * as c from './profile.controller';
 import * as media from './media.controller';
 import { viewUserAlbums, viewUserAlbumDetail } from '../albums/albums.controller';
@@ -66,7 +67,7 @@ router.post(
 );
 
 // ── Pre-signed R2 upload URL ─────────────────────────────
-router.get('/me/upload-url', asyncHandler(media.getUploadUrl));
-router.get('/me/photos/upload-url', asyncHandler(media.getUploadUrl));
+router.get('/me/upload-url', uploadLimiter, asyncHandler(media.getUploadUrl));
+router.get('/me/photos/upload-url', uploadLimiter, asyncHandler(media.getUploadUrl));
 
 export default router;

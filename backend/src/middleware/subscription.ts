@@ -167,3 +167,26 @@ export function requirePlan(...allowedPlans: EffectivePlan[]) {
     next();
   };
 }
+
+/** Boolean entitlement flags on EffectiveLimits that a route can be gated on. */
+export type BooleanCapability = {
+  [K in keyof EffectiveLimits]: EffectiveLimits[K] extends boolean ? K : never
+}[keyof EffectiveLimits];
+
+/**
+ * Throws 403 if the caller's plan does not include `capability`.
+ *
+ * Prefer this over `requirePlan` for features that already have a boolean in
+ * PLAN_LIMITS — it keeps the plan→feature mapping in exactly one place, per the
+ * "never hardcode plan-name checks" rule in CLAUDE.md.
+ */
+export function requireCapability(capability: BooleanCapability) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    const limits = req.effectiveLimits;
+    if (!limits?.[capability]) {
+      return next(new HttpError(403, 'plan_required', 'This feature requires a higher plan',
+        { capability, current: limits?.plan ?? 'free' }));
+    }
+    next();
+  };
+}

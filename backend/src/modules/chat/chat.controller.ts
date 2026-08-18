@@ -51,6 +51,18 @@ export const listMessagesQuerySchema = z.object({
   limit:  z.coerce.number().int().min(1).max(100).default(30),
 });
 
+export const searchMessagesQuerySchema = z.object({
+  q:      z.string().trim().min(1).max(200),
+  before: z.coerce.date().optional(),
+  limit:  z.coerce.number().int().min(1).max(50).default(30),
+});
+
+export const conversationMediaQuerySchema = z.object({
+  type:   z.enum(['image', 'video', 'voice', 'link', 'document']).optional(),
+  before: z.coerce.date().optional(),
+  limit:  z.coerce.number().int().min(1).max(100).default(50),
+});
+
 export const listConversationsQuerySchema = z.object({
   folder: z.enum(['inbox', 'requests']).default('inbox'),
   archived: z.coerce.boolean().optional(),
@@ -119,6 +131,24 @@ export async function listMessages(req: Request, res: Response): Promise<void> {
   const { messages, hasMore, nextCursor } = await svc.listMessages(conversationId, before, limit, req.user!.sub);
   const flags = svc.callFlags(convo, req.user!.sub);
   res.status(200).json({ messages, hasMore, nextCursor, ...flags, disappearingMessages: convo.disappearingMessages ?? null });
+}
+
+/** GET /api/v1/conversations/:conversationId/messages/search — full-history text search. */
+export async function searchMessages(req: Request, res: Response): Promise<void> {
+  const { conversationId } = req.params;
+  await svc.getVisibleConversation(req.user!.sub, conversationId);
+  const { q, before, limit } = req.query as unknown as z.infer<typeof searchMessagesQuerySchema>;
+  const result = await svc.searchMessages(conversationId, req.user!.sub, q, before, limit);
+  res.status(200).json(result);
+}
+
+/** GET /api/v1/conversations/:conversationId/media — shared media/links/docs, full history. */
+export async function listConversationMedia(req: Request, res: Response): Promise<void> {
+  const { conversationId } = req.params;
+  await svc.getVisibleConversation(req.user!.sub, conversationId);
+  const { type, before, limit } = req.query as unknown as z.infer<typeof conversationMediaQuerySchema>;
+  const result = await svc.listConversationMedia(conversationId, req.user!.sub, { type, before, limit });
+  res.status(200).json(result);
 }
 
 export async function sendMessage(req: Request, res: Response): Promise<void> {

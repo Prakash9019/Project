@@ -13,6 +13,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RemoteImage } from '../../src/components/RemoteImage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -68,10 +69,15 @@ function parseDistanceMeters(label: string | null | undefined, fallback: number 
   return Number.MAX_SAFE_INTEGER;
 }
 
-function isHostingStatus(status: string | null | undefined, cat: RightNowCategory | null | undefined) {
-  const s = (status ?? '').toLowerCase();
-  return s.includes('host') || cat === 'drinks' || cat === 'hangout';
+// Hosting badge: prefer the explicit flag the author set on the create sheet;
+// fall back to the old text heuristic only for statuses posted before the
+// rightNowHosting field existed (backend always returns it now).
+function isHosting(card: Pick<RightNowCard, 'rightNowHosting' | 'rightNowStatus'>) {
+  if (typeof card.rightNowHosting === 'boolean') return card.rightNowHosting;
+  return (card.rightNowStatus ?? '').toLowerCase().includes('host');
 }
+
+const INTRO_DISMISSED_KEY = 'rightnow:intro-dismissed';
 
 export default function RightNow() {
   const router = useRouter();
@@ -85,7 +91,21 @@ export default function RightNow() {
   const [error, setError] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [confirmOff, setConfirmOff] = useState(false);
-  const [introDismissed, setIntroDismissed] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  // Start hidden until AsyncStorage answers so a previously-dismissed banner
+  // never flashes on screen; first-time users see it once the read resolves.
+  const [introDismissed, setIntroDismissed] = useState(true);
+
+  useEffect(() => {
+    AsyncStorage.getItem(INTRO_DISMISSED_KEY)
+      .then((v) => { if (v !== '1') setIntroDismissed(false); })
+      .catch(() => setIntroDismissed(false));
+  }, []);
+
+  const dismissIntro = useCallback(() => {
+    setIntroDismissed(true);
+    AsyncStorage.setItem(INTRO_DISMISSED_KEY, '1').catch(() => {});
+  }, []);
   const [filters, setFilters] = useState<Record<FilterKey, boolean>>({
     distance: false, hosting: false, position: false, age: false,
   });
@@ -173,6 +193,7 @@ export default function RightNow() {
       rightNowStatus: myStatus,
       rightNowCategory: user.rightNowCategory ?? null,
       rightNowExpiresAt: user.rightNowExpiresAt ?? null,
+      rightNowHosting: user.rightNowHosting ?? false,
       rightNowJoinedAt: myJoinedAt ?? user.updatedAt ?? new Date().toISOString(),
       distanceMeters: 0,
     };
@@ -180,7 +201,7 @@ export default function RightNow() {
 
   const displayed = useMemo(() => {
     let list = feed.filter((u) => u.id !== user?.id);
-    if (filters.hosting) list = list.filter((u) => isHostingStatus(u.rightNowStatus, u.rightNowCategory));
+    if (filters.hosting) list = list.filter(isHosting);
     if (filters.position) list = list.filter((u) => !!u.preferences?.trim());
     if (filters.age) {
       list = [...list].sort((a, b) => (a.age ?? 999) - (b.age ?? 999));
@@ -221,7 +242,7 @@ export default function RightNow() {
   const turnOff = async () => {
     setConfirmOff(false);
     setSheetOpen(false);
-    const patch = { rightNowStatus: null, rightNowCategory: null, rightNowExpiresAt: null };
+    const patch = { rightNowStatus: null, rightNowCategory: null, rightNowExpiresAt: null, rightNowHosting: false };
     try {
       const updated = await updateProfile(patch);
       setUser(updated);
@@ -243,7 +264,7 @@ export default function RightNow() {
     const isMe = item.id === user?.id;
     const online = item.activity?.online ?? item.lastActiveAt?.toLowerCase() === 'online';
     const joinedAgo = minutesAgoLabel(item.rightNowJoinedAt ?? null);
-    const showHostBadge = isHostingStatus(item.rightNowStatus, item.rightNowCategory);
+    const showHostBadge = isHosting(item);
     const myExpiresLabel = isMe ? expiresInLabel(item.rightNowExpiresAt ?? null) : null;
 
     return (
@@ -370,10 +391,10 @@ export default function RightNow() {
                   Introducing the Right Now feed. Skip the small talk and get to it. Turn on Right Now to add your own post.
                 </Text>
                 <View style={styles.introActions}>
-                  <Pressable hitSlop={8} onPress={() => setSheetOpen(true)}>
+                  <Pressable hitSlop={8} onPress={() => setInfoOpen(true)}>
                     <Text style={styles.introLearn}>Learn More</Text>
                   </Pressable>
-                  <Pressable hitSlop={8} onPress={() => setIntroDismissed(true)}>
+                  <Pressable hitSlop={8} onPress={dismissIntro}>
                     <Text style={styles.introDismiss}>Dismiss</Text>
                   </Pressable>
                 </View>
@@ -413,6 +434,7 @@ export default function RightNow() {
         isActive={myActive}
         initialStatus={myStatus ?? ''}
         initialCategory={user?.rightNowCategory ?? null}
+        initialHosting={user?.rightNowHosting ?? false}
         expiresAt={user?.rightNowExpiresAt ?? null}
         onRequestTurnOff={() => setConfirmOff(true)}
         onPosted={(updated) => {
@@ -428,6 +450,9 @@ export default function RightNow() {
           load(true);
         }}
       />
+
+      {/* About Right Now (intro "Learn More") */}
+      <InfoSheet visible={infoOpen} theme={theme} onClose={() => setInfoOpen(false)} />
 
       {/* Turn Off confirmation */}
       <Modal visible={confirmOff} transparent animationType="slide" onRequestClose={() => setConfirmOff(false)}>
@@ -459,6 +484,7 @@ function CreateSheet({
   isActive,
   initialStatus,
   initialCategory,
+  initialHosting,
   expiresAt,
   onRequestTurnOff,
   onPosted,
@@ -471,24 +497,26 @@ function CreateSheet({
   isActive: boolean;
   initialStatus: string;
   initialCategory: RightNowCategory | null;
+  initialHosting: boolean;
   expiresAt: string | null;
   onRequestTurnOff: () => void;
   onPosted: (updated: Awaited<ReturnType<typeof updateProfile>>) => void;
-  onLocalPost: (patch: { rightNowStatus: string; rightNowCategory: RightNowCategory; rightNowExpiresAt: string }) => void;
+  onLocalPost: (patch: { rightNowStatus: string; rightNowCategory: RightNowCategory; rightNowExpiresAt: string; rightNowHosting: boolean }) => void;
 }) {
   const styles = makeStyles(theme);
   const [text, setText] = useState(initialStatus);
   const [category, setCategory] = useState<RightNowCategory | null>(initialCategory);
   const [duration, setDuration] = useState('2h');
-  const [hosting, setHosting] = useState(false);
+  const [hosting, setHosting] = useState(initialHosting);
+  const [infoVisible, setInfoVisible] = useState(false);
   const [posting, setPosting] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
     setText(initialStatus);
     setCategory(initialCategory);
-    setHosting(initialStatus.toLowerCase().includes('host'));
-  }, [visible, initialStatus, initialCategory]);
+    setHosting(initialHosting);
+  }, [visible, initialStatus, initialCategory, initialHosting]);
 
   const post = async () => {
     const status = text.trim();
@@ -498,6 +526,7 @@ function CreateSheet({
       rightNowStatus: status.slice(0, MAX_CHARS),
       rightNowCategory: (category ?? 'other') as RightNowCategory,
       rightNowExpiresAt: expiresAtFor(dur.hours),
+      rightNowHosting: hosting,
     };
     setPosting(true);
     try {
@@ -523,7 +552,7 @@ function CreateSheet({
             <View style={styles.sheetHandle} />
 
             <View style={styles.sheetHead}>
-              <Pressable hitSlop={10}>
+              <Pressable hitSlop={10} onPress={() => setInfoVisible(true)}>
                 <Ionicons name="information-circle-outline" size={22} color={theme.textTertiary} />
               </Pressable>
               <View style={styles.sheetTitleWrap}>
@@ -623,8 +652,56 @@ function CreateSheet({
                 </Text>
               )}
             </Pressable>
+
+            {/* Nested so it presents above this sheet (a sibling modal won't on iOS). */}
+            <InfoSheet visible={infoVisible} theme={theme} onClose={() => setInfoVisible(false)} />
           </Pressable>
         </KeyboardAvoidingView>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// "About Right Now" explainer — opened from the intro banner's Learn More and
+// the info icon on the create sheet.
+function InfoSheet({ visible, theme, onClose }: { visible: boolean; theme: AppTheme; onClose: () => void }) {
+  const styles = makeStyles(theme);
+  const POINTS: { icon: keyof typeof Ionicons.glyphMap; title: string; body: string }[] = [
+    { icon: 'flash', title: 'Post what you’re up to', body: 'Share a short status — drinks, coffee, a workout — and instantly appear in the Right Now feed of people nearby.' },
+    { icon: 'time', title: 'It expires on its own', body: 'Pick how long you’re available (1, 2, 4 hours or tonight). Your status disappears automatically when time runs out.' },
+    { icon: 'home', title: 'Hosting', body: 'Flip on Hosting to show a host badge on your post, so people know you can have company over.' },
+    { icon: 'chatbubble', title: 'Skip the small talk', body: 'Anyone nearby can message you straight from your post — you’re both here for the same thing, right now.' },
+    { icon: 'eye-off', title: 'Local and temporary', body: 'Posts only show to people within 100 km and vanish when they expire. Turn yours off anytime with the switch.' },
+  ];
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetOverlay} onPress={onClose}>
+        <Pressable style={styles.infoSheet} onPress={() => {}}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.infoHead}>
+            <View style={styles.infoHeadIcon}>
+              <RightNowIcon size={22} color="#fff" solid />
+            </View>
+            <Text style={styles.infoTitle}>About Right Now</Text>
+            <Pressable hitSlop={10} onPress={onClose}>
+              <Ionicons name="close" size={24} color={theme.textTertiary} />
+            </Pressable>
+          </View>
+          {POINTS.map((p) => (
+            <View key={p.title} style={styles.infoRow}>
+              <View style={styles.infoRowIcon}>
+                <Ionicons name={p.icon} size={18} color={theme.rightNow} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoRowTitle}>{p.title}</Text>
+                <Text style={styles.infoRowBody}>{p.body}</Text>
+              </View>
+            </View>
+          ))}
+          <Pressable style={styles.infoGotIt} onPress={onClose}>
+            <Text style={styles.infoGotItText}>Got it</Text>
+          </Pressable>
+        </Pressable>
       </Pressable>
     </Modal>
   );
@@ -708,6 +785,17 @@ function makeStyles(theme: AppTheme) {
     durText: { fontSize: 14, fontFamily: FontFamily.bold, fontWeight: '700' },
     startBtn: { height: 54, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
     startText: { fontSize: 17, fontFamily: DisplayFont.bold, fontWeight: '800' },
+
+    infoSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36, backgroundColor: theme.surface },
+    infoHead: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
+    infoHeadIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.rightNow, alignItems: 'center', justifyContent: 'center' },
+    infoTitle: { flex: 1, fontSize: 20, fontFamily: DisplayFont.bold, fontWeight: '800', color: theme.textPrimary },
+    infoRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
+    infoRowIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.surfaceElevated, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
+    infoRowTitle: { fontSize: 15, fontFamily: FontFamily.bold, fontWeight: '700', color: theme.textPrimary },
+    infoRowBody: { fontSize: 13, fontFamily: FontFamily.regular, color: theme.textSecondary, lineHeight: 19, marginTop: 2 },
+    infoGotIt: { height: 52, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 8, backgroundColor: theme.rightNow },
+    infoGotItText: { fontSize: 16, fontFamily: DisplayFont.bold, fontWeight: '800', color: '#fff' },
 
     confirmSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 36, backgroundColor: theme.surface },
     confirmTitle: { fontSize: 22, fontFamily: DisplayFont.bold, fontWeight: '800', color: theme.textPrimary, marginTop: 8 },

@@ -23,6 +23,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, w
 import { useTheme, FontFamily, FontSize } from '../../theme';
 import { Avatar } from '../Avatar';
 import { showError } from '../../lib/toast';
+import { getReplySuggestions } from '../../services/api';
 import { EmojiPicker } from '../rooms/EmojiPicker';
 import { VoiceRecorder } from '../rooms/VoiceRecorder';
 import type { GifResult } from '../rooms/GifPicker';
@@ -32,6 +33,7 @@ import { ImagePreview } from './ImagePreview';
 import { ReplyBar } from './ReplyBar';
 import { EditBar } from './EditBar';
 import { UploadProgressBar } from './UploadProgressBar';
+import { ReplySuggestions } from './ReplySuggestions';
 import { resampleAmplitudes } from '../../lib/audioAmplitude';
 
 const DRAFT_DEBOUNCE_MS = 500;
@@ -103,6 +105,16 @@ export interface ChatComposerProps {
   disabledMessage?: string;
   placeholder?: string;
   uploadProgress?: number | null;
+
+  /**
+   * AI Reply Suggestions (Platinum, opt-in — 1:1 chat only, `conversationId` required).
+   * Number of messages currently loaded for this thread; also used as the refetch
+   * trigger when a new message arrives. Omit/0 to keep the feature off (e.g. rooms).
+   */
+  replySuggestionsMessageCount?: number;
+  /** True when the most recent message was sent by the current user — suggesting a
+   * reply to your own last message doesn't make sense, so the fetch is skipped. */
+  replySuggestionsLastFromMe?: boolean;
 }
 
 export interface ChatComposerHandle {
@@ -138,6 +150,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     disabledMessage,
     placeholder,
     uploadProgress,
+    replySuggestionsMessageCount,
+    replySuggestionsLastFromMe,
   } = props;
 
   const { theme } = useTheme();
@@ -157,6 +171,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const [recordState, setRecordState] = useState<RecordState>('idle');
   const [cancelling, setCancelling] = useState(false);
   const [sending, setSending] = useState(false);
+  // AI Reply Suggestions (Platinum, opt-in) — chips shown above the input.
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const suggestionsLoadingRef = useRef(false);
+  const lastSuggestionFetchKeyRef = useRef<string | null>(null);
   // Live mic amplitudes (0..1) sampled from the recorder's metering while
   // recording — drives the real waveform in the overlay (F58/F60). Last N samples.
   const [amplitudes, setAmplitudes] = useState<number[]>([]);
@@ -317,6 +335,44 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     [],
   );
 
+  // ── AI Reply Suggestions ─────────────────────────────────────
+  // Fetches once per (conversationId, messageCount) pair — never while a fetch
+  // is already in flight — and only when it's actually the user's turn to reply.
+  useEffect(() => {
+    if (!conversationId || roomId || !replySuggestionsMessageCount || replySuggestionsLastFromMe) {
+      setSuggestions([]);
+      return;
+    }
+    const key = `${conversationId}:${replySuggestionsMessageCount}`;
+    if (lastSuggestionFetchKeyRef.current === key || suggestionsLoadingRef.current) return;
+    lastSuggestionFetchKeyRef.current = key;
+    suggestionsLoadingRef.current = true;
+    let active = true;
+    getReplySuggestions(conversationId)
+      .then((res) => {
+        if (active) setSuggestions(Array.isArray(res.suggestions) ? res.suggestions.slice(0, 3) : []);
+      })
+      .catch(() => {
+        // Expected for free/non-opted-in users (plan_required / forbidden) as well
+        // as transient failures — this is a passive enhancement, so fail silently
+        // rather than interrupting the conversation with a toast or upgrade modal.
+        if (active) setSuggestions([]);
+      })
+      .finally(() => {
+        suggestionsLoadingRef.current = false;
+      });
+    return () => {
+      active = false;
+    };
+  }, [conversationId, roomId, replySuggestionsMessageCount, replySuggestionsLastFromMe]);
+
+  const applySuggestion = (text: string) => {
+    handleDraftChange(text);
+    setSelection({ start: text.length, end: text.length });
+    setSuggestions([]);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
   // ── Typing ─────────────────────────────────────────────────
   const handleDraftChange = (text: string) => {
     setDraft(text);
@@ -380,32 +436,50 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   };
 
   // ── Attachments ────────────────────────────────────────────
+  // Every picker call below is wrapped in try/catch: unlike the upload/send
+  // handlers in the parent screen (which already catch and surface errors via
+  // a banner/toast), a rejection from `ImagePicker.*` here used to be an
+  // unhandled promise rejection — invisible in production and, in a dev
+  // client, indistinguishable from the app "reloading". Surface the real
+  // error via the existing toast instead of leaving it unhandled.
   const handleGallery = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return showError('Photo permission needed');
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true,
-      orderedSelection: true,
-      selectionLimit: 10,
-      quality: 0.85,
-    });
-    if (!res.canceled && res.assets.length) setPreviewUris(res.assets.map((a) => a.uri));
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return showError('Photo permission needed');
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        orderedSelection: true,
+        selectionLimit: 10,
+        quality: 0.85,
+      });
+      if (!res.canceled && res.assets.length) setPreviewUris(res.assets.map((a) => a.uri));
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Could not open photo library');
+    }
   };
 
   const handleCamera = async () => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) return showError('Camera permission needed');
-    const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.8 });
-    if (res.canceled || !res.assets[0]) return;
-    const asset = res.assets[0];
-    if (asset.type === 'video') await onSendVideo(asset.uri, replyTo?.id, asset.duration);
-    else setPreviewUris([asset.uri]);
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return showError('Camera permission needed');
+      const res = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.8 });
+      if (res.canceled || !res.assets[0]) return;
+      const asset = res.assets[0];
+      if (asset.type === 'video') await onSendVideo(asset.uri, replyTo?.id, asset.duration);
+      else setPreviewUris([asset.uri]);
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Could not open camera');
+    }
   };
 
   const handleVideoLibrary = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 0.7 });
-    if (!res.canceled && res.assets[0]) await onSendVideo(res.assets[0].uri, replyTo?.id, res.assets[0].duration);
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['videos'], quality: 0.7 });
+      if (!res.canceled && res.assets[0]) await onSendVideo(res.assets[0].uri, replyTo?.id, res.assets[0].duration);
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Could not open video library');
+    }
   };
 
   const onPickAttachment = (kind: AttachmentKind) => {
@@ -700,6 +774,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
             onCancel={onClearReply}
           />
         </Animated.View>
+      ) : null}
+      {suggestions.length > 0 && !hasText && !editingMessage && !isRecording ? (
+        <ReplySuggestions
+          suggestions={suggestions}
+          onSelect={applySuggestion}
+          onDismiss={() => setSuggestions([])}
+        />
       ) : null}
 
       {/* Input row — the pill (or the recording overlay) on the left, and a
