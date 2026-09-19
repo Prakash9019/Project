@@ -8,6 +8,7 @@ import { signUrl } from '../../utils/signUrl';
 import { distanceLabel } from '../../utils/geo';
 import { emitToRoom, emitToUser } from '../../realtime/emitter';
 import { sendTypedPush } from '../../services/push';
+import { isPaidPlan } from '../chat/chat.service';
 import type { SendMessageBody } from './rooms.schema';
 
 // ── Presence / distance helpers ─────────────────────────────────────────────
@@ -1340,11 +1341,24 @@ export async function deleteRoom(userId: string, roomId: string): Promise<void> 
 const ROOM_EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 /** Edit own room message — 5-minute window, same content-rule + moderation gates as sendMessage. */
-export async function editMessage(userId: string, roomId: string, messageId: string, content: string) {
+export async function editMessage(
+  userId: string,
+  roomId: string,
+  messageId: string,
+  content: string,
+  plan: string,
+  planExpiresAt: Date | null,
+) {
   const msg = await prisma.roomMessage.findFirst({ where: { id: messageId, roomId } });
   if (!msg) throw Errors.notFound('Message not found');
   if (msg.senderId !== userId) throw Errors.forbidden('You can only edit your own messages');
   if (msg.isDeleted) throw Errors.forbidden('Cannot edit a deleted message');
+
+  const paidPlan = isPaidPlan(plan, planExpiresAt);
+  const isGoldPlus = paidPlan && (plan === 'gold' || plan === 'platinum');
+  if (!isGoldPlus) {
+    throw Errors.forbidden('Editing messages requires a Gold or higher plan');
+  }
 
   const age = Date.now() - msg.createdAt.getTime();
   if (age > ROOM_EDIT_WINDOW_MS) {

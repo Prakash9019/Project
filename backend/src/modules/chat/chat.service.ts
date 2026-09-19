@@ -760,10 +760,18 @@ export async function editMessage(
   messageId: string,
   senderId: string,
   content: string,
+  plan: string,
+  planExpiresAt: Date | null,
 ) {
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
   if (!msg || msg.senderId !== senderId) throw Errors.notFound('Message not found');
   if (msg.isUnsent) throw Errors.forbidden('Cannot edit an unsent message');
+
+  const paidPlan = isActivePlan(plan, planExpiresAt);
+  const isGoldPlus = paidPlan && (plan === 'gold' || plan === 'platinum');
+  if (!isGoldPlus) {
+    throw Errors.forbidden('Editing messages requires a Gold or higher plan');
+  }
 
   // 5-minute edit window
   const age = Date.now() - msg.createdAt.getTime();

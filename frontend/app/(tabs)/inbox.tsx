@@ -29,6 +29,7 @@ import {
   archiveConversation,
   pinConversation,
   deleteConversationThread,
+  muteUser,
   type ApiError,
 } from '../../src/services/api';
 import type { ConversationSummary, AlbumSummary, UserCard } from '../../src/types/api';
@@ -160,9 +161,15 @@ export default function Inbox() {
     else if (limitMessage) showInfo(limitMessage, 'Pin limit');
   }, [selectedIds, clearSelection, fetchConversations, viewArchived, loadArchived]);
   const muteSelected = useCallback(() => {
+    const ids = [...selectedIds];
+    const peerIds = ids
+      .map((id) => conversations.find((c) => c.id === id)?.peer.id)
+      .filter((id): id is string => !!id);
     clearSelection();
-    showInfo('Muting chats is coming soon!');
-  }, [clearSelection]);
+    Promise.all(peerIds.map((id) => muteUser(id).catch(() => {}))).then(() => {
+      showInfo(peerIds.length > 1 ? 'Chats muted' : 'Chat muted', 'Muted');
+    });
+  }, [selectedIds, conversations, clearSelection]);
   const archiveSelected = useCallback(
     () => runOnSelected((id) => archiveConversation(id, !viewArchived)),
     [runOnSelected, viewArchived],

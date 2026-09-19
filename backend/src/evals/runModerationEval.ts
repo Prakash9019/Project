@@ -1,19 +1,19 @@
 /**
- * Claude-vs-Gemini text-moderation evaluation harness.
+ * Text-moderation evaluation harness — tracks Gemini's classifier accuracy
+ * against the labeled dataset, alongside the rule-based fallback baseline.
  *
- * Standalone script — does NOT touch the production moderation path
- * (`CompositeModerationAdapter` in adapters/moderation.ts is untouched and
- * still calls Claude). Run with:
+ * Standalone script — does NOT touch the production moderation path itself,
+ * just exercises the same classifiers `CompositeModerationAdapter` (in
+ * adapters/moderation.ts) uses. Run with:
  *
  *   npm run eval:moderation
  *
- * Requires real ANTHROPIC_API_KEY / GEMINI_API_KEY in the backend .env to
- * evaluate each respective provider — a provider without a configured key is
- * reported as `skipped`, not silently scored as 0.
+ * Requires a real GEMINI_API_KEY in the backend .env to evaluate the Gemini
+ * provider — without one it is reported as `skipped`, not silently scored as 0.
  */
 import { env } from '../config/env';
 import { moderationDataset, ModerationDatasetItem } from './moderationDataset';
-import { claudeHaikuClassify, ruleBasedClassify, ModerationResult } from '../adapters/moderation';
+import { ruleBasedClassify, ModerationResult } from '../adapters/moderation';
 import { geminiClassifyText } from '../adapters/geminiModeration';
 
 export interface ClassifierRun {
@@ -115,20 +115,14 @@ interface ProviderDef {
 export async function runEval(dataset: ModerationDatasetItem[] = moderationDataset): Promise<Record<string, ProviderReport>> {
   const providers: ProviderDef[] = [
     {
-      name: 'claude',
-      classify: claudeHaikuClassify,
-      available: !!env.anthropic.apiKey,
-      reason: env.anthropic.apiKey ? undefined : 'ANTHROPIC_API_KEY not set — cannot evaluate production Claude moderation',
-    },
-    {
       name: 'gemini',
       classify: geminiClassifyText,
       available: !!env.gemini.apiKey,
       reason: env.gemini.apiKey ? undefined : 'GEMINI_API_KEY not set',
     },
     {
-      // Reference baseline: what Claude's own fallback produces when the API
-      // is unavailable — useful context when ANTHROPIC_API_KEY is unset.
+      // Reference baseline: what CompositeModerationAdapter falls back to
+      // when Gemini is unconfigured or fails.
       name: 'rule_based_fallback',
       classify: async (text: string) => ruleBasedClassify(text),
       available: true,

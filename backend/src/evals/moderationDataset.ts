@@ -1,6 +1,6 @@
 /**
- * Labeled evaluation dataset for the Claude-vs-Gemini text-moderation
- * comparison (src/evals/runModerationEval.ts). `expectedOffensive` is a
+ * Labeled evaluation dataset for the text-moderation classifier eval
+ * (src/evals/runModerationEval.ts). `expectedOffensive` is a
  * human judgment call, not ground truth from an external source — it
  * reflects what NearMe's moderation should do for a 1:1 chat / room message.
  *

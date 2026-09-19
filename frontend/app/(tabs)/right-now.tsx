@@ -443,12 +443,6 @@ export default function RightNow() {
           setSheetOpen(false);
           load(true);
         }}
-        onLocalPost={(patch) => {
-          if (user) setUser({ ...user, ...patch });
-          setMyJoinedAt(new Date().toISOString());
-          setSheetOpen(false);
-          load(true);
-        }}
       />
 
       {/* About Right Now (intro "Learn More") */}
@@ -488,7 +482,6 @@ function CreateSheet({
   expiresAt,
   onRequestTurnOff,
   onPosted,
-  onLocalPost,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -501,7 +494,6 @@ function CreateSheet({
   expiresAt: string | null;
   onRequestTurnOff: () => void;
   onPosted: (updated: Awaited<ReturnType<typeof updateProfile>>) => void;
-  onLocalPost: (patch: { rightNowStatus: string; rightNowCategory: RightNowCategory; rightNowExpiresAt: string; rightNowHosting: boolean }) => void;
 }) {
   const styles = makeStyles(theme);
   const [text, setText] = useState(initialStatus);
@@ -534,8 +526,9 @@ function CreateSheet({
       showSuccess("You're live in Right Now", 'Posted');
       onPosted(updated);
     } catch (e) {
-      onLocalPost(patch);
-      toastApiError(e, 'Saved locally — backend field pending');
+      // Do not fake local activation on failure — the user would believe
+      // they're visible in Right Now when no one else can actually see it.
+      toastApiError(e, "Couldn't go live — try again");
     } finally {
       setPosting(false);
     }

@@ -10,11 +10,11 @@
  *   - provider not configured → IMAGE_MODERATION_FALLBACK ('allow' | 'manual_review')
  *   - provider configured but the call fails → 'manual_review' (never silently allow)
  *
- * The fallback defaults to 'allow' because callers treat 'manual_review' as
- * "upload but do not publish" (see profile.controller `isPublished`), so
- * defaulting to review would leave every user in production with no visible
- * photo. Operators who would rather queue everything for a human can set
- * IMAGE_MODERATION_FALLBACK=manual_review.
+ * The fallback defaults to 'manual_review': callers treat it as "upload but
+ * do not publish" (see profile.controller `isPublished`), which means new
+ * uploads queue for a human instead of going live completely uninspected.
+ * Set IMAGE_MODERATION_FALLBACK=allow only if you've deliberately decided
+ * unmoderated uploads are acceptable (e.g. a closed beta).
  *
  * `imageModerationConfigured` is exported so the launch checklist and any
  * status surface can tell the truth about whether moderation is actually active;
@@ -68,9 +68,15 @@ async function callRekognition(_imageUrl: string): Promise<RekognitionLabel[]> {
   throw new Error('Rekognition DetectModerationLabels is not implemented');
 }
 
-/** What to return when no provider is wired. Explicit, and operator-overridable. */
+/**
+ * What to return when no provider is wired. Explicit, and operator-overridable.
+ * Defaults to 'manual_review' — with no real moderation provider wired, letting
+ * every upload publish unmoderated (the old default) is not an acceptable
+ * launch posture. Set IMAGE_MODERATION_FALLBACK=allow only once you've decided
+ * that tradeoff deliberately (e.g. a closed beta with manual spot-checks).
+ */
 const FALLBACK: ImageModerationResult =
-  process.env.IMAGE_MODERATION_FALLBACK === 'manual_review' ? 'manual_review' : 'allow';
+  process.env.IMAGE_MODERATION_FALLBACK === 'allow' ? 'allow' : 'manual_review';
 
 if (!imageModerationConfigured && env.isProd) {
   // eslint-disable-next-line no-console

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import * as svc from './rooms.service';
 import { serializeMessage } from '../chat/chat.service';
 import { emitToUser } from '../../realtime/emitter';
+import { prisma } from '../../config/prisma';
 import type {
   ListRoomsQuery,
   ListJoinedQuery,
@@ -188,7 +189,14 @@ export async function forwardMessage(req: Request, res: Response): Promise<void>
 
 export async function editMessage(req: Request, res: Response): Promise<void> {
   const { content } = req.body as EditMessageBody;
-  const result = await svc.editMessage(req.user!.sub, req.params.roomId, req.params.messageId, content);
+  const userId = req.user!.sub;
+  const limits = req.effectiveLimits;
+  const plan = limits?.plan ?? 'free';
+
+  const userRecord = await prisma.user.findUnique({ where: { id: userId }, select: { planExpiresAt: true } });
+  const planExpiresAt = userRecord?.planExpiresAt ?? null;
+
+  const result = await svc.editMessage(userId, req.params.roomId, req.params.messageId, content, plan, planExpiresAt);
   res.status(200).json(result);
 }
 

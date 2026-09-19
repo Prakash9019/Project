@@ -28,6 +28,7 @@ import cityProfilesRoutes from './modules/city-profiles/city-profiles.routes';
 import aiRoutes from './modules/ai/ai.routes';
 import meRoutes from './modules/me/me.routes';
 import roomsRoutes from './modules/rooms/rooms.routes';
+import { createBullBoardRouter, bullBoardAuth } from './admin/bullBoard';
 
 // Re-export metrics so other modules can import from app.ts if needed
 export { httpRequestsTotal, httpRequestDuration, activeWsConnections };
@@ -113,8 +114,6 @@ export function createApp(): Application {
 
   // ── Bull Board (dev/staging only) ────────────────────────
   if (process.env.NODE_ENV !== 'production' || process.env.BULL_BOARD_ENABLED === 'true') {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { createBullBoardRouter, bullBoardAuth } = require('./admin/bullBoard') as typeof import('./admin/bullBoard');
     app.use('/admin/queues', bullBoardAuth, createBullBoardRouter());
   }
 

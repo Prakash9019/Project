@@ -7,6 +7,20 @@ import { redis } from '../config/redis';
 // them locally to assert the limiter actually works.
 process.env.RATE_LIMIT_DISABLED = 'true';
 
+// GEMINI_API_KEY in .env.test is a fake, non-empty placeholder (tests need
+// env.gemini.apiKey truthy to reach the Gemini call path at all). Without a
+// guard, any code path that isn't explicitly mocked by its own test file —
+// e.g. chat.service.ts's moderation check on every text message sent —
+// would otherwise call the *real* Gemini API over the network: slow,
+// non-deterministic, and burns live quota. Block it by default; ai.test.ts,
+// translation.test.ts, geminiClient.test.ts and moderationEval.test.ts each
+// install and restore their own global.fetch mock per test, which takes
+// precedence over this default for the duration of their own tests.
+const blockRealFetch = (async () => {
+  throw new Error('Blocked outbound fetch() in test env — mock global.fetch in this test file');
+}) as typeof fetch;
+global.fetch = blockRealFetch;
+
 // Confirm we are talking to the TEST database, not production
 beforeAll(async () => {
   const dbUrl = process.env.DATABASE_URL ?? '';

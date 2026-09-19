@@ -15,11 +15,10 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import MapView, { type Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useTheme, FontFamily, FontSize, spacing, radius } from '../../theme';
-import { showInfo, showError } from '../../lib/toast';
+import { showError } from '../../lib/toast';
 
 type SearchResult = { label: string; lat: number; lng: number };
 
-const LIVE_DURATIONS = ['15 minutes', '1 hour', '8 hours'];
 const DEFAULT_REGION: Region = { latitude: 20.5937, longitude: 78.9629, latitudeDelta: 40, longitudeDelta: 40 };
 
 // expo-location's getCurrentPositionAsync can hang indefinitely on a cold GPS
@@ -44,9 +43,9 @@ async function labelFor(lat: number, lng: number): Promise<string> {
 }
 
 /**
- * WhatsApp-style location sheet. Current + Search + Pin-on-Map are live; Live
- * Location is shown but disabled (needs backend streaming — coming soon).
- * `onSendLocation` receives coords + a human label; the parent sends the card.
+ * WhatsApp-style location sheet: send current location, search a place, or
+ * pin a spot on the map. `onSendLocation` receives coords + a human label;
+ * the parent sends the card.
  */
 export function LocationPicker({
   visible,
@@ -60,7 +59,6 @@ export function LocationPicker({
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
-  const [liveOpen, setLiveOpen] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -72,7 +70,6 @@ export function LocationPicker({
   const [region, setRegion] = useState<Region>(DEFAULT_REGION);
 
   const reset = () => {
-    setLiveOpen(false);
     setSearchOpen(false);
     setQuery('');
     setResults([]);
@@ -222,29 +219,6 @@ export function LocationPicker({
         {/* Pin on map */}
         <Row icon="pin" iconColor={theme.brandSecondary} label="Pin on Map" onPress={openMap} theme={theme} />
 
-        {/* Live location (coming soon) */}
-        <Pressable style={styles.row} onPress={() => setLiveOpen((v) => !v)}>
-          <View style={[styles.iconCircle, { backgroundColor: theme.info + '22' }]}>
-            <Ionicons name="radio" size={20} color={theme.info} />
-          </View>
-          <Text style={[styles.rowLabel, { color: theme.textPrimary, flex: 1 }]}>Share Live Location</Text>
-          <View style={[styles.soonPill, { backgroundColor: theme.surfaceElevated }]}>
-            <Text style={[styles.soonText, { color: theme.textTertiary }]}>Coming soon</Text>
-          </View>
-        </Pressable>
-        {liveOpen ? (
-          <View style={styles.liveDurations}>
-            {LIVE_DURATIONS.map((d) => (
-              <Pressable
-                key={d}
-                style={[styles.durationChip, { borderColor: theme.border, opacity: 0.5 }]}
-                onPress={() => showInfo('Live location coming soon')}
-              >
-                <Text style={[styles.durationText, { color: theme.textSecondary }]}>{d}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
         </Pressable>
       </Pressable>
     </Modal>
@@ -318,11 +292,6 @@ const styles = StyleSheet.create({
   iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   rowLabel: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
   errorText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, marginTop: -4, marginBottom: spacing.sm },
-  soonPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill },
-  soonText: { fontSize: 11, fontFamily: FontFamily.semibold },
-  liveDurations: { flexDirection: 'row', gap: 8, paddingLeft: 52, paddingBottom: spacing.sm },
-  durationChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1 },
-  durationText: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   searchWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, borderRadius: radius.lg, paddingHorizontal: spacing.md },
   searchInput: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular },
   resultRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 4 },

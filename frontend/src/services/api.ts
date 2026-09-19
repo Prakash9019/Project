@@ -886,6 +886,15 @@ export const reportUser = (
   body: { reason: ReportReason; details?: string; messageId?: string }
 ) => request<{ ok: boolean }>('POST', `/api/v1/safety/users/${userId}/report`, body);
 
+export const muteUser = (userId: string) =>
+  request<{ ok: boolean }>('POST', `/api/v1/safety/users/${userId}/mute`);
+
+export const unmuteUser = (userId: string) =>
+  request<void>('DELETE', `/api/v1/safety/users/${userId}/mute`);
+
+export const listMutes = () =>
+  request<{ muted: { mutedId: string; createdAt: string }[] }>('GET', '/api/v1/safety/mutes');
+
 /* ─────────────────────────── Verification ─────────────────────────── */
 
 export interface VerificationStatusResponse {
@@ -897,6 +906,12 @@ export interface VerificationStatusResponse {
 }
 export const getVerificationStatus = () =>
   request<VerificationStatusResponse>('GET', '/api/v1/verification/status');
+
+export const sendCollegeOtp = (eduEmail: string) =>
+  request<{ ok: boolean; message: string }>('POST', '/api/v1/verification/college', { eduEmail });
+
+export const confirmCollegeOtp = (otp: string) =>
+  request<{ ok: boolean; isCollegeVerified: boolean }>('POST', '/api/v1/verification/college/confirm', { otp });
 
 // Face verification was removed (20260618). isVerified = phoneVerified OR emailVerified.
 

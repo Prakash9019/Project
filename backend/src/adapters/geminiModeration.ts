@@ -1,12 +1,9 @@
 /**
- * Gemini text-moderation classifier — evaluation-only.
- *
- * Used exclusively by the moderation eval harness (src/evals/) to compare
- * against the production Claude Haiku classifier in `moderation.ts`. This is
- * NOT wired into `CompositeModerationAdapter` — the live moderation path is
- * unchanged. Reuses the shared `callGeminiJson` client (no new Gemini fetch
- * logic), and mirrors Claude's exact category taxonomy so results are
- * directly comparable.
+ * Gemini text-moderation classifier — production classifier for
+ * `CompositeModerationAdapter` in `moderation.ts`, also used standalone by
+ * the moderation eval harness (src/evals/) to track accuracy against the
+ * dataset. Reuses the shared `callGeminiJson` client (no new Gemini fetch
+ * logic).
  */
 import { callGeminiJson } from './geminiClient';
 import type { ModerationResult } from './moderation';

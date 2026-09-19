@@ -12,7 +12,7 @@
     "realtime": "Socket.IO",
     "cache": "Redis (geo-spatial index, rate limits, presence)",
     "calling": "Agora SDK or 100ms",
-    "ai": "Anthropic Claude API or OpenAI GPT-4o",
+    "ai": "Google Gemini API (all AI features, including content moderation)",
     "imageModeration": "AWS Rekognition",
     "pushNotifications": "Firebase Cloud Messaging",
     "payments": "Razorpay (India), Stripe (global)",
@@ -4799,10 +4799,6 @@
       "example": "ap-south-1"
     },
     {
-      "key": "ANTHROPIC_API_KEY",
-      "description": "For AI features (Platinum)"
-    },
-    {
       "key": "DIGILOCKER_CLIENT_ID"
     },
     {
@@ -4891,7 +4887,7 @@
     "Agora calls: agoraToken generated server-side using AGORA_APP_CERTIFICATE (never expose to client). Token expires in 1 hour.",
     "Women safety defaults on signup: verifiedUsersOnlyFilter=true for users who specify gender=woman.",
     "Moderation: AWS Rekognition scans all uploaded photos/clips before publish. Required for all album photo uploads.",
-    "AI features: use claude-sonnet-4-6 for icebreakers/reply suggestions/profile optimizer. All opt-in.",
+    "AI features: use Gemini (gemini-2.5-flash via geminiClient.ts) for icebreakers/reply suggestions/compatibility/daily-top-10/profile optimizer/content moderation. All opt-in.",
     "Health endpoints (no auth): GET /health → {status:'ok'}, GET /health/live → {status:'ok'}, GET /health/ready → checks DB+Redis, returns {status:'ok'|'error', db, redis}.",
     "Request logger: every response emits structured JSON {requestId, userId, method, path, statusCode, durationMs, plan} to stdout.",
     "Spec: /Users/suryprakash/Project/backend-spec.json (use frontend-from-spec skill to consume).",

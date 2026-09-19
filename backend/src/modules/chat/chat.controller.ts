@@ -212,10 +212,16 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
 export async function editMessage(req: Request, res: Response): Promise<void> {
   const { conversationId, messageId } = req.params;
   const { content } = req.body as z.infer<typeof editMessageSchema>;
+  const userId = req.user!.sub;
+  const limits = req.effectiveLimits;
+  const plan = limits?.plan ?? 'free';
+
+  const userRecord = await prisma.user.findUnique({ where: { id: userId }, select: { planExpiresAt: true } });
+  const planExpiresAt = userRecord?.planExpiresAt ?? null;
 
   // Verify participant
-  const convo = await svc.getParticipantConversation(req.user!.sub, conversationId);
-  const updated = await svc.editMessage(messageId, req.user!.sub, content);
+  const convo = await svc.getParticipantConversation(userId, conversationId);
+  const updated = await svc.editMessage(messageId, userId, content, plan, planExpiresAt);
 
   // Emit to BOTH users
   const peerId = svc.otherParty(convo, req.user!.sub);

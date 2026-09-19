@@ -68,7 +68,10 @@ export default function RoomMedia() {
   // Cache per-tab results so switching tabs is instant after first load.
   const [data, setData] = useState<Record<Tab, RoomMessageCard[]>>({ media: [], links: [], documents: [] });
   const [loaded, setLoaded] = useState<Record<Tab, boolean>>({ media: false, links: false, documents: false });
+  const [cursor, setCursor] = useState<Record<Tab, string | null>>({ media: null, links: null, documents: null });
+  const [hasMore, setHasMore] = useState<Record<Tab, boolean>>({ media: false, links: false, documents: false });
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -81,6 +84,8 @@ export default function RoomMedia() {
         const res = await listRoomMedia(String(roomId), { type: TAB_TYPE[which], limit: 50 });
         setData((prev) => ({ ...prev, [which]: res.media }));
         setLoaded((prev) => ({ ...prev, [which]: true }));
+        setCursor((prev) => ({ ...prev, [which]: res.nextCursor }));
+        setHasMore((prev) => ({ ...prev, [which]: res.hasMore }));
       } catch (e) {
         toastApiError(e, 'Could not load media');
       } finally {
@@ -88,6 +93,24 @@ export default function RoomMedia() {
       }
     },
     [roomId],
+  );
+
+  const loadMore = useCallback(
+    async (which: Tab) => {
+      if (!roomId || loadingMore || !hasMore[which] || !cursor[which]) return;
+      setLoadingMore(true);
+      try {
+        const res = await listRoomMedia(String(roomId), { type: TAB_TYPE[which], limit: 50, cursor: cursor[which]! });
+        setData((prev) => ({ ...prev, [which]: [...prev[which], ...res.media] }));
+        setCursor((prev) => ({ ...prev, [which]: res.nextCursor }));
+        setHasMore((prev) => ({ ...prev, [which]: res.hasMore }));
+      } catch (e) {
+        toastApiError(e, 'Could not load more');
+      } finally {
+        setLoadingMore(false);
+      }
+    },
+    [roomId, loadingMore, hasMore, cursor],
   );
 
   useEffect(() => {
@@ -114,6 +137,13 @@ export default function RoomMedia() {
     setViewerIndex(idx < 0 ? 0 : idx);
     setViewerOpen(true);
   };
+
+  const renderFooter = () =>
+    loadingMore ? (
+      <View style={styles.footerLoading}>
+        <ActivityIndicator color={theme.brand} />
+      </View>
+    ) : null;
 
   const emptyLabel =
     tab === 'media'
@@ -162,6 +192,9 @@ export default function RoomMedia() {
           data={current}
           numColumns={cols}
           keyExtractor={(m) => m.id}
+          onEndReached={() => loadMore('media')}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
             <Pressable onPress={() => item.mediaUrl && openViewer(item.mediaUrl)}>
               <Image
@@ -179,6 +212,9 @@ export default function RoomMedia() {
           data={current}
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ paddingVertical: spacing.sm }}
+          onEndReached={() => loadMore('links')}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={renderFooter}
           renderItem={({ item }) => {
             const url = extractUrl(item.content ?? '');
             if (!url) return null;
@@ -209,6 +245,9 @@ export default function RoomMedia() {
           data={current}
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ paddingVertical: spacing.sm }}
+          onEndReached={() => loadMore('documents')}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
             <Pressable
               style={styles.docRow}
@@ -249,6 +288,7 @@ const styles = StyleSheet.create({
   tabText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
   tabUnderline: { height: 2, width: '60%', marginTop: 8, borderRadius: 2 },
   empty: { fontFamily: FontFamily.regular, fontSize: 15 },
+  footerLoading: { paddingVertical: spacing.lg, alignItems: 'center' },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   favicon: { width: 40, height: 40, borderRadius: 8 },
   linkDomain: { fontSize: FontSize.md, fontFamily: FontFamily.semibold },
