@@ -502,12 +502,6 @@ export default function Groups() {
         style={[styles.fabRow, { bottom: insets.bottom   }]}
         pointerEvents="box-none"
       >
-        {/* First-time discoverability hint — auto-hides once the user joins a group */}
-        {joined.length === 0 ? (
-          <View style={[styles.fabHint, { backgroundColor: theme.brand }]}>
-            <Text style={styles.fabHintText}>New Group</Text>
-          </View>
-        ) : null}
         <Pressable
           style={styles.fab}
           onPress={() => router.push('/create-group/members' as Href)}
@@ -646,12 +640,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
-  fabHint: {
-    borderRadius: 99,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  fabHintText: { fontSize: 12, fontFamily: FontFamily.semibold, color: '#fff' },
   fab: {
     width: 56,
     height: 56,
