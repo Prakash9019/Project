@@ -74,6 +74,7 @@ import {
 } from '../../src/services/socket';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
 import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
+import { startLiveLocationStreaming } from '../../src/services/liveLocationService';
 import { toastApiError, showSuccess, showError } from '../../src/lib/toast';
 import type { RoomDetail, RoomMessageCard, RoomReaction, RoomReplyPreview, RoomUserCard } from '../../src/types/api';
 
@@ -569,6 +570,34 @@ export default function RoomChat() {
       appendMessage(msg);
     } catch (e) {
       toastApiError(e, 'Could not send location');
+    }
+  };
+
+  const handleSendLiveLocation = async (
+    lat: number,
+    lng: number,
+    label: string,
+    durationMinutes: number,
+    comment?: string
+  ) => {
+    try {
+      const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
+      const content = `📍LIVE ${label}|${lat}|${lng}|${expiresAt}|active${comment ? `|${comment}` : ''}`;
+      const msg = await sendRoomMessage(roomId, {
+        content,
+        type: 'text',
+      });
+      appendMessage(msg);
+      if (msg?.id) {
+        await startLiveLocationStreaming({
+          messageId: msg.id,
+          roomId,
+          durationMinutes,
+          label,
+        });
+      }
+    } catch (e) {
+      toastApiError(e, 'Could not share live location');
     }
   };
 
@@ -1369,6 +1398,7 @@ export default function RoomChat() {
             onSendAudioFile={sendAudioFile}
             onSendGif={sendGif}
             onSendLocation={handleSendLocation}
+            onSendLiveLocation={handleSendLiveLocation}
             onEditConfirm={doEdit}
             onTypingStart={handleTypingStart}
             onTypingStop={handleTypingStop}

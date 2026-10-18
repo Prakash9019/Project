@@ -190,6 +190,7 @@ export function serializeGridCard(
     interests: user.interests ?? [],
     tribes: user.tribes ?? [],
     tags: user.tags ?? [],
+    distance: showDistance ? formatDistance(distanceMeters, user.hideExactDistance ?? false) : null,
     distanceLabel: showDistance ? formatDistance(distanceMeters, user.hideExactDistance ?? false) : null,
     lastActiveAt: hideLastSeen ? null : activity.label,
     activity: hideActivity ? null : activity,

@@ -19,10 +19,12 @@ import { ReactionPill } from '../chat/ReactionPill';
 import { VideoBubble } from '../chat/VideoBubble';
 import { LinkPreview } from '../chat/LinkPreview';
 import { AudioPlayer } from '../chat/AudioPlayer';
+import { LiveLocationCard, isLiveLocationContent } from '../chat/LiveLocationCard';
 import { measureThumbnail } from '../../utils/measureThumbnail';
 import type { ThumbnailLayout } from '../MediaViewer';
-import { useTheme, FontFamily, FontSize } from '../../theme';
 import { hasUrl, linkifyText, firstUrl, isBareUrl } from '../../lib/linkify';
+import { useTheme, FontFamily, FontSize } from '../../theme';
+import { clockTime } from '../../lib/format';
 import type { RoomMessageCard } from '../../types/api';
 
 const SWIPE_TRIGGER = 60;
@@ -70,7 +72,7 @@ function renderWithMentions(
 }
 
 function timeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return clockTime(iso);
 }
 
 function MessageBubbleBase({
@@ -147,8 +149,9 @@ function MessageBubbleBase({
   // Document / audio-file arrive as text messages carrying a mediaUrl + emoji prefix.
   const isDoc = message.type === 'text' && !!media && message.content.startsWith('📄');
   const isAudioFile = message.type === 'text' && !!media && message.content.startsWith('🎵');
+  const isLiveLocation = message.type === 'text' && isLiveLocationContent(message.content);
   // Location card: a text message with structured content '📍 label|lat|lng'.
-  const isLocation = message.type === 'text' && message.content.startsWith('📍 ') && message.content.includes('|');
+  const isLocation = !isLiveLocation && message.type === 'text' && message.content.startsWith('📍 ') && message.content.includes('|');
   const locationParts = isLocation ? message.content.replace(/^📍\s*/, '').split('|') : null;
   const locationLabel = locationParts?.[0] || 'My Location';
   const locationLat = locationParts ? Number(locationParts[1]) : 0;
@@ -252,13 +255,13 @@ function MessageBubbleBase({
   }));
 
   // WhatsApp-style meta: timestamp + ticks INSIDE the bubble bottom-right for
-  // padded bubbles, below the media for bare image/GIF bubbles (mirrors 1:1 chat).
+  // padded bubbles, floating badge over media for bare image/GIF/video bubbles.
   const metaOnGradient = isOwn && !bareMedia;
-  const metaMuted = metaOnGradient ? 'rgba(255,255,255,0.7)' : theme.textTertiary;
+  const metaMuted = bareMedia ? '#ffffff' : (metaOnGradient ? 'rgba(255,255,255,0.7)' : theme.textTertiary);
   const metaNode = (
-    <View style={[styles.metaRow, bareMedia ? (isOwn ? { justifyContent: 'flex-end' } : null) : styles.metaInBubble]}>
+    <View style={[styles.metaRow, bareMedia ? styles.mediaMetaBadge : styles.metaInBubble]}>
       {message.isStarred && !deleted ? (
-        <Ionicons name="star" size={11} color={metaOnGradient ? '#fff' : theme.brand} style={{ marginRight: 2 }} />
+        <Ionicons name="star" size={11} color={bareMedia || metaOnGradient ? '#fff' : theme.brand} style={{ marginRight: 2 }} />
       ) : null}
       <Text style={[styles.time, { color: metaMuted }]}>{timeLabel(message.createdAt)}</Text>
       {message.isEdited && !deleted ? (
@@ -268,7 +271,7 @@ function MessageBubbleBase({
         <MessageTick
           status={deliveryStatus ?? 'sent'}
           isPremium={false}
-          mutedColor={metaOnGradient ? 'rgba(255,255,255,0.8)' : undefined}
+          mutedColor={bareMedia || metaOnGradient ? 'rgba(255,255,255,0.85)' : undefined}
         />
       ) : null}
     </View>
@@ -337,13 +340,16 @@ function MessageBubbleBase({
 
       {/* Media */}
       {!deleted && isGif ? (
-        <Image
-          source={{ uri: media }}
-          style={[styles.gif, { height: gifAspect ? 200 / gifAspect : 200 }]}
-          contentFit="contain"
-          transition={120}
-          onLoad={onGifLoad}
-        />
+        <View style={styles.imageWrap}>
+          <Image
+            source={{ uri: media }}
+            style={[styles.gif, { height: gifAspect ? 200 / gifAspect : 200 }]}
+            contentFit="contain"
+            transition={120}
+            onLoad={onGifLoad}
+          />
+          {bareMedia ? metaNode : null}
+        </View>
       ) : null}
       {!deleted && isImage ? (
         <Pressable
@@ -376,16 +382,20 @@ function MessageBubbleBase({
               <Text style={styles.imageRetryText}>Tap to retry</Text>
             </Pressable>
           ) : null}
+          {bareMedia ? metaNode : null}
         </Pressable>
       ) : null}
       {!deleted && isVideo ? (
-        <VideoBubble
-          thumbnailUrl={videoThumbnailUrl}
-          duration={message.duration}
-          stableId={`video-thumb-${message.id}`}
-          onPress={(layout) => onVideoPress?.(media, layout)}
-          onLongPress={onLongPress}
-        />
+        <View style={styles.imageWrap}>
+          <VideoBubble
+            thumbnailUrl={videoThumbnailUrl}
+            duration={message.duration}
+            stableId={`video-thumb-${message.id}`}
+            onPress={(layout) => onVideoPress?.(media, layout)}
+            onLongPress={onLongPress}
+          />
+          {bareMedia ? metaNode : null}
+        </View>
       ) : null}
       {/* The SAME player the 1:1 chat uses — speed control, tap-to-seek and
           error/retry included. Rooms used to have a reduced local copy. */}
@@ -399,6 +409,14 @@ function MessageBubbleBase({
       ) : null}
       {!deleted && isDoc ? renderMediaCard('document-text', message.content.replace(/^📄\s*/, '') || 'Document', 'Tap to open') : null}
       {!deleted && isAudioFile ? renderMediaCard('musical-notes', message.content.replace(/^🎵\s*/, '') || 'Audio', 'Tap to play') : null}
+      {!deleted && isLiveLocation ? (
+        <LiveLocationCard
+          content={message.content}
+          messageId={message.id}
+          mine={isOwn}
+          onLongPress={onLongPress}
+        />
+      ) : null}
       {!deleted && isLocation ? (
         <Pressable
           onPress={() => Linking.openURL(`https://maps.google.com/?q=${locationLat},${locationLng}`).catch(() => {})}
@@ -517,9 +535,6 @@ function MessageBubbleBase({
               )}
             </AnimatedPressable>
 
-            {/* Bare media keeps its timestamp + delivery below the image */}
-            {bareMedia ? metaNode : null}
-
             {/* Reactions */}
             {message.reactions.length > 0 ? (
               <View style={[styles.reactionsRow, isOwn ? { justifyContent: 'flex-end' } : null]}>
@@ -629,6 +644,18 @@ const styles = StyleSheet.create({
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
   metaInBubble: { alignSelf: 'flex-end', marginTop: 1, marginLeft: 10 },
+  mediaMetaBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 3 },
   reactionPill: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, borderWidth: 1 },

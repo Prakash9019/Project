@@ -195,6 +195,7 @@ export const devLogin = (email: string, password: string) =>
 export interface SendEmailOtpResponse {
   message: string;
   expiresInSeconds: number;
+  devCode?: string;
 }
 export const sendEmailOtp = (email: string) =>
   request<SendEmailOtpResponse>('POST', '/api/v1/auth/email/send-otp', { email }, { auth: false });
@@ -244,6 +245,7 @@ export interface UpdateProfileBody {
   groupsAvailable?: boolean;
   audioCallAvailable?: boolean;
   videoCallAvailable?: boolean;
+  disceetMode?: boolean;
 }
 export const updateProfile = (body: UpdateProfileBody) =>
   request<Self>('PATCH', '/api/v1/me', body);
@@ -263,6 +265,17 @@ export const registerFcmToken = (token: string) =>
 // endpoints[] array. Wired here as instructed.
 export const exportMyData = () => request<unknown>('GET', '/api/v1/me/export');
 export const deleteAccount = () => request<void>('DELETE', '/api/v1/me');
+
+/* ────────────────────────── PIN Vault ────────────────────────── */
+export const setAccountPin = (pin: string) =>
+  request<{ ok: boolean }>('POST', '/api/v1/me/pin', { pin });
+
+export const removeAccountPin = (pin: string) =>
+  request<{ ok: boolean }>('DELETE', '/api/v1/me/pin', { pin });
+
+export const verifyAccountPin = (pin: string) =>
+  request<{ valid: boolean }>('POST', '/api/v1/me/pin/verify', { pin });
+
 
 export const addPhoto = (url: string, isPrimary?: boolean, isPrivate?: boolean) =>
   request<Photo>('POST', '/api/v1/me/photos', { url, isPrimary, isPrivate });
@@ -546,8 +559,12 @@ export const markConversationRead = (conversationId: string) =>
   request<void>('POST', `/api/v1/conversations/${conversationId}/read`);
 
 // `before` = ISO createdAt of the oldest loaded message (server returns older
-// messages before it). Backend returns { messages (newest-first), hasMore, nextCursor }.
-export const listMessages = (conversationId: string, query?: { before?: string; limit?: number }) =>
+// messages before it). `around` = messageId to center the page around (for jumping to search results).
+// Backend returns { messages (newest-first), hasMore, nextCursor }.
+export const listMessages = (
+  conversationId: string,
+  query?: { before?: string; around?: string; limit?: number },
+) =>
   request<ListMessagesResponse>(
     'GET',
     `/api/v1/conversations/${conversationId}/messages`,

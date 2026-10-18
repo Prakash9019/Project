@@ -82,6 +82,41 @@ export function initSocket(httpServer: HttpServer): Server {
       await redis.set(RedisKeys.presence(userId), '1', 'EX', env.grid.onlineWindowSeconds);
     });
 
+    // ── Live location streaming in chat/rooms ───────────────
+    socket.on('chat:live_location:update', async (payload: { conversationId?: string; roomId?: string; messageId: string; lat: number; lng: number }) => {
+      const { conversationId, roomId, messageId, lat, lng } = payload ?? {};
+      if (!messageId || typeof lat !== 'number' || typeof lng !== 'number') return;
+      if (conversationId) {
+        try {
+          const convo = await getParticipantConversation(userId, conversationId);
+          emitToUser(otherParty(convo, userId), 'chat:live_location:update', {
+            conversationId, messageId, userId, lat, lng, updatedAt: new Date().toISOString(),
+          });
+        } catch { /* not a participant */ }
+      } else if (roomId) {
+        socket.to(roomChannel(roomId)).emit('chat:live_location:update', {
+          roomId, messageId, userId, lat, lng, updatedAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    socket.on('chat:live_location:stop', async (payload: { conversationId?: string; roomId?: string; messageId: string }) => {
+      const { conversationId, roomId, messageId } = payload ?? {};
+      if (!messageId) return;
+      if (conversationId) {
+        try {
+          const convo = await getParticipantConversation(userId, conversationId);
+          emitToUser(otherParty(convo, userId), 'chat:live_location:stop', {
+            conversationId, messageId, userId, endedAt: new Date().toISOString(),
+          });
+        } catch { /* not a participant */ }
+      } else if (roomId) {
+        socket.to(roomChannel(roomId)).emit('chat:live_location:stop', {
+          roomId, messageId, userId, endedAt: new Date().toISOString(),
+        });
+      }
+    });
+
     // ── Typing indicator (Premium+ only) ───────────────────
     socket.on('typing', async (payload: { conversationId: string; isTyping: boolean }) => {
       // Gate: only relay if the sender has a paid plan (typingIndicator feature)

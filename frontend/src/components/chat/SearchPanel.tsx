@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, ScrollView, Platform } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, FlatList, ScrollView, Platform, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { Linking } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, FontSize } from '../../theme';
+import { listConversationMedia } from '../../services/api';
 
 /** Normalized message shape the panel searches across (both inbox + rooms map to this). */
 export interface SearchMessage {
@@ -91,11 +92,15 @@ function highlightQuery(text: string, q: string, brand: string): React.ReactNode
 export function SearchPanel({
   query,
   messages,
+  conversationId,
+  loading = false,
   onJumpToMessage,
   onOpenMedia,
 }: {
   query: string;
   messages: SearchMessage[];
+  conversationId?: string;
+  loading?: boolean;
   onJumpToMessage: (id: string) => void;
   onOpenMedia: (url: string) => void;
 }) {
@@ -104,6 +109,47 @@ export function SearchPanel({
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [pickedDate, setPickedDate] = useState<Date | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [serverMediaMessages, setServerMediaMessages] = useState<SearchMessage[]>([]);
+  const [mediaLoading, setMediaLoading] = useState(false);
+
+  // Fetch full history media/links/documents if conversationId is provided
+  useEffect(() => {
+    if (!conversationId || tab === 'messages') return;
+
+    let active = true;
+    setMediaLoading(true);
+
+    const typeMap: Record<Tab, 'image' | 'video' | 'voice' | 'link' | 'document' | undefined> = {
+      messages: undefined,
+      media: 'image',
+      links: 'link',
+      documents: 'document',
+    };
+
+    const mediaType = typeMap[tab];
+    listConversationMedia(conversationId, { type: mediaType, limit: 100 })
+      .then((res) => {
+        if (!active) return;
+        const mapped: SearchMessage[] = res.media.map((m) => ({
+          id: m.id,
+          content: m.isUnsent ? null : m.content,
+          createdAt: m.createdAt,
+          type: m.type,
+          mediaUrls: m.mediaUrls?.length ? m.mediaUrls : m.mediaUrl ? [m.mediaUrl] : [],
+          senderName: 'User',
+          isDeleted: m.isUnsent,
+        }));
+        setServerMediaMessages(mapped);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setMediaLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [conversationId, tab]);
 
   const matchesDate = useMemo(() => {
     const now = new Date();
@@ -125,8 +171,18 @@ export function SearchPanel({
 
   const q = query.trim().toLowerCase();
 
+  const combinedMessages = useMemo(() => {
+    if (tab === 'messages' || serverMediaMessages.length === 0) return messages;
+    const map = new Map<string, SearchMessage>();
+    messages.forEach((m) => map.set(m.id, m));
+    serverMediaMessages.forEach((m) => {
+      if (!map.has(m.id)) map.set(m.id, m);
+    });
+    return Array.from(map.values());
+  }, [messages, serverMediaMessages, tab]);
+
   const results = useMemo(() => {
-    const live = messages.filter((m) => !m.isDeleted && matchesDate(m.createdAt));
+    const live = combinedMessages.filter((m) => !m.isDeleted && matchesDate(m.createdAt));
     switch (tab) {
       case 'messages':
         if (!q) return [];
@@ -140,7 +196,7 @@ export function SearchPanel({
       default:
         return [];
     }
-  }, [messages, tab, q, matchesDate]);
+  }, [combinedMessages, tab, q, matchesDate]);
 
   const mediaUrls = useMemo(() => {
     if (tab !== 'media') return [];
@@ -204,6 +260,13 @@ export function SearchPanel({
             if (d) setPickedDate(d);
           }}
         />
+      ) : null}
+
+      {/* Loading state */}
+      {(loading || mediaLoading) ? (
+        <View style={{ paddingVertical: 12, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="small" color={theme.brand} />
+        </View>
       ) : null}
 
       {/* Results */}

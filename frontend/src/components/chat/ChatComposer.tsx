@@ -89,6 +89,7 @@ export interface ChatComposerProps {
   onSendAudioFile?: () => void | Promise<void>;
   onSendGif: (gif: GifResult) => void | Promise<void>;
   onSendLocation: (lat: number, lng: number, label: string) => void | Promise<void>;
+  onSendLiveLocation?: (lat: number, lng: number, label: string, durationMinutes: number, comment?: string) => void | Promise<void>;
   onEditConfirm: (messageId: string, newContent: string) => Promise<void>;
   /** 1:1-only extras — when provided, the attachment sheet reveals the item. */
   onSendViewOnce?: () => void | Promise<void>;
@@ -138,6 +139,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     onSendAudioFile,
     onSendGif,
     onSendLocation,
+    onSendLiveLocation,
     onEditConfirm,
     onSendViewOnce,
     onShareAlbum,
@@ -891,6 +893,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         visible={locationOpen}
         onClose={() => setLocationOpen(false)}
         onSendLocation={onSendLocation}
+        onSendLiveLocation={onSendLiveLocation}
       />
       <ImagePreview
         visible={previewUris != null}

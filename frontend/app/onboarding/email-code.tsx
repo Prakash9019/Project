@@ -16,9 +16,9 @@ export default function EmailCode() {
   const router = useRouter();
   const { theme } = useTheme();
   const login = useAuthStore((s) => s.login);
-  const { email } = useLocalSearchParams<{ email: string }>();
+  const { email, devCode } = useLocalSearchParams<{ email: string; devCode?: string }>();
 
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(devCode ?? '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN);
@@ -53,7 +53,8 @@ export default function EmailCode() {
     if (cooldown > 0 || !email) return;
     setError(null);
     try {
-      await sendEmailOtp(email);
+      const res = await sendEmailOtp(email);
+      if (res.devCode) setCode(res.devCode);
       setCooldown(RESEND_COOLDOWN);
     } catch (e: unknown) {
       const err = e as ApiError;

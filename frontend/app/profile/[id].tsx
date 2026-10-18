@@ -9,16 +9,15 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
-  KeyboardAvoidingView,
-  Keyboard,
   Platform,
 } from 'react-native';
+import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { RemoteImage } from '../../src/components/RemoteImage';
 import { Skeleton } from '../../src/components/Skeleton';
 import { Linking } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, useFocusEffect, type Href } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, FontFamily, DisplayFont, FontSize } from '../../src/theme';
 import { ReportSheet } from '../../src/components/ReportSheet';
@@ -69,6 +68,17 @@ export default function ProfileDetail() {
   const router = useRouter();
   const { theme } = useTheme();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const keyboard = useAnimatedKeyboard({
+    isStatusBarTranslucentAndroid: true,
+    isNavigationBarTranslucentAndroid: true,
+  });
+  const animatedBarStyle = useAnimatedStyle(() => {
+    const offset = keyboard.height.value > 0 ? Math.max(0, keyboard.height.value - insets.bottom) : 0;
+    return {
+      transform: [{ translateY: -offset }],
+    };
+  });
   const me = useAuthStore((s) => s.user);
   const patchCard = useGridStore((s) => s.patchCard);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
@@ -89,7 +99,6 @@ export default function ProfileDetail() {
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const [kbInset, setKbInset] = useState(0);
   const hasLoadedRef = useRef(false);
 
   // In-chat contact profile extras (only when opened from a conversation).
@@ -129,17 +138,6 @@ export default function ProfileDetail() {
       setLoading(true);
     }
   }, [peerId]);
-
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvt, (e) => setKbInset(e.endCoordinates.height));
-    const hide = Keyboard.addListener(hideEvt, () => setKbInset(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
 
   const loadProfile = useCallback(async () => {
     if (!peerId) {
@@ -379,32 +377,32 @@ export default function ProfileDetail() {
   const online = profile.activity?.online ?? profile.lastActiveAt?.toLowerCase() === 'online';
 
   const Section = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <>
-      <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>{label}</Text>
+    <View style={styles.sectionWrap}>
+      <Text style={styles.sectionHeader}>{label}</Text>
       {children}
-    </>
+    </View>
   );
 
   const Chips = ({ items }: { items: string[] }) => (
     <View style={styles.chips}>
       {items.map((t, i) => (
-        <View key={`${t}-${i}`} style={[styles.chip, { backgroundColor: theme.surfaceElevated }]}>
-          <Text style={[styles.chipText, { color: theme.textPrimary }]}>{labelize(t)}</Text>
+        <View key={`${t}-${i}`} style={styles.chip}>
+          <Text style={styles.chipText}>{labelize(t)}</Text>
         </View>
       ))}
     </View>
   );
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.background }]}>
+    <View style={styles.root}>
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 160 + insets.bottom }}
       >
         {/* Hero / gallery */}
-        <View style={{ width, height: width }}>
+        <View style={{ width, height: width * 1.15 }}>
           {gallery.length > 0 ? (
             <ScrollView
               horizontal
@@ -412,8 +410,6 @@ export default function ProfileDetail() {
               showsHorizontalScrollIndicator={false}
               scrollEventThrottle={16}
               onScroll={(e) => {
-                // Grow the loaded window as the user swipes toward the tail so we
-                // never mount every hero photo up-front (F52 progressive loading).
                 const idx = Math.round(e.nativeEvent.contentOffset.x / width);
                 if (idx + 2 > visiblePhotos) {
                   setVisiblePhotos((n) => Math.min(gallery.length, Math.max(n, idx + 2)));
@@ -423,27 +419,21 @@ export default function ProfileDetail() {
             >
               {gallery.map((uri, i) =>
                 i < visiblePhotos ? (
-                  <RemoteImage key={i} source={{ uri }} style={{ width, height: width }} contentFit="cover" transition={120} />
+                  <RemoteImage key={i} source={{ uri }} style={{ width, height: width * 1.15 }} contentFit="cover" transition={120} />
                 ) : (
-                  <View key={i} style={{ width, height: width, backgroundColor: theme.backgroundTertiary }} />
+                  <View key={i} style={{ width, height: width * 1.15, backgroundColor: '#111111' }} />
                 ),
               )}
             </ScrollView>
           ) : (
-            <View style={[StyleSheet.absoluteFill, styles.noPhoto, { backgroundColor: theme.backgroundTertiary }]}>
-              <Ionicons name="person" size={96} color={theme.textTertiary} />
+            <View style={[StyleSheet.absoluteFill, styles.noPhoto, { backgroundColor: '#111111' }]}>
+              <Ionicons name="person" size={96} color="#444444" />
             </View>
           )}
           {/* Top scrim — keeps the back / star / menu buttons legible over bright photos */}
           <LinearGradient
-            colors={['rgba(0,0,0,0.45)', 'transparent']}
+            colors={['rgba(0,0,0,0.5)', 'transparent']}
             style={styles.heroTopScrim}
-            pointerEvents="none"
-          />
-          {/* Bottom scrim — warm fade into the info section */}
-          <LinearGradient
-            colors={['transparent', theme.background]}
-            style={styles.heroBottomScrim}
             pointerEvents="none"
           />
           {gallery.length > 1 && (
@@ -455,26 +445,27 @@ export default function ProfileDetail() {
           )}
           <SafeAreaView edges={['top']} style={styles.heroBar}>
             <Pressable onPress={() => router.back()} hitSlop={12} style={styles.circleBtn}>
-              <Ionicons name="arrow-back" size={22} color="#fff" />
+              <Ionicons name="arrow-back" size={24} color="#fff" />
             </Pressable>
             <View style={styles.heroRight}>
               <Pressable style={styles.circleBtn} onPress={toggleShortlist}>
-                <Ionicons name={shortlisted ? 'star' : 'star-outline'} size={20} color={shortlisted ? theme.planGold : '#fff'} />
+                <Ionicons name={shortlisted ? 'star' : 'star-outline'} size={22} color={shortlisted ? '#F5C518' : '#fff'} />
               </Pressable>
               <Pressable style={styles.circleBtn} onPress={() => setMenuOpen(true)}>
-                <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
+                <Ionicons name="ellipsis-horizontal" size={22} color="#fff" />
               </Pressable>
             </View>
           </SafeAreaView>
         </View>
 
         <View style={styles.info}>
+          {/* Name & Age — bold, clean matching screenshot "Place 26" */}
           <View style={styles.nameRow}>
-            <Text style={[styles.name, { color: theme.textPrimary }]}>
+            <Text style={styles.name}>
               {profile.firstName ?? 'Someone'}
-              {profile.age ? <Text style={styles.age}>, {profile.age}</Text> : null}
+              {profile.age ? <Text style={styles.age}> {profile.age}</Text> : null}
             </Text>
-            {profile.isVerified && <Ionicons name="checkmark-circle" size={20} color={theme.info} />}
+            {profile.isVerified && <Ionicons name="checkmark-circle" size={22} color="#00D26A" style={styles.verifyTick} />}
             {badge && (
               <View style={[styles.planBadge, { backgroundColor: badge }]}>
                 <Ionicons name="diamond" size={11} color="#000" />
@@ -482,29 +473,36 @@ export default function ProfileDetail() {
             )}
           </View>
 
+          {/* Status & Distance Row */}
           <View style={styles.metaRow}>
-            <View style={[styles.dot, { backgroundColor: online ? theme.online : theme.textTertiary }]} />
-            <Text style={[styles.meta, { color: online ? theme.online : theme.textSecondary }]}>{online ? 'Online now' : profile.activity?.label ?? 'Offline'}</Text>
-            <Ionicons name="navigate" size={13} color={theme.textSecondary} style={{ marginLeft: 8 }} />
-            <Text style={[styles.meta, { color: theme.textSecondary }]}> {profile.distance}</Text>
+            <View style={[styles.dot, { backgroundColor: online ? '#00D26A' : '#8E8E93' }]} />
+            <Text style={[styles.metaText, { color: online ? '#00D26A' : '#8E8E93' }]}>
+              {online ? 'Online now' : profile.activity?.label ?? 'Offline'}
+            </Text>
+            {profile.distance ? (
+              <View style={styles.distRow}>
+                <Ionicons name="navigate" size={13} color="#8E8E93" />
+                <Text style={styles.distText}>{profile.distance}</Text>
+              </View>
+            ) : null}
           </View>
 
           {/* Availability chips — group / audio / video */}
           {(profile.groupsAvailable || profile.audioCallAvailable || profile.videoCallAvailable) && (
             <View style={styles.availRow}>
               {profile.groupsAvailable && (
-                <View style={[styles.availChip, { backgroundColor: theme.planPremium + '26', borderColor: theme.planPremium }]}>
-                  <Text style={[styles.availChipText, { color: theme.planPremium }]}>👥 Open to Groups</Text>
+                <View style={[styles.availChip, { backgroundColor: '#2C1E3A' }]}>
+                  <Text style={[styles.availChipText, { color: '#D495FF' }]}>👥 Open to Groups</Text>
                 </View>
               )}
               {profile.audioCallAvailable && (
-                <View style={[styles.availChip, { backgroundColor: theme.callAudio + '26', borderColor: theme.callAudio }]}>
-                  <Text style={[styles.availChipText, { color: theme.callAudio }]}>📞 Audio Calls</Text>
+                <View style={[styles.availChip, { backgroundColor: '#1A2C2A' }]}>
+                  <Text style={[styles.availChipText, { color: '#4ADE80' }]}>📞 Audio Calls</Text>
                 </View>
               )}
               {profile.videoCallAvailable && (
-                <View style={[styles.availChip, { backgroundColor: theme.callVideo + '26', borderColor: theme.callVideo }]}>
-                  <Text style={[styles.availChipText, { color: theme.callVideo }]}>🎥 Video Calls</Text>
+                <View style={[styles.availChip, { backgroundColor: '#1A2536' }]}>
+                  <Text style={[styles.availChipText, { color: '#60A5FA' }]}>🎥 Video Calls</Text>
                 </View>
               )}
             </View>
@@ -513,39 +511,55 @@ export default function ProfileDetail() {
           {/* Verification badges */}
           {(profile.photoVerified || profile.isCollegeVerified) && (
             <View style={styles.verifyRow}>
-              {profile.photoVerified && <Badge theme={theme} icon="image" label="Photo verified" />}
-              {profile.isCollegeVerified && <Badge theme={theme} icon="school" label="College" />}
+              {profile.photoVerified && <Badge icon="image" label="Photo verified" />}
+              {profile.isCollegeVerified && <Badge icon="school" label="College" />}
             </View>
           )}
 
-          {/* Physical stats */}
+          {/* Physical stats (only if present in user profile) */}
           {(profile.height || profile.weight || profile.bodyType || profile.skinTone) && (
             <View style={styles.statsRow}>
-              {profile.height ? <Stat theme={theme} text={`${profile.height} cm`} /> : null}
-              {profile.weight ? <Stat theme={theme} text={`${profile.weight} kg`} /> : null}
-              {profile.bodyType ? <Stat theme={theme} text={labelize(profile.bodyType)} /> : null}
-              {profile.skinTone ? <Stat theme={theme} text={labelize(profile.skinTone)} /> : null}
+              {profile.height ? <Stat text={`${profile.height} cm`} /> : null}
+              {profile.weight ? <Stat text={`${profile.weight} kg`} /> : null}
+              {profile.bodyType ? <Stat text={labelize(profile.bodyType)} /> : null}
+              {profile.skinTone ? <Stat text={labelize(profile.skinTone)} /> : null}
             </View>
+          )}
+
+          {/* ABOUT ME section */}
+          {(profile.aboutMe || profile.bio) && (
+            <Section label="ABOUT ME">
+              <View style={styles.aboutCard}>
+                <Text style={styles.aboutText}>{profile.aboutMe ?? profile.bio}</Text>
+              </View>
+            </Section>
+          )}
+          {profile.aboutMe && profile.bio && profile.aboutMe !== profile.bio && (
+            <Section label="BIO">
+              <View style={styles.aboutCard}>
+                <Text style={styles.aboutText}>{profile.bio}</Text>
+              </View>
+            </Section>
           )}
 
           {compatLoading || compatibility || compatLockedReason === 'plan_required' ? (
             <Section label="COMPATIBILITY">
               {compatLoading ? (
                 <View style={styles.compatLoadingRow}>
-                  <ActivityIndicator size="small" color={theme.brand} />
-                  <Text style={[styles.compatLoadingText, { color: theme.textSecondary }]}>
+                  <ActivityIndicator size="small" color="#F5C518" />
+                  <Text style={styles.compatLoadingText}>
                     Calculating compatibility…
                   </Text>
                 </View>
               ) : compatibility ? (
-                <View style={[styles.compatCard, { backgroundColor: theme.surface }]}>
-                  <Text style={[styles.compatScore, { color: theme.brand }]}>{compatibility.score}%</Text>
+                <View style={styles.compatCard}>
+                  <Text style={styles.compatScore}>{compatibility.score}%</Text>
                   {compatibility.breakdown.length > 0 ? (
                     <View style={styles.compatBreakdown}>
                       {compatibility.breakdown.map((line, i) => (
                         <View key={i} style={styles.compatBreakdownRow}>
-                          <Ionicons name="checkmark-circle" size={16} color={theme.success} />
-                          <Text style={[styles.compatBreakdownText, { color: theme.textSecondary }]}>{line}</Text>
+                          <Ionicons name="checkmark-circle" size={16} color="#00D26A" />
+                          <Text style={styles.compatBreakdownText}>{line}</Text>
                         </View>
                       ))}
                     </View>
@@ -553,40 +567,20 @@ export default function ProfileDetail() {
                 </View>
               ) : (
                 <Pressable
-                  style={[styles.compatLockedCard, { backgroundColor: theme.backgroundTertiary }]}
+                  style={styles.compatLockedCard}
                   onPress={() => setUpgradeOpen(true)}
                 >
-                  <Ionicons name="lock-closed" size={22} color={theme.textTertiary} />
-                  <Text style={[styles.compatLockedTitle, { color: theme.textPrimary }]}>See your compatibility</Text>
-                  <Text style={[styles.compatLockedSub, { color: theme.textSecondary }]}>Unlock with Platinum</Text>
+                  <Ionicons name="lock-closed" size={22} color="#8E8E93" />
+                  <Text style={styles.compatLockedTitle}>See your compatibility</Text>
+                  <Text style={styles.compatLockedSub}>Unlock with Platinum</Text>
                 </Pressable>
               )}
             </Section>
           ) : null}
 
-          {profile.bio ? (
-            <Section label="BIO">
-              <Text style={[styles.body, { color: theme.textSecondary }]}>{profile.bio}</Text>
-            </Section>
-          ) : null}
-
-          {profile.aboutMe ? (
-            <Section label="ABOUT ME">
-              <View style={[styles.card, { backgroundColor: theme.surface }]}>
-                <Text style={[styles.body, { color: theme.textSecondary }]}>{profile.aboutMe}</Text>
-              </View>
-            </Section>
-          ) : null}
-
           {profile.whereAreYouFrom ? (
             <Section label="FROM">
-              <Text style={[styles.body, { color: theme.textSecondary }]}>{profile.whereAreYouFrom}</Text>
-            </Section>
-          ) : null}
-
-          {profile.relationshipStatus ? (
-            <Section label="RELATIONSHIP STATUS">
-              <Text style={[styles.body, { color: theme.textSecondary }]}>{labelize(profile.relationshipStatus)}</Text>
+              <Text style={styles.bodyText}>{profile.whereAreYouFrom}</Text>
             </Section>
           ) : null}
 
@@ -728,7 +722,7 @@ export default function ProfileDetail() {
           {fromChat && sharedImages.length > 0 ? (
             <>
               <View style={styles.sharedHead}>
-                <Text style={[styles.sectionLabel, { color: theme.textTertiary, marginTop: 0 }]}>SHARED MEDIA</Text>
+                <Text style={[styles.sectionHeader, { color: theme.textTertiary, marginTop: 0 }]}>SHARED MEDIA</Text>
                 <Pressable onPress={() => router.push({ pathname: '/chat/media', params: { id: fromChat, peerName: params.peerName ?? profile.firstName ?? '' } } as Href)}>
                   <Text style={[styles.seeAll, { color: theme.brand }]}>See All</Text>
                 </Pressable>
@@ -746,14 +740,14 @@ export default function ProfileDetail() {
           {fromChat && sharedLinks.length > 0 ? (
             <>
               <View style={styles.sharedHead}>
-                <Text style={[styles.sectionLabel, { color: theme.textTertiary, marginTop: 0 }]}>SHARED LINKS</Text>
+                <Text style={[styles.sectionHeader, { color: theme.textTertiary, marginTop: 0 }]}>SHARED LINKS</Text>
                 <Pressable onPress={() => router.push({ pathname: '/chat/media', params: { id: fromChat, peerName: params.peerName ?? profile.firstName ?? '', tab: 'links' } } as Href)}>
                   <Text style={[styles.seeAll, { color: theme.brand }]}>See All</Text>
                 </Pressable>
               </View>
               {sharedLinks.slice(0, 2).map((l) => (
                 <Pressable key={l.id} style={[styles.card, { backgroundColor: theme.surface, marginTop: 8 }]} onPress={() => Linking.openURL(l.url).catch(() => {})}>
-                  <Text style={[styles.body, { color: theme.brand, marginTop: 0 }]} numberOfLines={1}>{l.url}</Text>
+                  <Text style={[styles.bodyText, { color: theme.brand, marginTop: 0 }]} numberOfLines={1}>{l.url}</Text>
                 </Pressable>
               ))}
             </>
@@ -781,6 +775,61 @@ export default function ProfileDetail() {
         </View>
       </ScrollView>
 
+      {/* Action bar */}
+      <Animated.View style={[styles.barWrap, animatedBarStyle]}>
+        <View
+          style={{
+            backgroundColor: '#000000',
+            borderTopWidth: 1,
+            borderTopColor: '#1C1C1E',
+            paddingBottom: insets.bottom,
+          }}
+        >
+          <View style={styles.bar}>
+            <View style={styles.inputWrap}>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Say something…"
+                placeholderTextColor="#8E8E93"
+                style={styles.input}
+                multiline
+                maxLength={1000}
+                blurOnSubmit={false}
+                textAlignVertical="center"
+                scrollEnabled
+              />
+              {draft.trim().length > 0 && (
+                <Pressable
+                  onPress={sendInline}
+                  disabled={sending}
+                  hitSlop={8}
+                  style={styles.sendBtn}
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color="#F5C518" />
+                  ) : (
+                    <Ionicons name="arrow-up-circle" size={30} color="#F5C518" />
+                  )}
+                </Pressable>
+              )}
+            </View>
+            <Pressable
+              style={styles.bottomIconBtn}
+              onPress={toggleTap}
+            >
+              <Ionicons name={liked ? 'flame' : 'flame-outline'} size={28} color="#F5C518" />
+            </Pressable>
+            <Pressable
+              style={styles.bottomIconBtn}
+              onPress={openChat}
+            >
+              <Ionicons name="chatbubble-outline" size={26} color="#F5C518" />
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
+
       <MediaViewer
         visible={viewerOpen}
         images={sharedImages}
@@ -788,71 +837,18 @@ export default function ProfileDetail() {
         onClose={() => setViewerOpen(false)}
       />
 
-      <KeyboardAvoidingView
-        style={styles.barWrap}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
-      >
-        <SafeAreaView
-          edges={['bottom']}
-          style={{
-            backgroundColor: theme.background,
-            borderTopWidth: 1,
-            borderTopColor: theme.border,
-            paddingBottom: Platform.OS === 'android' ? Math.max(0, kbInset - 24) : 0,
-          }}
-        >
-          <View style={styles.bar}>
-            <View style={[styles.inputWrap, { backgroundColor: theme.surfaceElevated }]}>
-              <TextInput
-                value={draft}
-                onChangeText={setDraft}
-                placeholder="Write a message…"
-                placeholderTextColor={theme.textTertiary}
-                style={[styles.input, { color: theme.textPrimary }]}
-                multiline
-                maxLength={1000}
-                blurOnSubmit={false}
-              />
-              {draft.trim().length > 0 && (
-                <Pressable onPress={sendInline} disabled={sending} hitSlop={8} style={styles.sendBtn}>
-                  {sending ? (
-                    <ActivityIndicator size="small" color={theme.brand} />
-                  ) : (
-                    <Ionicons name="arrow-up-circle" size={30} color={theme.brand} />
-                  )}
-                </Pressable>
-              )}
-            </View>
-            <Pressable style={[styles.iconAction, { backgroundColor: theme.surfaceElevated }]} onPress={toggleTap}>
-              <Ionicons name="flame" size={24} color={liked ? theme.brand : theme.textSecondary} />
-            </Pressable>
-            <Pressable onPress={openChat}>
-              <LinearGradient
-                colors={theme.gradientWarm}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.iconAction}
-              >
-                <Ionicons name="chatbubble" size={20} color="#fff" />
-              </LinearGradient>
-            </Pressable>
-          </View>
-        </SafeAreaView>
-      </KeyboardAvoidingView>
-
       {/* Action menu */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
-        <Pressable style={[styles.overlay, { backgroundColor: theme.overlay }]} onPress={closeMenu}>
+        <Pressable style={[styles.overlay, { backgroundColor: 'rgba(0,0,0,0.75)' }]} onPress={closeMenu}>
           {blockConfirming ? (
-            <Pressable style={[styles.menu, styles.confirmCard, { backgroundColor: theme.surface }]} onPress={() => {}}>
+            <Pressable style={[styles.menu, styles.confirmCard, { backgroundColor: '#1C1C1E' }]} onPress={() => {}}>
               <View style={[styles.confirmIconCircle, { backgroundColor: theme.error + '26' }]}>
                 <Ionicons name="ban" size={28} color={theme.error} />
               </View>
-              <Text style={[styles.confirmTitle, { color: theme.textPrimary }]}>
+              <Text style={[styles.confirmTitle, { color: '#FFFFFF' }]}>
                 Block {profile?.firstName ?? 'this person'}?
               </Text>
-              <Text style={[styles.confirmMessage, { color: theme.textSecondary }]}>
+              <Text style={[styles.confirmMessage, { color: '#8E8E93' }]}>
                 They won’t be able to see you or message you. This is mutual.
               </Text>
               {blockError ? (
@@ -860,11 +856,11 @@ export default function ProfileDetail() {
               ) : null}
               <View style={styles.confirmButtons}>
                 <Pressable
-                  style={[styles.confirmBtn, { backgroundColor: theme.surfaceElevated }]}
+                  style={[styles.confirmBtn, { backgroundColor: '#2C2C2E' }]}
                   onPress={closeMenu}
                   disabled={blocking}
                 >
-                  <Text style={[styles.confirmBtnText, { color: theme.textSecondary }]}>Cancel</Text>
+                  <Text style={[styles.confirmBtnText, { color: '#8E8E93' }]}>Cancel</Text>
                 </Pressable>
                 <Pressable
                   style={[styles.confirmBtn, { backgroundColor: theme.error + '1A' }]}
@@ -880,21 +876,16 @@ export default function ProfileDetail() {
               </View>
             </Pressable>
           ) : (
-            <View style={[styles.menu, { backgroundColor: theme.surface }]}>
+            <View style={[styles.menu, { backgroundColor: '#1C1C1E' }]}>
               <Pressable
                 style={styles.menuItem}
                 onPress={() => {
                   setMenuOpen(false);
-                  // Presenting a second native <Modal> (ReportSheet) in the same
-                  // tick this one is dismissing races the modal host on
-                  // iOS/Android — deferring keeps that one working. Block avoids
-                  // the race entirely by reusing this Modal instead (see
-                  // confirmBlock/doBlock above).
                   setTimeout(() => setReportOpen(true), 300);
                 }}
               >
-                <Ionicons name="flag-outline" size={20} color={theme.textPrimary} />
-                <Text style={[styles.menuText, { color: theme.textPrimary }]}>Report</Text>
+                <Ionicons name="flag-outline" size={20} color="#FFFFFF" />
+                <Text style={[styles.menuText, { color: '#FFFFFF' }]}>Report</Text>
               </Pressable>
               <Pressable style={styles.menuItem} onPress={confirmBlock}>
                 <Ionicons name="ban-outline" size={20} color={theme.error} />
@@ -930,18 +921,18 @@ export default function ProfileDetail() {
   );
 }
 
-function Stat({ theme, text }: { theme: any; text: string }) {
+function Stat({ text }: { text: string }) {
   return (
-    <View style={[styles.statPill, { backgroundColor: theme.surfaceElevated }]}>
-      <Text style={[styles.statText, { color: theme.textPrimary }]}>{text}</Text>
+    <View style={styles.statPill}>
+      <Text style={styles.statText}>{text}</Text>
     </View>
   );
 }
-function Badge({ theme, icon, label }: { theme: any; icon: any; label: string }) {
+function Badge({ icon, label }: { icon: any; label: string }) {
   return (
-    <View style={[styles.vBadge, { backgroundColor: theme.info + '22' }]}>
-      <Ionicons name={icon} size={13} color={theme.info} />
-      <Text style={[styles.vBadgeText, { color: theme.info }]}>{label}</Text>
+    <View style={styles.vBadge}>
+      <Ionicons name={icon} size={13} color="#00D26A" />
+      <Text style={styles.vBadgeText}>{label}</Text>
     </View>
   );
 }
@@ -957,84 +948,127 @@ function MediaPill({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={[styles.mediaPill, { backgroundColor: theme.surfaceElevated }]} onPress={onPress}>
-      <Ionicons name={icon} size={18} color={theme.brand} />
-      <Text style={[styles.mediaText, { color: theme.textPrimary }]}>{label}</Text>
-      <Ionicons name="play" size={14} color={theme.textSecondary} />
+    <Pressable style={styles.mediaPill} onPress={onPress}>
+      <Ionicons name={icon} size={18} color="#F5C518" />
+      <Text style={styles.mediaText}>{label}</Text>
+      <Ionicons name="play" size={14} color="#8E8E93" />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  root: { flex: 1, backgroundColor: '#000000' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   naTitle: { fontSize: FontSize.lg, fontFamily: DisplayFont.bold, fontWeight: '700' },
   naBtn: { marginTop: 8, height: 46, borderRadius: 999, paddingHorizontal: 28, alignItems: 'center', justifyContent: 'center' },
   naBtnText: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700' },
   noPhoto: { alignItems: 'center', justifyContent: 'center' },
-  heroTopScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
-  heroBottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 140 },
-  heroDots: { position: 'absolute', bottom: 14, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  heroTopScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: 100 },
+  heroDots: { position: 'absolute', bottom: 12, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
   heroDotActive: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
   heroDotInactive: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
   heroBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8 },
   heroRight: { flexDirection: 'row', gap: 10 },
-  circleBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  info: { padding: 20, gap: 6 },
+  circleBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+  info: { paddingHorizontal: 16, paddingTop: 14 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  name: { fontSize: FontSize.xxxl, fontFamily: DisplayFont.heavy, fontWeight: '800' },
-  age: { fontFamily: DisplayFont.regular, fontWeight: '400' },
-  planBadge: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  meta: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  name: { fontSize: 26, fontFamily: DisplayFont.heavy, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.3 },
+  age: { fontFamily: DisplayFont.regular, fontWeight: '400', color: '#FFFFFF' },
+  verifyTick: { marginLeft: 2 },
+  planBadge: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: 10 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  metaText: { fontSize: 14, fontFamily: FontFamily.medium, fontWeight: '600' },
+  distRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  distText: { fontSize: 14, fontFamily: FontFamily.medium, color: '#8E8E93', fontWeight: '500' },
   availRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  availChip: { height: 28, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  availChip: { height: 28, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 4, alignItems: 'center', justifyContent: 'center' },
   availChipText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
   verifyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  vBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  vBadgeText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
-  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  statPill: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
-  statText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
-  sectionLabel: { fontSize: FontSize.sm, fontFamily: DisplayFont.bold, fontWeight: '700', letterSpacing: 0.8, marginTop: 20 },
+  vBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,210,106,0.12)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  vBadgeText: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600', color: '#00D26A' },
+  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  statPill: { backgroundColor: '#1C1C1E', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  statText: { fontSize: 13, fontFamily: FontFamily.semibold, fontWeight: '600', color: '#FFFFFF' },
+  sectionWrap: { marginTop: 22, paddingHorizontal: 16 },
+  sectionHeader: { fontSize: 12.5, fontFamily: DisplayFont.bold, fontWeight: '700', color: '#8E8E93', letterSpacing: 1.2, marginBottom: 10, textTransform: 'uppercase' },
+  aboutCard: { backgroundColor: '#1C1C1E', borderRadius: 16, padding: 16 },
+  aboutText: { fontSize: 15, fontFamily: FontFamily.regular, color: '#FFFFFF', lineHeight: 22, fontWeight: '400' },
+  bodyText: { fontSize: 15, fontFamily: FontFamily.regular, color: '#EBEBF5', lineHeight: 22 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { backgroundColor: '#1C1C1E', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+  chipText: { fontSize: 14, fontFamily: FontFamily.medium, color: '#FFFFFF', fontWeight: '500' },
+  card: { backgroundColor: '#1C1C1E', borderRadius: 16, padding: 16, marginTop: 8 },
   compatLoadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  compatLoadingText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
-  compatCard: { borderRadius: 16, padding: 16, marginTop: 8, alignItems: 'center' },
-  compatScore: { fontSize: FontSize.hero, fontFamily: DisplayFont.heavy, fontWeight: '800' },
+  compatLoadingText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: '#8E8E93' },
+  compatCard: { backgroundColor: '#1C1C1E', borderRadius: 16, padding: 16, marginTop: 8, alignItems: 'center' },
+  compatScore: { fontSize: FontSize.hero, fontFamily: DisplayFont.heavy, fontWeight: '800', color: '#F5C518' },
   compatBreakdown: { marginTop: 10, gap: 8, width: '100%' },
   compatBreakdownRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  compatBreakdownText: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20 },
-  compatLockedCard: { marginTop: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 4 },
-  compatLockedTitle: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700', marginTop: 4 },
-  compatLockedSub: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
-  sharedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 },
-  seeAll: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600' },
-  sharedStrip: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  compatBreakdownText: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 20, color: '#FFFFFF' },
+  compatLockedCard: { backgroundColor: '#1C1C1E', marginTop: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 4 },
+  compatLockedTitle: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700', marginTop: 4, color: '#FFFFFF' },
+  compatLockedSub: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: '#8E8E93' },
+  sharedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, paddingHorizontal: 16 },
+  seeAll: { fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '600', color: '#F5C518' },
+  sharedStrip: { flexDirection: 'row', gap: 8, marginTop: 10, paddingHorizontal: 16 },
   sharedThumb: { width: 80, height: 80, borderRadius: 12 },
-  body: { fontSize: FontSize.md, fontFamily: FontFamily.regular, lineHeight: 22, marginTop: 6 },
-  card: { borderRadius: 16, padding: 14, marginTop: 8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  chip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
-  chipText: { fontSize: FontSize.md, fontFamily: FontFamily.medium },
-  promptQ: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
-  promptA: { fontSize: FontSize.lg, fontFamily: DisplayFont.semibold, fontWeight: '600', marginTop: 4 },
-  mediaPill: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, marginTop: 8 },
-  mediaText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, fontWeight: '600' },
+  promptQ: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: '#8E8E93' },
+  promptA: { fontSize: FontSize.lg, fontFamily: DisplayFont.semibold, fontWeight: '600', marginTop: 4, color: '#FFFFFF' },
+  mediaPill: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#1C1C1E', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, marginTop: 8 },
+  mediaText: { fontSize: FontSize.md, fontFamily: FontFamily.semibold, fontWeight: '600', color: '#FFFFFF' },
   barWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  bar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 24, paddingLeft: 16, paddingRight: 6, minHeight: 48 },
-  input: { flex: 1, fontSize: FontSize.md, fontFamily: FontFamily.regular, paddingVertical: 12, maxHeight: 110 },
-  sendBtn: { marginLeft: 4, alignItems: 'center', justifyContent: 'center' },
-  iconAction: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  inputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: '#1C1C1E',
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 6 : 4,
+    minHeight: 44,
+    maxHeight: 120,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: FontFamily.regular,
+    color: '#FFFFFF',
+    minHeight: 32,
+    maxHeight: 108,
+    paddingTop: Platform.OS === 'ios' ? 6 : 4,
+    paddingBottom: Platform.OS === 'ios' ? 6 : 4,
+    textAlignVertical: 'center',
+  },
+  sendBtn: {
+    marginLeft: 6,
+    marginBottom: Platform.OS === 'ios' ? 4 : 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomIconBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
   albumGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  lockedAlbumCard: { marginTop: 10, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 6 },
-  lockedAlbumTitle: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700' },
-  lockedAlbumSub: { fontSize: FontSize.sm, fontFamily: FontFamily.regular },
-  lockedAlbumBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 },
-  lockedAlbumBtnText: { color: '#fff', fontSize: FontSize.sm, fontFamily: FontFamily.semibold },
-  albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 14, overflow: 'hidden', justifyContent: 'flex-end' },
-  albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', backgroundColor: 'rgba(0,0,0,0.4)' },
+  lockedAlbumCard: { marginTop: 10, borderRadius: 16, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center', paddingVertical: 28, gap: 6 },
+  lockedAlbumTitle: { fontSize: FontSize.md, fontFamily: DisplayFont.bold, fontWeight: '700', color: '#FFFFFF' },
+  lockedAlbumSub: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: '#8E8E93' },
+  lockedAlbumBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999, backgroundColor: '#F5C518' },
+  lockedAlbumBtnText: { color: '#000', fontSize: FontSize.sm, fontFamily: FontFamily.semibold, fontWeight: '700' },
+  albumTile: { width: '31.5%', aspectRatio: 1, borderRadius: 14, overflow: 'hidden', justifyContent: 'flex-end', backgroundColor: '#1C1C1E' },
+  albumShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%', backgroundColor: 'rgba(0,0,0,0.5)' },
   albumMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 6 },
   albumName: { color: '#fff', fontSize: FontSize.sm, fontFamily: DisplayFont.bold, fontWeight: '700', flex: 1, textShadowColor: '#000', textShadowRadius: 3 },
   albumCount: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 },

@@ -48,6 +48,7 @@ export const forwardMessageSchema = z.object({
 
 export const listMessagesQuerySchema = z.object({
   before: z.coerce.date().optional(),
+  around: z.string().uuid().optional(),
   limit:  z.coerce.number().int().min(1).max(100).default(30),
 });
 
@@ -127,8 +128,8 @@ export async function listConversations(req: Request, res: Response): Promise<vo
 export async function listMessages(req: Request, res: Response): Promise<void> {
   const { conversationId } = req.params;
   const convo = await svc.getVisibleConversation(req.user!.sub, conversationId);
-  const { before, limit } = req.query as unknown as z.infer<typeof listMessagesQuerySchema>;
-  const { messages, hasMore, nextCursor } = await svc.listMessages(conversationId, before, limit, req.user!.sub);
+  const { before, around, limit } = req.query as unknown as z.infer<typeof listMessagesQuerySchema>;
+  const { messages, hasMore, nextCursor } = await svc.listMessages(conversationId, before, limit, req.user!.sub, around);
   const flags = svc.callFlags(convo, req.user!.sub);
   res.status(200).json({ messages, hasMore, nextCursor, ...flags, disappearingMessages: convo.disappearingMessages ?? null });
 }

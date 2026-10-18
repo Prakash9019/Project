@@ -32,6 +32,9 @@ function UserCardTileBase({
     .filter(Boolean)
     .slice(0, 2) as string[];
 
+  // Only show active time when not online (distance is displayed on profile screen)
+  const activeTime = !online && card.lastActiveAt ? card.lastActiveAt.trim() : null;
+
   return (
     <PressableScale
       style={[styles.tile, { width: size, height: size, backgroundColor: theme.backgroundTertiary }]}
@@ -91,12 +94,13 @@ function UserCardTileBase({
           </Text>
           {card.isVerified && <Ionicons name="checkmark-circle" size={13} color={theme.info} style={styles.tick} />}
         </View>
-        <View style={styles.metaRow}>
-          <Text numberOfLines={1} style={styles.meta}>
-            {card.distance}
-            {!online && card.lastActiveAt ? ` · ${card.lastActiveAt}` : ''}
-          </Text>
-        </View>
+        {activeTime ? (
+          <View style={styles.metaRow}>
+            <Text numberOfLines={1} style={styles.meta}>
+              {activeTime}
+            </Text>
+          </View>
+        ) : null}
         {chips.length > 0 && (
           <View style={styles.chips}>
             {chips.map((c) => (

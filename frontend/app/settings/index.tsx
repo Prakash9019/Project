@@ -22,6 +22,8 @@ import { useAuthStore } from '../../src/store/authStore';
 import { updateSettings, updateProfile, exportMyData, deleteAccount, logout as apiLogout } from '../../src/services/api';
 import { saveAndShareExport } from '../../src/utils/exportData';
 import { planAtLeast } from '../../src/lib/format';
+import { DiscreetSettingsModal } from '../../src/components/discreet/DiscreetSettingsModal';
+import { getDiscreetConfig, subscribeDiscreet, type DiscreetConfig } from '../../src/services/discreetService';
 import type { Plan, UserSettings, AiOptInFeatures } from '../../src/types/api';
 
 type SettingKey = keyof UserSettings;
@@ -45,6 +47,12 @@ export default function Settings() {
   const [deletePhrase, setDeletePhrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [discreetModalOpen, setDiscreetModalOpen] = useState(false);
+  const [discreetCfg, setDiscreetCfg] = useState<DiscreetConfig>(getDiscreetConfig());
+
+  useEffect(() => {
+    return subscribeDiscreet(setDiscreetCfg);
+  }, []);
 
   // Local toggle state seeded from the loaded user.
   const [toggles, setToggles] = useState<UserSettings>({});
@@ -296,7 +304,16 @@ export default function Settings() {
           <Group title="SAFETY" anchor="safety">
             <Toggle label="Block offensive language" settingKey="blockOffensiveLanguage" />
             <Toggle label="Require profile completeness to message" settingKey="requireProfileCompletenessToMessage" />
-            <Toggle label="Discreet mode" settingKey="disceetMode" />
+            <Pressable style={styles.actionRow} onPress={() => setDiscreetModalOpen(true)}>
+              <Ionicons name="shield-outline" size={20} color={theme.textPrimary} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.actionText, { color: theme.textPrimary }]}>Discreet Mode & App Icon</Text>
+                <Text style={{ fontSize: 12, color: theme.textTertiary, marginTop: 2 }}>
+                  {discreetCfg.enabled ? `Active · Disguise: ${discreetCfg.selectedIcon}` : 'Off'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.textTertiary} />
+            </Pressable>
             <Toggle label="Show orientation publicly" settingKey="showOrientationPublicly" />
           </Group>
 
@@ -388,6 +405,7 @@ export default function Settings() {
         </View>
       </Modal>
 
+      <DiscreetSettingsModal visible={discreetModalOpen} onClose={() => setDiscreetModalOpen(false)} />
       {alertConfig ? <CustomAlert visible onDismiss={hideAlert} {...alertConfig} /> : null}
     </SafeAreaView>
   );

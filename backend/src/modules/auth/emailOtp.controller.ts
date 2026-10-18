@@ -55,16 +55,39 @@ export async function sendEmailOtp(req: Request, res: Response): Promise<void> {
   // New code invalidates any prior attempt counter.
   await redis.del(RedisKeys.emailOtpAttempts(email));
 
-  if (!env.resend.apiKey && !env.isProd) {
-    // Dev convenience: no Resend key configured — log the code instead of sending.
+  if (!env.isProd) {
     // eslint-disable-next-line no-console
-    console.log(`[email-otp stub] ${email} -> ${code}`);
+    console.log(`[email-otp] Code for ${email} -> ${code}`);
+  }
+
+  if (!env.resend.apiKey) {
+    if (!env.isProd) {
+      // Dev convenience: no Resend key configured — log the code instead of sending.
+      // eslint-disable-next-line no-console
+      console.log(`[email-otp stub] ${email} -> ${code}`);
+    } else {
+      throw new Error('Email service not configured');
+    }
   } else {
-    await sendOtpEmail(email, code);
+    try {
+      await sendOtpEmail(email, code);
+    } catch (err: any) {
+      if (!env.isProd) {
+        // In local/dev environments, don't block testing if Resend rejects sandbox destination.
+        // eslint-disable-next-line no-console
+        console.warn(`[email-otp] Delivery failed (${err?.message}). Use code: ${code}`);
+      } else {
+        throw err;
+      }
+    }
   }
 
   logEvent({ event: 'email_otp_sent', email });
-  res.status(200).json({ message: 'Code sent', expiresInSeconds: env.emailOtp.ttlSeconds });
+  res.status(200).json({
+    message: 'Code sent',
+    expiresInSeconds: env.emailOtp.ttlSeconds,
+    ...(!env.isProd || env.otp.devReturn ? { devCode: code } : {}),
+  });
 }
 
 // ── POST /api/auth/email/verify-otp ───────────────────────

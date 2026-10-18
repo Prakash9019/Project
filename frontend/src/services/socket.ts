@@ -83,6 +83,26 @@ export function emitLocationUpdate(lat: number, lng: number): void {
   socket?.emit('location:update', { lat, lng });
 }
 
+/** Stream live location coordinates to a conversation or room channel. */
+export function emitLiveLocationUpdate(payload: {
+  conversationId?: string;
+  roomId?: string;
+  messageId: string;
+  lat: number;
+  lng: number;
+}): void {
+  socket?.emit('chat:live_location:update', payload);
+}
+
+/** Stop streaming live location in a conversation or room channel. */
+export function emitLiveLocationStop(payload: {
+  conversationId?: string;
+  roomId?: string;
+  messageId: string;
+}): void {
+  socket?.emit('chat:live_location:stop', payload);
+}
+
 /* ─────────────────────── Dating Rooms (Groups) ─────────────────────── */
 
 /** Join a room's socket channel to receive live messages/typing. */

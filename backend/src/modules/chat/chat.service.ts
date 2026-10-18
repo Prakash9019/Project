@@ -349,7 +349,7 @@ export async function listConversations(userId: string, folder: 'inbox' | 'reque
   }));
 }
 
-export async function listMessages(conversationId: string, before: Date | undefined, limit: number, viewerId: string) {
+export async function listMessages(conversationId: string, before: Date | undefined, limit: number, viewerId: string, around?: string) {
   // Determine which side the viewer is on so per-side "delete for me" flags apply.
   const convo = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -374,22 +374,61 @@ export async function listMessages(conversationId: string, before: Date | undefi
   // Disappearing-messages cutoff (filter only — no destructive delete).
   const cutoff = disappearingCutoff(convo?.disappearingMessages ?? null);
 
-  const raw = await prisma.message.findMany({
-    where: {
-      conversationId,
-      deletedAt: null,
-      ...(isA ? { deletedByA: false } : { deletedByB: false }),
-      ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
-      ...(before ? { createdAt: { lt: before } } : {}),
-    },
-    orderBy: { createdAt: 'desc' },
-    take: limit + 1,
-    include: { replyTo: true },
-  });
+  const baseFilter = {
+    conversationId,
+    deletedAt: null,
+    ...(isA ? { deletedByA: false } : { deletedByB: false }),
+    ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
+  };
 
-  const hasMore = raw.length > limit;
-  const slice = hasMore ? raw.slice(0, limit) : raw;
-  const nextCursor = hasMore ? slice[slice.length - 1].createdAt.toISOString() : null;
+  let slice: Awaited<ReturnType<typeof prisma.message.findMany>>;
+  let hasMore = false;
+  let nextCursor: string | null = null;
+
+  if (around) {
+    const targetMsg = await prisma.message.findUnique({
+      where: { id: around },
+      include: { replyTo: true },
+    });
+
+    if (targetMsg && targetMsg.conversationId === conversationId) {
+      const half = Math.max(5, Math.floor(limit / 2));
+      const [older, newer] = await Promise.all([
+        prisma.message.findMany({
+          where: { ...baseFilter, createdAt: { lt: targetMsg.createdAt } },
+          orderBy: { createdAt: 'desc' },
+          take: half,
+          include: { replyTo: true },
+        }),
+        prisma.message.findMany({
+          where: { ...baseFilter, createdAt: { gt: targetMsg.createdAt } },
+          orderBy: { createdAt: 'asc' },
+          take: half,
+          include: { replyTo: true },
+        }),
+      ]);
+      // Return newest-first (descending order) so frontend .reverse() handles it consistently
+      slice = [...newer.reverse(), targetMsg, ...older];
+      hasMore = older.length >= half;
+      nextCursor = older.length ? older[older.length - 1].createdAt.toISOString() : null;
+    } else {
+      slice = [];
+    }
+  } else {
+    const raw = await prisma.message.findMany({
+      where: {
+        ...baseFilter,
+        ...(before ? { createdAt: { lt: before } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      include: { replyTo: true },
+    });
+
+    hasMore = raw.length > limit;
+    slice = hasMore ? raw.slice(0, limit) : raw;
+    nextCursor = hasMore ? slice[slice.length - 1].createdAt.toISOString() : null;
+  }
   const reactionsByMsg = await reactionsByMessage(slice.map((m) => m.id), viewerId);
   const starredRows = await prisma.starredMessage.findMany({
     where: { userId: viewerId, messageId: { in: slice.map((m) => m.id) } },

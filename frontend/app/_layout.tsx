@@ -7,10 +7,10 @@ try {
 } catch (e) {
   console.warn('[Firebase] Native module not available — rebuild the app with `npx expo run:android` or `npx expo run:ios`:', e);
 }
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useNavigationContainerRef } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { AppState, View } from 'react-native';
+import { AppState, View, StyleSheet } from 'react-native';
 import * as Location from 'expo-location';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -51,10 +51,16 @@ import {
   showRoomCallToast,
 } from '../src/lib/toast';
 import { loadNotificationPrefs, type NotificationPreferences } from './settings/notifications';
+import { getDiscreetConfig, subscribeDiscreet, setCamouflageMode, type DiscreetConfig } from '../src/services/discreetService';
+import { DecoyCalculator } from '../src/components/discreet/DecoyCalculator';
 import type { UserCard, RoomMessageCard } from '../src/types/api';
 
 /** Human-friendly one-line preview for a message toast, by message type. */
 function messagePreviewFor(type: string | undefined, content: string | undefined): string {
+  const discreet = getDiscreetConfig();
+  if (discreet.enabled && discreet.hideNotificationPreviews) {
+    return 'New message';
+  }
   switch (type) {
     case 'photo':
     case 'expiring_photo':
@@ -77,6 +83,12 @@ function RootStack() {
   const refreshUser = useAuthStore((s) => s.refreshUser);
   const navContainerRef = useNavigationContainerRef();
   const appState = useRef(AppState.currentState);
+
+  const [discreetConfig, setDiscreetConfig] = useState<DiscreetConfig>(getDiscreetConfig());
+
+  useEffect(() => {
+    return subscribeDiscreet(setDiscreetConfig);
+  }, []);
 
   // Expose the router's navigation container so toast logic can read the
   // focused route/params and suppress notifications for the screen you're on.
@@ -220,11 +232,12 @@ function RootStack() {
         if (notifPrefs.current && !notifPrefs.current.messages) return;
         const convo = useChatStore.getState().conversations.find((c) => c.id === p.conversationId);
         const peer = convo?.peer;
+        const mask = discreetConfig.enabled && discreetConfig.hideNotificationPreviews;
         showMessageToast({
           conversationId: p.conversationId,
-          senderName: peer?.firstName ?? 'Someone',
-          senderPhoto: peer?.profilePhoto ?? null,
-          messagePreview: messagePreviewFor(p.type, p.content),
+          senderName: mask ? 'New notification' : (peer?.firstName ?? 'Someone'),
+          senderPhoto: mask ? null : (peer?.profilePhoto ?? null),
+          messagePreview: mask ? 'You have a new message' : messagePreviewFor(p.type, p.content),
           timeAgo: 'now',
           isOnline: peer?.activity?.online ?? true,
         });
@@ -366,6 +379,12 @@ function RootStack() {
           <Stack.Screen name="create-group/members" />
           <Stack.Screen name="create-group/details" />
         </Stack>
+        {/* Camouflage Decoy screen */}
+        {discreetConfig.isCamouflaged ? (
+          <View style={[StyleSheet.absoluteFill, { zIndex: 999999 }]}>
+            <DecoyCalculator onUnlock={() => setCamouflageMode(false)} />
+          </View>
+        ) : null}
         {/* Incoming calls now surface as a 'call_incoming' toast (with
             Accept/Decline) via the socket listener above — no separate sheet. */}
         <OfflineBanner />

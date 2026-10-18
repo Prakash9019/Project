@@ -41,8 +41,11 @@ export default function EmailLogin() {
         router.replace('/(tabs)');
         return;
       }
-      await sendEmailOtp(trimmed);
-      router.push({ pathname: '/onboarding/email-code', params: { email: trimmed } });
+      const res = await sendEmailOtp(trimmed);
+      router.push({
+        pathname: '/onboarding/email-code',
+        params: { email: trimmed, ...(res.devCode ? { devCode: res.devCode } : {}) },
+      });
     } catch (e: unknown) {
       const err = e as ApiError;
       if (err.status === 429) setError('Too many requests. Please wait a moment and try again.');

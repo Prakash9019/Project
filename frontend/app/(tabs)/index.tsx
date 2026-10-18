@@ -422,7 +422,9 @@ export default function Browse() {
           onPress={() => router.push('/map-explore')}
         >
           <Ionicons name="search" size={18} color={theme.textTertiary} />
-          <Text style={[styles.searchText, { color: theme.textTertiary }]}>Explore more profiles</Text>
+          <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.searchText, { color: theme.textTertiary }]}>
+            Explore more profiles
+          </Text>
         </Pressable>
         <Pressable style={[styles.iconChip, { backgroundColor: theme.surfaceElevated }]} onPress={() => router.push('/filters')}>
           <Ionicons name="options-outline" size={18} color={theme.textPrimary} />
@@ -675,8 +677,8 @@ const styles = StyleSheet.create({
   avatarBtn: { width: 38, height: 38 },
   avatar: { width: 38, height: 38, borderRadius: 19 },
   avatarDot: { position: 'absolute', right: 0, bottom: 0, width: 11, height: 11, borderRadius: 6, borderWidth: 2 },
-  search: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, height: 40, paddingHorizontal: 16 },
-  searchText: { fontSize: 15, fontFamily: FontFamily.regular },
+  search: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, height: 40, paddingHorizontal: 12, overflow: 'hidden' },
+  searchText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular },
   iconChip: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   filterBadge: { position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   filterBadgeText: { color: '#fff', fontSize: 10, fontFamily: FontFamily.heavy, fontWeight: '800' },

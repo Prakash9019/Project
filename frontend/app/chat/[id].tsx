@@ -68,12 +68,15 @@ import { AudioPlayer } from '../../src/components/chat/AudioPlayer';
 import { VideoBubble } from '../../src/components/chat/VideoBubble';
 import { LinkPreview } from '../../src/components/chat/LinkPreview';
 import { AiIcebreakers } from '../../src/components/chat/AiIcebreakers';
+import { LiveLocationCard, isLiveLocationContent } from '../../src/components/chat/LiveLocationCard';
+import { startLiveLocationStreaming, stopLiveLocationStreaming } from '../../src/services/liveLocationService';
 import { measureThumbnail } from '../../src/utils/measureThumbnail';
 import type { GifResult } from '../../src/components/rooms/GifPicker';
 import { uploadToR2 } from '../../src/utils/uploadToR2';
 import { generateAndUploadVideoThumbnail } from '../../src/utils/videoThumbnail';
 import {
   listMessages,
+  searchConversationMessages,
   markConversationRead,
   sendMessage,
   initiateCall,
@@ -328,6 +331,8 @@ type ChatMessageRowProps = {
   isMenuTarget: boolean;
   /** Resolved preview of the replied-to message (thumbnail / voice / text). */
   replyPreview: QuotePreview | null;
+  streamedCoords?: { lat: number; lng: number; updatedAt?: string; isEnded?: boolean };
+  onStopLiveSharing?: (item: Message) => void;
 };
 
 /**
@@ -363,6 +368,8 @@ function ChatMessageRowBase({
   isSelected,
   isMenuTarget,
   replyPreview,
+  streamedCoords,
+  onStopLiveSharing,
 }: ChatMessageRowProps) {
   const { theme } = useTheme();
 
@@ -513,6 +520,20 @@ function ChatMessageRowBase({
           </Pressable>
         );
       }
+    }
+
+    // Live Location card: structured content '📍LIVE label|lat|lng|expiresAt|status|optionalComment'
+    if (item.type === 'text' && isLiveLocationContent(item.content)) {
+      return (
+        <LiveLocationCard
+          content={item.content ?? ''}
+          messageId={item.id}
+          mine={mine}
+          streamedCoords={streamedCoords}
+          onStopSharing={onStopLiveSharing ? () => onStopLiveSharing(item) : undefined}
+          onLongPress={() => onLongPress(item)}
+        />
+      );
     }
 
     // Location card: a text message with structured content '📍 label|lat|lng'.
@@ -697,13 +718,13 @@ function ChatMessageRowBase({
     ) : null;
 
   // WhatsApp-style meta: rendered INSIDE the bubble (bottom-right) for text
-  // bubbles, below it for media-only bubbles. Colors adapt to the gradient.
+  // bubbles, floating translucent badge inside media-only bubbles. Colors adapt.
   const metaOnGradient = mine && !mediaOnly;
-  const metaMuted = metaOnGradient ? 'rgba(255,255,255,0.7)' : theme.textTertiary;
+  const metaMuted = mediaOnly ? '#ffffff' : (metaOnGradient ? 'rgba(255,255,255,0.7)' : theme.textTertiary);
   const metaNode = (
-    <View style={[styles.metaRow, mediaOnly ? null : styles.metaInBubble]}>
+    <View style={[styles.metaRow, mediaOnly ? styles.mediaMetaBadge : styles.metaInBubble]}>
       {item.isStarred && !item.isUnsent && (
-        <Ionicons name="star" size={11} color={metaOnGradient ? '#fff' : theme.brand} style={{ marginRight: 4 }} />
+        <Ionicons name="star" size={11} color={mediaOnly || metaOnGradient ? '#fff' : theme.brand} style={{ marginRight: 4 }} />
       )}
       <Text style={[styles.time, { color: metaMuted }]}>{clockTime(item.createdAt)}</Text>
       {showDisappearing && !item.isUnsent && (
@@ -752,23 +773,25 @@ function ChatMessageRowBase({
           </View>
         )}
         {mediaOnly ? (
-          <View style={[styles.mediaBubble, highlightStyle]}>{body}</View>
+          <View style={[styles.mediaBubble, highlightStyle]}>
+            {body}
+            {metaNode}
+          </View>
         ) : mine ? (
-          <LinearGradient colors={theme.gradientWarm} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { borderBottomRightRadius: 4 }, highlightStyle]}>
+          <LinearGradient colors={theme.gradientWarm} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { borderTopRightRadius: 4 }, highlightStyle]}>
             {quote}
             {body}
             {translationNode}
             {metaNode}
           </LinearGradient>
         ) : (
-          <View style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { backgroundColor: theme.receivedBubble, borderWidth: 0.5, borderColor: theme.receivedBubbleBorder, borderBottomLeftRadius: 4 }, highlightStyle]}>
+          <View style={[styles.bubble, isViewOnce(item) ? styles.snapBubble : null, { backgroundColor: theme.receivedBubble, borderWidth: 0.5, borderColor: theme.receivedBubbleBorder, borderTopLeftRadius: 4 }, highlightStyle]}>
             {quote}
             {body}
             {translationNode}
             {metaNode}
           </View>
         )}
-        {mediaOnly ? metaNode : null}
         {item.reactions.length > 0 && (
           <View style={[styles.reactionsRow, mine ? { justifyContent: 'flex-end' } : null]}>
             {item.reactions.map((r) => (
@@ -849,7 +872,8 @@ const ChatMessageRow = memo(ChatMessageRowBase, (prev, next) => {
     prev.isMenuTarget === next.isMenuTarget &&
     prev.replyPreview?.kind === next.replyPreview?.kind &&
     prev.replyPreview?.thumbUrl === next.replyPreview?.thumbUrl &&
-    prev.replyPreview?.label === next.replyPreview?.label
+    prev.replyPreview?.label === next.replyPreview?.label &&
+    prev.streamedCoords === next.streamedCoords
   );
 });
 
@@ -952,6 +976,9 @@ export default function Chat() {
   const [reportOpen, setReportOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [backendMatches, setBackendMatches] = useState<Message[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Index into `matchIds` of the match currently navigated to (WhatsApp-style
   // "3 of 12" up/down navigation). null = still browsing the results panel.
   const [searchNav, setSearchNav] = useState<number | null>(null);
@@ -960,6 +987,9 @@ export default function Chat() {
   const [pinnedDismissed, setPinnedDismissed] = useState(false);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [translatingIds, setTranslatingIds] = useState<Record<string, boolean>>({});
+  const [liveStreamMap, setLiveStreamMap] = useState<
+    Record<string, { lat: number; lng: number; updatedAt?: string; isEnded?: boolean }>
+  >({});
   const [reactionDetailsFor, setReactionDetailsFor] = useState<string | null>(null);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [disappearing, setDisappearing] = useState<'24h' | '7d' | '90d' | null>(null);
@@ -1024,10 +1054,50 @@ export default function Chat() {
     [messages, pinnedDismissed],
   );
 
-  // Normalized messages for the search panel (text / media / links / documents).
+  // Debounced backend full-history search across un-paginated past conversations.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!searchOpen || !q) {
+      setBackendMatches([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await searchConversationMessages(conversationId, { q, limit: 50 });
+        setBackendMatches(res.messages);
+      } catch {
+        // Fallback to loaded memory matches
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchOpen, searchQuery, conversationId]);
+
+  // Combine loaded in-memory messages with full-history backend search results
+  const allSearchMessages = useMemo(() => {
+    if (backendMatches.length === 0) return messages;
+    const map = new Map<string, Message>();
+    messages.forEach((m) => map.set(m.id, m));
+    backendMatches.forEach((m) => {
+      if (!map.has(m.id)) map.set(m.id, m);
+    });
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+  }, [messages, backendMatches]);
+
+  // Normalized messages for the search panel across FULL history (text / media / links / documents).
   const searchItems = useMemo<SearchMessage[]>(
     () =>
-      messages.map((m) => ({
+      allSearchMessages.map((m) => ({
         id: m.id,
         content: m.isUnsent ? null : m.content,
         createdAt: m.createdAt,
@@ -1036,28 +1106,47 @@ export default function Chat() {
         senderName: m.senderId === me?.id ? 'You' : peerName || 'Someone',
         isDeleted: m.isUnsent,
       })),
-    [messages, me?.id, peerName],
+    [allSearchMessages, me?.id, peerName],
   );
 
-  // IDs of messages matching the search query, in chronological order.
+  // IDs of messages matching the search query across FULL history, in chronological order.
   const matchIds = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [] as string[];
-    return messages.filter((m) => !m.isUnsent && m.content?.toLowerCase().includes(q)).map((m) => m.id);
-  }, [messages, searchQuery]);
+    return allSearchMessages.filter((m) => !m.isUnsent && m.content?.toLowerCase().includes(q)).map((m) => m.id);
+  }, [allSearchMessages, searchQuery]);
 
   const scrollAndHighlight = useCallback(
-    (id: string) => {
-      // `invertedRows` is the array actually handed to FlashList as `data` — its
-      // index for a given message is already correct for the inverted list (the
-      // newest message sits at index 0), so no reversal is needed here.
-      const rowIndex = invertedRows.findIndex((r) => r.kind === 'message' && r.message.id === id);
+    async (id: string) => {
+      let rowIndex = invertedRows.findIndex((r) => r.kind === 'message' && r.message.id === id);
+
+      // If the target message is in un-paginated past history, fetch surrounding context!
+      if (rowIndex < 0) {
+        try {
+          suppressAutoScroll.current = true;
+          const res = await listMessages(conversationId, { around: id, limit: 30 });
+          if (res.messages.length > 0) {
+            setMessages((prev) => {
+              const map = new Map<string, Message>();
+              prev.forEach((m) => map.set(m.id, m));
+              res.messages.forEach((m) => map.set(m.id, m));
+              return Array.from(map.values()).sort(
+                (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+              );
+            });
+            await new Promise((r) => setTimeout(r, 200));
+          }
+        } catch {}
+      }
+
+      // Re-find row index in data array
+      const currentRows = buildRows(messages, me?.id);
+      const currentInverted = [...currentRows].reverse();
+      rowIndex = currentInverted.findIndex((r) => r.kind === 'message' && r.message.id === id);
+
       if (rowIndex >= 0) {
         suppressAutoScroll.current = true;
         listRef.current?.scrollToIndex({ index: rowIndex, animated: true, viewPosition: 0.5 });
-        // Keep auto-scroll suppressed past the highlight clear below: removing the
-        // highlight border resizes the row → fires onContentSizeChange, which would
-        // otherwise snap the list back to the bottom. Re-enable only after that.
         setTimeout(() => {
           suppressAutoScroll.current = false;
         }, 1800);
@@ -1066,7 +1155,7 @@ export default function Chat() {
       if (highlightTimer.current) clearTimeout(highlightTimer.current);
       highlightTimer.current = setTimeout(() => setHighlightId(null), 1500);
     },
-    [invertedRows],
+    [invertedRows, conversationId, messages, me?.id],
   );
 
   // Navigate to a specific match while KEEPING the search bar open (up/down
@@ -1356,6 +1445,21 @@ export default function Chat() {
         setMessages((prev) => prev.map((m) => (m.id === p.messageId ? { ...m, isPinned: p.isPinned } : m)));
       };
 
+      const onLiveUpdate = (p: { conversationId?: string; messageId: string; lat: number; lng: number; updatedAt: string }) => {
+        if (p.conversationId && p.conversationId !== conversationId) return;
+        setLiveStreamMap((prev) => ({
+          ...prev,
+          [p.messageId]: { lat: p.lat, lng: p.lng, updatedAt: p.updatedAt },
+        }));
+      };
+      const onLiveStop = (p: { conversationId?: string; messageId: string }) => {
+        if (p.conversationId && p.conversationId !== conversationId) return;
+        setLiveStreamMap((prev) => ({
+          ...prev,
+          [p.messageId]: { ...(prev[p.messageId] ?? { lat: 0, lng: 0 }), isEnded: true },
+        }));
+      };
+
       socket.on('message.created', onCreated);
       socket.on('message.pinned', onPinned);
       socket.on('message.read', onRead);
@@ -1366,6 +1470,8 @@ export default function Chat() {
       socket.on('call.enabled', onCallEnabled);
       socket.on('typing', onTyping);
       socket.on('message.reaction', onReaction);
+      socket.on('chat:live_location:update', onLiveUpdate);
+      socket.on('chat:live_location:stop', onLiveStop);
 
       cleanup = () => {
         socket.off('message.created', onCreated);
@@ -1378,6 +1484,8 @@ export default function Chat() {
         socket.off('call.enabled', onCallEnabled);
         socket.off('typing', onTyping);
         socket.off('message.reaction', onReaction);
+        socket.off('chat:live_location:update', onLiveUpdate);
+        socket.off('chat:live_location:stop', onLiveStop);
       };
     })();
     return () => cleanup();
@@ -1419,7 +1527,7 @@ export default function Chat() {
     if (me && conversationId) emitTyping(conversationId, me.id, false);
   };
 
-  const postMessage = async (body: Parameters<typeof sendMessage>[1], rethrow = false) => {
+  const postMessage = async (body: Parameters<typeof sendMessage>[1], rethrow = false): Promise<Message | undefined> => {
     if (!conversationId || sending) return;
     setSending(true);
     setBanner(null);
@@ -1430,6 +1538,7 @@ export default function Chat() {
       setAudioEnabled(audioCallEnabled);
       setVideoEnabled(videoCallEnabled);
       fetchConversations('inbox', true).catch(() => {});
+      return msg as Message;
     } catch (e) {
       const err = e as ApiError;
       if (err.status === 451) setBanner('Your message is under review.');
@@ -1592,8 +1701,63 @@ export default function Chat() {
     }
   };
 
-  const handleSendLocationCard = (lat: number, lng: number, label: string) =>
-    postMessage({ type: 'text', content: `📍 ${label}|${lat}|${lng}` });
+  const handleSendLocationCard = (lat: number, lng: number, label: string) => {
+    void postMessage({ type: 'text', content: `📍 ${label}|${lat}|${lng}` });
+  };
+
+  const handleSendLiveLocation = async (
+    lat: number,
+    lng: number,
+    label: string,
+    durationMinutes: number,
+    comment?: string
+  ) => {
+    setSending(true);
+    setBanner(null);
+    try {
+      const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
+      const content = `📍LIVE ${label}|${lat}|${lng}|${expiresAt}|active${comment ? `|${comment}` : ''}`;
+      const sent = await postMessage({ type: 'text', content });
+      if (sent?.id) {
+        await startLiveLocationStreaming({
+          messageId: sent.id,
+          conversationId,
+          durationMinutes,
+          label,
+        });
+      }
+    } catch (e) {
+      setBanner((e as ApiError).message ?? 'Could not share live location');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleStopLiveSharing = (item: Message) => {
+    confirm(
+      'Stop Sharing Live Location?',
+      'Your real-time location will no longer be shared in this chat.',
+      async () => {
+        stopLiveLocationStreaming(item.id);
+        setLiveStreamMap((prev) => ({
+          ...prev,
+          [item.id]: { ...(prev[item.id] ?? { lat: 0, lng: 0 }), isEnded: true },
+        }));
+        if (item.content) {
+          const updatedContent = item.content.replace('|active', '|ended');
+          try {
+            await editMessage(conversationId, item.id, updatedContent);
+            setMessages((prev) =>
+              prev.map((m) => (m.id === item.id ? { ...m, content: updatedContent } : m))
+            );
+          } catch {
+            /* ignore error if offline */
+          }
+        }
+      },
+      { destructive: true, confirmLabel: 'Stop Sharing' }
+    );
+  };
 
   const handleEditConfirm = (messageId: string, content: string) => saveEdit(messageId, content);
 
@@ -2246,10 +2410,12 @@ export default function Chat() {
           isSelected={selectedMessageIds.has(item.id)}
           isMenuTarget={menuMessage?.id === item.id}
           replyPreview={item.replyTo ? quotePreviewFor(item.replyTo) : null}
+          streamedCoords={liveStreamMap[item.id]}
+          onStopLiveSharing={handleStopLiveSharing}
         />
       </View>
     );
-  }, [theme, invertedRows, me?.id, peerName, highlightId, searchOpen, searchNav, searchQuery, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openMediaViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds, menuMessage?.id]);
+  }, [theme, invertedRows, me?.id, peerName, highlightId, searchOpen, searchNav, searchQuery, translations, disappearing, canReadReceipts, onLongPressMessage, onSwipeReply, onReact, openMediaViewer, openViewOnce, retryFailedMessage, onTapMessage, jumpToMessage, isSelecting, selectedMessageIds, menuMessage?.id, liveStreamMap]);
 
   const CallButton = ({ type }: { type: 'audio' | 'video' }) => {
     const { enabled, tip } = callState(type);
@@ -2345,7 +2511,9 @@ export default function Chat() {
           }}
           style={[styles.searchInput, { color: theme.textPrimary }]}
         />
-        {searchQuery.trim().length > 0 ? (
+        {searchLoading ? (
+          <ActivityIndicator size="small" color={theme.brand} style={{ marginRight: 6 }} />
+        ) : searchQuery.trim().length > 0 ? (
           <Text style={[styles.searchCount, { color: theme.textTertiary }]}>
             {searchNav == null
               ? `${matchIds.length} found`
@@ -2509,6 +2677,8 @@ export default function Chat() {
           <SearchPanel
             query={searchQuery}
             messages={searchItems}
+            conversationId={conversationId}
+            loading={searchLoading}
             onJumpToMessage={jumpToMessage}
             onOpenMedia={openMediaViewer}
           />
@@ -2611,6 +2781,7 @@ export default function Chat() {
           onSendAudioFile={pickAndSendAudio}
           onSendGif={sendGif}
           onSendLocation={handleSendLocationCard}
+          onSendLiveLocation={handleSendLiveLocation}
           onEditConfirm={handleEditConfirm}
           onSendViewOnce={() => pickAndSendPhoto(true)}
           onShareAlbum={openAlbumPicker}
@@ -3005,6 +3176,18 @@ const styles = StyleSheet.create({
   photoCaption: { fontSize: FontSize.md, fontFamily: FontFamily.regular, paddingHorizontal: 10, paddingTop: 6, paddingBottom: 2, maxWidth: 260 },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3, marginHorizontal: 4 },
   metaInBubble: { alignSelf: 'flex-end', marginTop: 1, marginHorizontal: 0, marginLeft: 10 },
+  mediaMetaBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
   retryRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   retryText: { fontSize: FontSize.xs, fontFamily: FontFamily.semibold, marginLeft: 1 },
   time: { fontSize: FontSize.xs, fontFamily: FontFamily.regular },

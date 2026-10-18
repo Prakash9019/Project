@@ -51,14 +51,17 @@ export function LocationPicker({
   visible,
   onClose,
   onSendLocation,
+  onSendLiveLocation,
 }: {
   visible: boolean;
   onClose: () => void;
   onSendLocation: (lat: number, lng: number, label: string) => void;
+  onSendLiveLocation?: (lat: number, lng: number, label: string, durationMinutes: number, comment?: string) => void;
 }) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
+  const [busyLive, setBusyLive] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -69,12 +72,22 @@ export function LocationPicker({
   const [mapOpen, setMapOpen] = useState(false);
   const [region, setRegion] = useState<Region>(DEFAULT_REGION);
 
+  // Live location modal state
+  const [liveModalOpen, setLiveModalOpen] = useState(false);
+  const [liveDuration, setLiveDuration] = useState<number>(60); // 60 min default
+  const [liveComment, setLiveComment] = useState('');
+  const [liveError, setLiveError] = useState<string | null>(null);
+
   const reset = () => {
     setSearchOpen(false);
     setQuery('');
     setResults([]);
     setBusy(false);
+    setBusyLive(false);
     setLocationError(null);
+    setLiveModalOpen(false);
+    setLiveComment('');
+    setLiveError(null);
   };
 
   const close = () => {
@@ -85,6 +98,31 @@ export function LocationPicker({
   const send = (lat: number, lng: number, label: string) => {
     onSendLocation(lat, lng, label);
     close();
+  };
+
+  const sendLive = async () => {
+    setBusyLive(true);
+    setLiveError(null);
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!perm.granted) {
+        setLiveError('Location permission needed. Please allow access.');
+        setBusyLive(false);
+        return;
+      }
+      const pos = await getPositionWithTimeout();
+      const { latitude, longitude } = pos.coords;
+      const label = await labelFor(latitude, longitude);
+      if (onSendLiveLocation) {
+        onSendLiveLocation(latitude, longitude, label, liveDuration, liveComment.trim() || undefined);
+      } else {
+        onSendLocation(latitude, longitude, `Live Location (${liveDuration}m)`);
+      }
+      close();
+    } catch (e) {
+      setLiveError('Could not get current GPS coordinates. Try again.');
+      setBusyLive(false);
+    }
   };
 
   const sendCurrent = async () => {
@@ -201,6 +239,17 @@ export function LocationPicker({
           </View>
         ) : null}
 
+        {/* Live location */}
+        <Row
+          icon="radio"
+          iconColor="#00D26A"
+          label="Share Live Location"
+          badge="Live"
+          onPress={() => setLiveModalOpen(true)}
+          busy={busyLive}
+          theme={theme}
+        />
+
         {/* Current location */}
         <Row icon="navigate" iconColor={theme.success} label="Send Current Location" onPress={sendCurrent} busy={busy} theme={theme} />
         {locationError ? (
@@ -222,6 +271,103 @@ export function LocationPicker({
         </Pressable>
       </Pressable>
     </Modal>
+
+      {/* Live Location Duration Picker Modal */}
+      <Modal visible={liveModalOpen} transparent animationType="slide" onRequestClose={() => setLiveModalOpen(false)}>
+        <Pressable style={[styles.overlay, { backgroundColor: theme.overlay }]} onPress={() => setLiveModalOpen(false)}>
+          <Pressable
+            style={[styles.content, { backgroundColor: theme.surface, paddingBottom: insets.bottom + spacing.xl }]}
+            onPress={() => {}}
+          >
+            <View style={styles.handle} />
+            <View style={styles.liveHeaderRow}>
+              <View style={[styles.livePulseCircle, { backgroundColor: '#00D26A20' }]}>
+                <Ionicons name="radio" size={24} color="#00D26A" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.title, { color: theme.textPrimary, marginBottom: 2 }]}>Share Live Location</Text>
+                <Text style={[styles.liveSub, { color: theme.textSecondary }]}>
+                  Participants will see your real-time location. You can stop sharing at any time.
+                </Text>
+              </View>
+            </View>
+
+            {/* Duration chips */}
+            <Text style={[styles.sectionHeading, { color: theme.textTertiary }]}>SHARE FOR</Text>
+            <View style={styles.durationRow}>
+              {[
+                { label: '15 mins', value: 15 },
+                { label: '1 hour', value: 60 },
+                { label: '8 hours', value: 480 },
+              ].map((d) => {
+                const active = liveDuration === d.value;
+                return (
+                  <Pressable
+                    key={d.value}
+                    style={[
+                      styles.durationChip,
+                      {
+                        backgroundColor: active ? theme.brand : theme.surfaceElevated,
+                        borderColor: active ? theme.brand : theme.border,
+                      },
+                    ]}
+                    onPress={() => setLiveDuration(d.value)}
+                  >
+                    <Text
+                      style={[
+                        styles.durationText,
+                        { color: active ? theme.textInverse : theme.textPrimary, fontWeight: active ? '700' : '500' },
+                      ]}
+                    >
+                      {d.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Comment input */}
+            <View style={[styles.commentWrap, { backgroundColor: theme.inputBackground, borderColor: theme.border }]}>
+              <Ionicons name="chatbubble-ellipses-outline" size={18} color={theme.textTertiary} />
+              <TextInput
+                value={liveComment}
+                onChangeText={setLiveComment}
+                placeholder="Add a comment… (optional)"
+                placeholderTextColor={theme.textTertiary}
+                style={[styles.commentInput, { color: theme.textPrimary }]}
+                maxLength={60}
+              />
+            </View>
+
+            {liveError ? (
+              <Text style={[styles.errorText, { color: theme.error, marginTop: spacing.sm }]}>{liveError}</Text>
+            ) : null}
+
+            {/* Start Sharing CTA */}
+            <Pressable
+              onPress={sendLive}
+              disabled={busyLive}
+              style={{ marginTop: spacing.lg }}
+            >
+              <LinearGradient
+                colors={theme.gradientWarm}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.mapSendBtn}
+              >
+                {busyLive ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="navigate" size={18} color="#fff" />
+                    <Text style={styles.mapSendText}>Start Live Sharing</Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Pin-on-map picker */}
       <Modal visible={mapOpen} animationType="slide" onRequestClose={() => setMapOpen(false)}>
@@ -260,6 +406,7 @@ function Row({
   icon,
   iconColor,
   label,
+  badge,
   onPress,
   busy,
   theme,
@@ -267,6 +414,7 @@ function Row({
   icon: React.ComponentProps<typeof Ionicons>['name'];
   iconColor: string;
   label: string;
+  badge?: string;
   onPress: () => void;
   busy?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -278,6 +426,12 @@ function Row({
         <Ionicons name={icon} size={20} color={iconColor} />
       </View>
       <Text style={[styles.rowLabel, { color: theme.textPrimary, flex: 1 }]}>{label}</Text>
+      {badge ? (
+        <View style={styles.liveBadge}>
+          <View style={styles.liveGreenDot} />
+          <Text style={styles.liveBadgeText}>{badge}</Text>
+        </View>
+      ) : null}
       {busy ? <ActivityIndicator size="small" color={theme.brand} /> : null}
     </Pressable>
   );
@@ -303,4 +457,18 @@ const styles = StyleSheet.create({
   mapFooter: { padding: spacing.lg },
   mapSendBtn: { height: 52, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center' },
   mapSendText: { color: '#fff', fontSize: FontSize.md, fontFamily: FontFamily.bold },
+
+  // Live Location Sheet Styles
+  liveHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, marginBottom: spacing.lg },
+  livePulseCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  liveSub: { fontSize: 13, fontFamily: FontFamily.regular, lineHeight: 18 },
+  sectionHeading: { fontSize: 11, fontFamily: FontFamily.semibold, letterSpacing: 0.8, marginBottom: spacing.sm },
+  durationRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
+  durationChip: { flex: 1, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  durationText: { fontSize: 13, fontFamily: FontFamily.medium },
+  commentWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, height: 48, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: spacing.md },
+  commentInput: { flex: 1, fontSize: FontSize.sm, fontFamily: FontFamily.regular },
+  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,210,106,0.15)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 },
+  liveGreenDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#00D26A' },
+  liveBadgeText: { fontSize: 11, fontFamily: FontFamily.bold, color: '#00D26A', textTransform: 'uppercase' },
 });
