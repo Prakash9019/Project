@@ -114,9 +114,10 @@ export async function requestCallPermissions(isVideo: boolean): Promise<boolean>
     }
   } catch (err) {
     console.warn('[Agora] Error requesting runtime call permissions:', err);
+    return false;
   }
 
-  return true;
+  return false;
 }
 
 /** Create + initialize the engine, register handlers, set role/profile. */
@@ -222,12 +223,23 @@ export function leaveAndDestroy(): void {
   engine = null;
 }
 
-export function renewToken(token: string): void {
-  if (!engine) return;
+export function renewToken(token: string): boolean {
+  if (!engine) {
+    const err = new Error('[Agora] Cannot renew token — engine is not initialized');
+    console.error(err.message);
+    throw err;
+  }
   try {
-    engine.renewToken(token);
-    console.log('[Agora] Token renewed successfully');
+    const code = engine.renewToken(token);
+    if (typeof code === 'number' && code < 0) {
+      const err = new Error(`[Agora] engine.renewToken failed with code ${code}`);
+      console.error(err.message);
+      throw err;
+    }
+    console.log('[Agora] Token renewed successfully in SDK engine');
+    return true;
   } catch (err) {
     console.error('[Agora] Failed to renew token:', err);
+    throw err;
   }
 }

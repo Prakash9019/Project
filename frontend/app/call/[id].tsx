@@ -135,6 +135,8 @@ export default function CallScreen() {
         if (res.agoraToken) {
           renewToken(res.agoraToken);
           console.log('[Agora] Token renewed successfully');
+        } else {
+          throw new Error('Backend returned empty Agora token');
         }
       } catch (e) {
         console.error('[Agora] Token refresh failed:', e);
@@ -196,9 +198,14 @@ export default function CallScreen() {
           console.error(`[Agora Error ${errCode}]: ${msg}`);
           if (errCode === 109 || errCode === 110) {
             setErrorMessage(`Token error (${errCode}): Token is invalid or expired. Check backend Agora credentials.`);
-          } else if (errCode === 9 || errCode === 1014) {
-            setErrorMessage(`Hardware error (${errCode}): Device access or permission denied.`);
+          } else if (errCode === 9) {
+            // ERR_NO_PERMISSION: Documented Agora error code for missing camera/audio permissions
+            setErrorMessage(`Permission denied (${errCode}): Camera or microphone permission required.`);
             setPermissionDenied(true);
+          } else if (errCode === 1014) {
+            // WARN_ADM_PLAYOUT_ABNORMAL_FREQUENCY: Audio playback device warning, not a permission error
+            console.warn(`[Agora Audio Device Warning ${errCode}]: Audio playback issue detected.`);
+            setErrorMessage(`Audio device warning (${errCode}): Audio playback issue detected. Please check your speaker/audio output.`);
           } else {
             setErrorMessage(`Agora error (${errCode}): ${msg || 'Call connection failed'}`);
           }
