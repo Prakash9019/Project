@@ -157,6 +157,7 @@ router.post(
   asyncHandler(calls.initiateRoomCall),
 );
 router.post('/:roomId/calls/:callId/join', requireRoomMember, asyncHandler(calls.joinRoomCall));
+router.post('/:roomId/calls/:callId/renew-token', requireRoomMember, asyncHandler(calls.renewRoomCallToken));
 router.patch(
   '/:roomId/calls/:callId',
   requireRoomMember,

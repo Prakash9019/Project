@@ -17,31 +17,36 @@ try {
  * Generate an Agora RTC token server-side.
  * AGORA_APP_CERTIFICATE must NEVER be exposed to the client.
  *
- * In production a missing certificate or token-builder package is a hard error —
- * we never silently issue an invalid token that would fail at join time. In dev
- * we fall back to a placeholder so the app boots without Agora credentials.
+ * Real Agora tokens are mandatory — placeholder dev_tokens cause Agora SDK error 109/110
+ * and silent connection timeouts. We throw immediately if credentials or the token builder
+ * are missing.
  */
 export function generateAgoraToken(channelName: string, uid = 0): string {
   const { appId, appCertificate, tokenExpirySec } = env.agora;
 
-  if (!appCertificate || !RtcTokenBuilder || !RtcRole) {
-    if (env.isProd) {
-      throw new Error(
-        'Agora token generation unavailable: AGORA_APP_CERTIFICATE missing or agora-access-token not installed',
-      );
-    }
-    // Dev/test fallback — NOT valid for real Agora calls.
-    return `dev_token_${channelName}_${Date.now()}`;
+  if (!appId || !appCertificate) {
+    throw new Error(
+      `Agora token generation failed: AGORA_APP_ID or AGORA_APP_CERTIFICATE is missing in environment variables. Real Agora credentials are required for calls.`
+    );
   }
 
-  return RtcTokenBuilder.buildTokenWithUid(
+  if (!RtcTokenBuilder || !RtcRole) {
+    throw new Error(
+      `Agora token generation failed: 'agora-access-token' library is not loaded. Please ensure 'agora-access-token' is installed in node_modules.`
+    );
+  }
+
+  const privilegeExpiredTs = Math.floor(Date.now() / 1000) + tokenExpirySec;
+  const token = RtcTokenBuilder.buildTokenWithUid(
     appId,
     appCertificate,
     channelName,
     uid,
     RtcRole.PUBLISHER,
-    Math.floor(Date.now() / 1000) + tokenExpirySec,
+    privilegeExpiredTs,
   );
+
+  return token;
 }
 
 export function makeChannelName(conversationId: string): string {

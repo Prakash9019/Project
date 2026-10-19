@@ -832,6 +832,9 @@ export const updateCall = (
   endReason?: 'normal' | 'timeout' | 'no_answer' | 'error'
 ) => request<UpdateCallResponse>('PATCH', `/api/v1/calls/${callId}`, { status, endReason });
 
+export const renewCallToken = (callId: string) =>
+  request<{ agoraToken: string }>('POST', `/api/v1/calls/${callId}/renew-token`);
+
 export const getCallHistory = () =>
   request<{ calls: CallRecord[] }>('GET', '/api/v1/calls');
 
@@ -1367,6 +1370,10 @@ export const getActiveRoomCall = (roomId: string) =>
 /** Leave a group call (auto-ends it once everyone has left), or — initiator only — end it for everyone. */
 export const updateRoomCall = (roomId: string, callId: string, action: 'leave' | 'end') =>
   request<{ id: string; status: 'ongoing' | 'ended' }>('PATCH', `/api/rooms/${roomId}/calls/${callId}`, { action });
+
+/** Issue fresh Agora token for an active group call. */
+export const renewRoomCallToken = (roomId: string, callId: string) =>
+  request<{ agoraToken: string }>('POST', `/api/rooms/${roomId}/calls/${callId}/renew-token`);
 
 /* ─────────────────────── Room invites (Group availability) ─────────────────────── */
 

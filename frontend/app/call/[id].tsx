@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, Pressable, BackHandler, Linking, AppState } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../src/theme';
-import { updateCall, updateRoomCall } from '../../src/services/api';
+import { updateCall, updateRoomCall, renewCallToken, renewRoomCallToken } from '../../src/services/api';
 import type { RoomCallParticipantCard } from '../../src/services/api';
 import { connectSocket } from '../../src/services/socket';
 import { useAuthStore } from '../../src/store/authStore';
@@ -14,11 +15,13 @@ import {
   RtcSurfaceView,
   createCallEngine,
   joinChannel,
+  requestCallPermissions,
   setMuted,
   setCameraEnabled,
   switchCamera,
   setSpeaker,
   leaveAndDestroy,
+  renewToken,
 } from '../../src/services/agora';
 
 export default function CallScreen() {
@@ -60,29 +63,194 @@ export default function CallScreen() {
   const [limitReached, setLimitReached] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   // Set true when the Agora channel can't be joined (bad/expired token, network,
-  // missing credentials) so the user gets a way out instead of a stuck screen.
+  // missing credentials, permissions) so the user gets a way out instead of a stuck screen.
   const [connectError, setConnectError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   // Bumped by "Try Again" to re-run the join effect from scratch.
   const [attempt, setAttempt] = useState(0);
   const ended = useRef(false);
 
   const missingConfig = !params.token || !params.channel;
 
+  // Network connectivity listener for network switch and disconnect events
+  useEffect(() => {
+    const unsub = NetInfo.addEventListener((state) => {
+      const offline = state.isConnected === false || state.isInternetReachable === false;
+      console.log(`[Agora Network Status]: Connected: ${state.isConnected}, Reachable: ${state.isInternetReachable}, Type: ${state.type}`);
+      setIsOffline(offline);
+      if (offline) {
+        console.warn('[Agora Network]: Device network offline during call');
+      } else {
+        console.log('[Agora Network]: Device network online');
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // App background / foreground lifecycle listener
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      console.log(`[Agora Lifecycle]: App state changed to ${nextState}`);
+      if (nextState === 'active') {
+        // If the user went to Settings to grant permissions and returned, auto-check and reconnect
+        if (permissionDenied) {
+          const granted = await requestCallPermissions(isVideo);
+          if (granted) {
+            console.log('[Agora Permissions]: Permissions granted in OS settings after returning to app');
+            setPermissionDenied(false);
+            setConnectError(false);
+            setErrorMessage(null);
+            retryConnect();
+          }
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [permissionDenied, isVideo]);
+
   // Agora engine lifecycle. Re-runs on retry (attempt). Works unchanged for
   // group calls — Agora hands us one onUserJoined/onUserOffline per remote uid
   // regardless of how many participants share the channel.
   useEffect(() => {
-    if (!isAgoraAvailable || missingConfig) return;
-    const engine = createCallEngine(isVideo, {
-      onJoinSuccess: () => setJoined(true),
-      onUserJoined: (uid) => setRemoteUids((prev) => (prev.includes(uid) ? prev : [...prev, uid])),
-      onUserOffline: (uid) => setRemoteUids((prev) => prev.filter((u) => u !== uid)),
-    });
-    if (engine) {
-      joinChannel(params.token!, params.channel!, isVideo);
-      if (isVideo) setSpeaker(true);
+    if (!isAgoraAvailable) return;
+    if (missingConfig) {
+      console.error('[Agora Config]: Missing token or channel name', { token: !!params.token, channel: !!params.channel });
+      setErrorMessage('Call is missing token or channel connection details.');
+      setConnectError(true);
+      return;
     }
-    return () => leaveAndDestroy();
+
+    let isCancelled = false;
+
+    const refreshChannelToken = async () => {
+      if (isCancelled || !params.id) return;
+      try {
+        console.log('[Agora] Token renewal requested from backend...');
+        const res = isGroup && params.roomId && params.callId
+          ? await renewRoomCallToken(params.roomId, params.callId)
+          : await renewCallToken(params.id);
+        if (res.agoraToken) {
+          renewToken(res.agoraToken);
+          console.log('[Agora] Token renewed successfully');
+        }
+      } catch (e) {
+        console.error('[Agora] Token refresh failed:', e);
+        setErrorMessage('Call token expired. Please retry.');
+        setConnectError(true);
+      }
+    };
+
+    (async () => {
+      // Step 1: Prompt for runtime permissions before initializing Agora
+      const hasPermission = await requestCallPermissions(isVideo);
+      if (isCancelled) return;
+      if (!hasPermission) {
+        setPermissionDenied(true);
+        setErrorMessage(
+          isVideo
+            ? 'Camera and Microphone permissions are required for video calls.'
+            : 'Microphone permission is required for audio calls.'
+        );
+        setConnectError(true);
+        return;
+      }
+
+      // Step 2: Initialize engine and attach observable event handlers
+      const engine = createCallEngine(isVideo, {
+        onJoinSuccess: (connection, elapsedMs) => {
+          if (isCancelled) return;
+          console.log(`[Agora Joined Successfully]: Channel ${connection?.channelId ?? params.channel}, UID: ${connection?.localUid ?? 0}, elapsed: ${elapsedMs}ms`);
+          setJoined(true);
+          setReconnecting(false);
+          setConnectError(false);
+          setErrorMessage(null);
+        },
+        onRejoinSuccess: (connection, elapsedMs) => {
+          if (isCancelled) return;
+          console.log(`[Agora Rejoined Successfully]: Channel ${connection?.channelId ?? params.channel}, UID: ${connection?.localUid ?? 0}, elapsed: ${elapsedMs}ms`);
+          setJoined(true);
+          setReconnecting(false);
+          setConnectError(false);
+          setErrorMessage(null);
+        },
+        onConnectionLost: () => {
+          if (isCancelled) return;
+          console.warn('[Agora Connection Lost]: Lost connection to channel. Reconnecting…');
+          setReconnecting(true);
+        },
+        onUserJoined: (uid) => {
+          if (isCancelled) return;
+          console.log(`[Agora Remote User Joined]: UID ${uid}`);
+          setRemoteUids((prev) => (prev.includes(uid) ? prev : [...prev, uid]));
+        },
+        onUserOffline: (uid: number, reason?: any) => {
+          if (isCancelled) return;
+          console.log(`[Agora Remote User Offline]: UID ${uid}, reason: ${reason}`);
+          setRemoteUids((prev) => prev.filter((u) => u !== uid));
+        },
+        onError: (errCode, msg) => {
+          if (isCancelled) return;
+          console.error(`[Agora Error ${errCode}]: ${msg}`);
+          if (errCode === 109 || errCode === 110) {
+            setErrorMessage(`Token error (${errCode}): Token is invalid or expired. Check backend Agora credentials.`);
+          } else if (errCode === 9 || errCode === 1014) {
+            setErrorMessage(`Hardware error (${errCode}): Device access or permission denied.`);
+            setPermissionDenied(true);
+          } else {
+            setErrorMessage(`Agora error (${errCode}): ${msg || 'Call connection failed'}`);
+          }
+          setConnectError(true);
+        },
+        onConnectionStateChanged: (state, reason) => {
+          if (isCancelled) return;
+          console.log(`[Agora Connection State]: ${state}, Reason: ${reason}`);
+          if (state === 4) {
+            // Reconnecting
+            setReconnecting(true);
+          } else if (state === 3) {
+            // Connected
+            setReconnecting(false);
+            if (errorMessage?.includes('Reconnecting')) {
+              setErrorMessage(null);
+            }
+          } else if (state === 5) {
+            // Failed
+            setReconnecting(false);
+            let reasonText = `Connection failed (code ${reason}). Check network connection.`;
+            if (reason === 6) reasonText = 'Invalid Agora App ID (code 6). Check EXPO_PUBLIC_AGORA_APP_ID.';
+            else if (reason === 8) reasonText = 'Invalid Agora Token (code 8). Check backend token generator credentials.';
+            else if (reason === 9) reasonText = 'Agora Token Expired (code 9).';
+            else if (reason === 14) reasonText = 'Connection timed out (code 14). Network connection lost.';
+            setErrorMessage(reasonText);
+            setConnectError(true);
+          }
+        },
+        onTokenPrivilegeWillExpire: () => {
+          refreshChannelToken();
+        },
+        onRequestToken: () => {
+          refreshChannelToken();
+        },
+      });
+
+      if (isCancelled) {
+        leaveAndDestroy();
+        return;
+      }
+
+      if (engine) {
+        joinChannel(params.token!, params.channel!, isVideo);
+        if (isVideo) setSpeaker(true);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+      leaveAndDestroy();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.token, params.channel, isVideo, attempt]);
 
@@ -97,7 +265,10 @@ export default function CallScreen() {
     }
     if (!isAgoraAvailable) return; // distinct "unavailable" copy already shown
     const t = setTimeout(() => {
-      if (!ended.current) setConnectError(true);
+      if (!ended.current) {
+        setErrorMessage('Connection timed out after 15 seconds. Please check your network and try again.');
+        setConnectError(true);
+      }
     }, 15000);
     return () => clearTimeout(t);
   }, [joined, connectError, missingConfig, attempt]);
@@ -207,6 +378,8 @@ export default function CallScreen() {
   const retryConnect = () => {
     leaveAndDestroy();
     setConnectError(false);
+    setErrorMessage(null);
+    setPermissionDenied(false);
     setJoined(false);
     setRemoteUids([]);
     setElapsed(0);
@@ -244,15 +417,19 @@ export default function CallScreen() {
   const title = isGroup ? (params.roomName || 'Group Call') : (params.peerName || 'Calling…');
   const statusText = limitReached
     ? 'Daily call limit reached'
-    : connectError
-      ? 'Call failed to connect'
-      : !isAgoraAvailable
-        ? 'Calls unavailable on this device'
-        : joined
-          ? isGroup
-            ? `${remoteUids.length + 1} in call · ${fmt(elapsed)}`
-            : (remoteUids.length > 0 ? fmt(elapsed) : 'Ringing…')
-          : 'Connecting…';
+    : isOffline
+      ? 'No internet connection · Reconnecting…'
+      : reconnecting
+        ? 'Reconnecting to call…'
+        : connectError
+          ? (permissionDenied ? 'Permissions required' : 'Call failed to connect')
+          : !isAgoraAvailable
+            ? 'Calls unavailable on this device'
+            : joined
+              ? isGroup
+                ? `${remoteUids.length + 1} in call · ${fmt(elapsed)}`
+                : (remoteUids.length > 0 ? fmt(elapsed) : 'Ringing…')
+              : 'Connecting…';
 
   return (
     <View style={[styles.root, { backgroundColor: '#000' }]}>
@@ -334,15 +511,34 @@ export default function CallScreen() {
         </View>
       ) : connectError ? (
         <View style={styles.limitCard}>
-          <Text style={styles.limitTitle}>Call failed to connect</Text>
-          <Text style={styles.limitBody}>
-            {missingConfig
-              ? 'This call is missing its connection details.'
-              : 'Check your connection and try again.'}
+          <Text style={styles.limitTitle}>
+            {permissionDenied ? 'Permissions Required' : 'Call failed to connect'}
           </Text>
-          <Pressable style={[styles.limitCta, { backgroundColor: theme.brand }]} onPress={retryConnect}>
-            <Text style={styles.limitCtaText}>Try Again</Text>
-          </Pressable>
+          <Text style={styles.limitBody}>
+            {errorMessage || (missingConfig
+              ? 'This call is missing its connection details.'
+              : 'Check your connection and try again.')}
+          </Text>
+          {permissionDenied ? (
+            <View style={styles.permissionActionRow}>
+              <Pressable
+                style={[styles.limitCta, { backgroundColor: theme.brand, flex: 1, marginTop: 0 }]}
+                onPress={() => Linking.openSettings()}
+              >
+                <Text style={styles.limitCtaText}>Open Settings</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.limitCta, { backgroundColor: theme.surfaceElevated, borderColor: theme.border, borderWidth: 1, flex: 1, marginTop: 0 }]}
+                onPress={retryConnect}
+              >
+                <Text style={styles.limitCtaText}>Try Again</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable style={[styles.limitCta, { backgroundColor: theme.brand }]} onPress={retryConnect}>
+              <Text style={styles.limitCtaText}>Try Again</Text>
+            </Pressable>
+          )}
           <Pressable style={styles.limitClose} onPress={() => finish('error')}>
             <Text style={styles.limitCloseText}>End Call</Text>
           </Pressable>
@@ -419,4 +615,5 @@ const styles = StyleSheet.create({
   limitCtaText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   limitClose: { marginTop: 12 },
   limitCloseText: { color: '#888', fontSize: 14 },
+  permissionActionRow: { flexDirection: 'row', gap: 12, marginTop: 16, width: '100%' },
 });

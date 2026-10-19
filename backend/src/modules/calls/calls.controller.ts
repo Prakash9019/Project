@@ -399,3 +399,30 @@ export async function iceConfig(req: Request, res: Response): Promise<void> {
   ];
   res.status(200).json({ iceServers });
 }
+
+/** POST /api/v1/calls/:callId/renew-token — issue fresh Agora token for an active call. */
+export async function renewCallToken(req: Request, res: Response): Promise<void> {
+  const userId = req.user!.sub;
+  const { callId } = req.params;
+
+  const call = await prisma.call.findUnique({ where: { id: callId } });
+  if (!call || (call.callerId !== userId && call.calleeId !== userId)) {
+    throw Errors.notFound('Call not found');
+  }
+
+  if (call.status === 'ended' || call.status === 'declined' || call.status === 'missed') {
+    throw Errors.badRequest('Call is no longer active');
+  }
+
+  if (!call.agoraChannelName) {
+    throw Errors.badRequest('Call does not have an Agora channel');
+  }
+
+  const agoraToken = generateAgoraToken(call.agoraChannelName);
+  await prisma.call.update({
+    where: { id: callId },
+    data: { agoraToken },
+  });
+
+  res.status(200).json({ agoraToken });
+}

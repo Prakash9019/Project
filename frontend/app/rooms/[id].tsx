@@ -63,7 +63,7 @@ import {
   joinRoomCall,
   getActiveRoomCall,
 } from '../../src/services/api';
-import { isAgoraAvailable } from '../../src/services/agora';
+import { isAgoraAvailable, requestCallPermissions } from '../../src/services/agora';
 import {
   connectSocket,
   getSocket,
@@ -938,6 +938,8 @@ export default function RoomChat() {
 
   const startRoomCall = async (type: 'audio' | 'video') => {
     if (activeCall) {
+      const hasPermission = await requestCallPermissions(activeCall.type === 'video');
+      if (!hasPermission) return;
       goToCallScreen(activeCall);
       return;
     }
@@ -945,6 +947,8 @@ export default function RoomChat() {
       showError('Calls need the latest app build. Please update or reinstall the app.');
       return;
     }
+    const hasPermission = await requestCallPermissions(type === 'video');
+    if (!hasPermission) return;
     try {
       const res = await initiateRoomCall(roomId, type);
       goToCallScreen({ ...res, callId: res.id });
@@ -959,6 +963,8 @@ export default function RoomChat() {
       showError('Calls need the latest app build. Please update or reinstall the app.');
       return;
     }
+    const hasPermission = await requestCallPermissions(activeCall.type === 'video');
+    if (!hasPermission) return;
     try {
       await joinRoomCall(roomId, activeCall.callId);
     } catch {

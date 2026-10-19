@@ -26,6 +26,7 @@ export default {
         NSPhotoLibraryUsageDescription: "NearMe lets you add photos to your profile and albums.",
         NSPhotoLibraryAddUsageDescription: "NearMe saves photos and videos you download from chats and albums to your photo library.",
         NSLocationWhenInUseUsageDescription: "NearMe shows people near you based on your location.",
+        UIBackgroundModes: ["audio"],
       },
     },
 
@@ -45,6 +46,9 @@ export default {
       permissions: [
         "CAMERA",
         "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "ACCESS_NETWORK_STATE",
+        "BLUETOOTH_CONNECT",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "READ_MEDIA_IMAGES",

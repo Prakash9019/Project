@@ -205,3 +205,29 @@ export async function updateRoomCall(req: Request, res: Response): Promise<void>
 
   res.status(200).json({ id: callId, status: 'ongoing' });
 }
+
+/** POST /api/v1/rooms/:roomId/calls/:callId/renew-token — issue fresh Agora token for an active group call. */
+export async function renewRoomCallToken(req: Request, res: Response): Promise<void> {
+  const { roomId, callId } = req.params;
+
+  const call = await prisma.roomCall.findUnique({ where: { id: callId } });
+  if (!call || call.roomId !== roomId) {
+    throw Errors.notFound('Call not found');
+  }
+
+  if (call.status !== 'ongoing') {
+    throw new HttpError(410, 'call_ended', 'This call has already ended');
+  }
+
+  if (!call.agoraChannelName) {
+    throw Errors.badRequest('Call does not have an Agora channel');
+  }
+
+  const agoraToken = generateAgoraToken(call.agoraChannelName);
+  await prisma.roomCall.update({
+    where: { id: callId },
+    data: { agoraToken },
+  });
+
+  res.status(200).json({ agoraToken });
+}

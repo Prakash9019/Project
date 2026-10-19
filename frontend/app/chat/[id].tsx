@@ -102,7 +102,7 @@ import {
   type MessageTemplate,
 } from '../../src/services/api';
 import { connectSocket, emitTyping } from '../../src/services/socket';
-import { isAgoraAvailable } from '../../src/services/agora';
+import { isAgoraAvailable, requestCallPermissions } from '../../src/services/agora';
 import { useAuthStore } from '../../src/store/authStore';
 import { useChatStore } from '../../src/store/chatStore';
 import { clockTime, planAtLeast, chatDateHeader, sameCalendarDay, formatLastSeen } from '../../src/lib/format';
@@ -2334,6 +2334,8 @@ export default function Chat() {
       setBanner('Calls need the latest app build. Please update or reinstall the app.');
       return;
     }
+    const hasPermission = await requestCallPermissions(type === 'video');
+    if (!hasPermission) return;
     try {
       const res = await initiateCall(conversationId, type);
       router.push({
